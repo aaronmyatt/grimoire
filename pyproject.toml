@@ -5,6 +5,9 @@ description = "A script-hoarding agent harness on mini-swe-agent."
 requires-python = ">=3.12"
 dependencies = []
 
+[project.scripts]
+grim = "grim.cli:main"
+
 [dependency-groups]
 dev = [
   "ruff>=0.8",
