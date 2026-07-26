@@ -100,7 +100,7 @@ for ABS in "${TOUCHED[@]}"; do
   # win over ask when both apply — "never by hand" allows no confirmation
   # path at all, unlike a frozen-path write.
   if matches_any "$REL" "${BASELINE_PATTERNS[@]}"; then
-    decide deny "$REL is a tool-written baseline/suppression file — never edited by hand. Use the /ratchet skill's prune.sh (or the underlying tool: eslint --prune-suppressions, depcruise-baseline, etc.) via Bash instead."
+    decide deny "$REL is a tool-written baseline/suppression file — never edited by hand. Regenerate it (uv run mypy 2>&1 | grep ': error:' > .claude/mypy-baseline.txt) or use the /ratchet skill's prune.sh via Bash instead."
   fi
 
   if matches_any "$REL" "${FROZEN_PATTERNS[@]}"; then
