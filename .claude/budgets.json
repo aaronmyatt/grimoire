@@ -25,6 +25,7 @@
       "src/grim/db.py",
       "src/grim/cli.py",
       ".claude/**",
+      ".pi/extensions/**",
       "CLAUDE.md",
       "pyproject.toml",
       "uv.lock",

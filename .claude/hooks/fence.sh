@@ -22,6 +22,7 @@ FROZEN_PATTERNS=(
   'src/grim/db.py'
   'src/grim/cli.py'
   '.claude/**'
+  '.pi/extensions/**'
   'CLAUDE.md'
   'pyproject.toml'
   'uv.lock'
@@ -145,8 +146,9 @@ for ABS in "${TOUCHED[@]}"; do
         TARGET_SLICE=$(slice_of "$REL")
         ACTIVE=$(active_slices)
         # `grep -c .` counts non-empty lines; `|| true` (not `|| echo`,
-        # which would duplicate output) just stops `set -e` aborting on
-        # the "zero matches" case.
+        # which would duplicate output — see /ratchet's measure.sh for
+        # the fully-diagnosed version of this exact pipefail trap) just
+        # stops `set -e` aborting on the "zero matches" case.
         ACTIVE_N=$(printf '%s\n' "$ACTIVE" | grep -c .) || true
         ACTIVE_N="${ACTIVE_N:-0}"
         if [ "$ACTIVE_N" -gt 1 ]; then
