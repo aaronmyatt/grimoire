@@ -1,0 +1,25 @@
+{
+  "projectName": "grimoire",
+  "stack": "python",
+  "budgets": {
+    "functionLines": 60,
+    "fileLines": 500,
+    "diffLines": 300,
+    "maxParams": 4,
+    "maxDepth": 4,
+    "cyclomaticComplexity": 10,
+    "lineWidth": 100,
+    "assertionsMin": 2,
+    "payloadKB": 140,
+    "criticalPathKB": 42,
+    "latencyMs": 100,
+    "coveragePercent": 0
+  },
+  "slices": {
+    "root": null,
+    "shared": null,
+    "frozenPaths": []
+  },
+  "commands": {},
+  "baselinePaths": []
+}
