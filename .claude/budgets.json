@@ -16,9 +16,19 @@
     "coveragePercent": 0
   },
   "slices": {
-    "root": null,
-    "shared": null,
-    "frozenPaths": []
+    "root": "src/grim",
+    "shared": "src/grim",
+    "slices": ["verbs", "exec", "adapter", "seeds"],
+    "sharedFiles": ["src/grim/db.py", "src/grim/cli.py"],
+    "frozenPaths": [
+      "src/grim/db.py",
+      "src/grim/cli.py",
+      ".claude/**",
+      "CLAUDE.md",
+      "pyproject.toml",
+      "uv.lock",
+      ".github/workflows/**"
+    ]
   },
   "commands": {},
   "baselinePaths": []
