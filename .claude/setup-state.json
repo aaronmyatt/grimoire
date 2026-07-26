@@ -19,5 +19,13 @@
     "No CI workflow yet — generate .github/workflows/ci.yml (format/typecheck/lint/test+coverage/boundaries/file-lengths/PR-size) once this repo has a remote",
     "gate.sh's `test` check will fail (pytest exit 5, 'no tests collected') on ANY dirty tree until the first real pytest test file exists — expected pressure to land build plan Phase 0's smoke test early, not a bug",
     "Extend the /setup skill itself with references/stack-python.md + Python-aware gen_configs.sh if more Python projects get set up this way"
+  ],
+  "postSetupUpdates": [
+    {
+      "date": "2026-07-26",
+      "change": "fence.sh: replaced $TASK_SLICE env-var-based slice gating with git-diff-inferred active-slice detection, matching the packaged /setup skill's scripts/gen_hooks.sh update. No more `export TASK_SLICE=<slice>` — the fence now derives the active slice from `git status --porcelain`: the first write to a slice on a clean tree establishes it, a write to a different slice is denied until that slice's changes are committed (or discarded), and a tree already dirty across >1 slice is denied outright until resolved.",
+      "howApplied": "Hand-patched only the slice_of/active_slices functions and the slice-gating block, NOT a full gen_hooks.sh regenerate-and-overwrite — a blanket regenerate would have reverted this repo's Python-specific customizations (the mypy-baseline deny message in fence.sh, and feedback.sh/gate.sh entirely, which are hand-authored per skillStackSupport above and have no TS-flavored equivalent to regenerate from).",
+      "verified": "tested directly against this repo's real slice layout (src/grim/{verbs,exec,adapter,seeds}) before landing: clean-tree write allowed, same-slice write allowed after dirtying verbs/, cross-slice write to exec/ denied while verbs/ was dirty, tree restored to clean and re-verified."
+    }
   ]
 }

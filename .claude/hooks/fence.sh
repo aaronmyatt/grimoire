@@ -55,6 +55,31 @@ matches_any() {
   return 1
 }
 
+slice_of() {
+  # $1 = repo-relative path already known to be under $SLICE_ROOT/ —
+  # returns the first path component after SLICE_ROOT.
+  local rest="${1#"$SLICE_ROOT"/}"
+  echo "${rest%%/*}"
+}
+
+active_slices() {
+  # The slice-scoping stand-in for a manually-set $TASK_SLICE: whatever
+  # slice(s) currently have UNCOMMITTED changes (staged, unstaged, or
+  # untracked — `git status --porcelain` covers all three, same check
+  # gate.sh uses for "is the tree dirty at all"). A clean tree means no
+  # slice is active yet, so the next write picks one implicitly — no env
+  # var, no explicit declaration, just "what does the diff already say."
+  # Porcelain lines are "XY path" (3-char prefix) or "XY old -> new" for
+  # renames, where only the new path matters here.
+  git status --porcelain 2>/dev/null | while IFS= read -r line; do
+    path="${line:3}"
+    case "$path" in *" -> "*) path="${path##* -> }" ;; esac
+    case "$path" in
+      "$SLICE_ROOT"/*) slice_of "$path" ;;
+    esac
+  done | sort -u
+}
+
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 TOUCHED=()
 FP=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')
@@ -107,13 +132,29 @@ for ABS in "${TOUCHED[@]}"; do
     decide ask "$REL is a frozen path (see CLAUDE.md's Frozen paths section) — confirm this write."
   fi
 
-  if [ -n "$SLICE_ROOT" ] && [ -n "${TASK_SLICE:-}" ]; then
+  # The active slice is INFERRED from the working tree's current diff, not
+  # a human/agent-set env var — no one has to remember to declare it. The
+  # first write to any slice (on an otherwise-clean tree) establishes that
+  # slice as active for the rest of this uncommitted change set; every
+  # subsequent write to a DIFFERENT slice is denied until the first
+  # slice's changes are committed (or discarded), at which point the tree
+  # is clean again and the next write picks a new active slice.
+  if [ -n "$SLICE_ROOT" ]; then
     case "$REL" in
       "$SLICE_ROOT"/*)
-        case "$REL" in
-          "$SLICE_ROOT/$TASK_SLICE"/*) : ;;
-          *) decide deny "$REL is outside the active slice (\$TASK_SLICE=$TASK_SLICE). Cross-slice code goes through $SHARED_ROOT/, not a direct write." ;;
-        esac
+        TARGET_SLICE=$(slice_of "$REL")
+        ACTIVE=$(active_slices)
+        # `grep -c .` counts non-empty lines; `|| true` (not `|| echo`,
+        # which would duplicate output) just stops `set -e` aborting on
+        # the "zero matches" case.
+        ACTIVE_N=$(printf '%s\n' "$ACTIVE" | grep -c .) || true
+        ACTIVE_N="${ACTIVE_N:-0}"
+        if [ "$ACTIVE_N" -gt 1 ]; then
+          OTHERS=$(printf '%s' "$ACTIVE" | tr '\n' ',' | sed 's/,$//')
+          decide deny "The working tree already has uncommitted changes spanning multiple slices ($OTHERS) — commit or discard down to one before continuing."
+        elif [ "$ACTIVE_N" -eq 1 ] && [ "$ACTIVE" != "$TARGET_SLICE" ]; then
+          decide deny "$REL is in slice '$TARGET_SLICE', but the working tree already has uncommitted changes in slice '$ACTIVE'. Commit (or discard) that slice's work before starting a different one — one slice per uncommitted change set. Cross-slice code goes through $SHARED_ROOT/, not a direct write."
+        fi
         ;;
     esac
   fi
