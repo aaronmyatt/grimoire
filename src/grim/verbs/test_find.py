@@ -1,0 +1,71 @@
+"""Tests for verbs/find.py."""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from grim import db
+from grim.verbs import _shared
+from grim.verbs.find import find_scripts
+from grim.verbs.write import WriteRequest, write_script
+
+
+def _migrated_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    conn = _shared.connect()
+    db.migrate(conn)
+    return conn
+
+
+def _write(conn: sqlite3.Connection, name: str, description: str) -> None:
+    write_script(
+        conn,
+        WriteRequest(
+            name=name,
+            language="python",
+            description=description,
+            body="print(1)",
+            parent=None,
+            scope="global",
+            session_id="human-adhoc",
+        ),
+    )
+
+
+def test_find_scripts_ranks_name_and_description_over_body_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "extract_failing_tests", "extracts failing pytest tests")
+    _write(conn, "unrelated_script", "does something else entirely")
+    results = find_scripts(conn, "extract failing tests")
+    assert results
+    assert results[0]["name"] == "extract_failing_tests"
+
+
+def test_find_scripts_respects_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    result_limit = 2
+    for i in range(3):
+        _write(conn, f"failing_test_helper_{i}", "handles failing tests")
+    results = find_scripts(conn, "failing tests", limit=result_limit)
+    assert len(results) == result_limit
+
+
+def test_find_scripts_excludes_archived(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "extract_failing_tests", "extracts failing pytest tests")
+    conn.execute("UPDATE script SET archived = 1 WHERE name = 'extract_failing_tests'")
+    conn.commit()
+    assert find_scripts(conn, "extract failing tests") == []
+
+
+def test_find_scripts_no_match_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "extract_failing_tests", "extracts failing pytest tests")
+    assert find_scripts(conn, "completely unrelated gibberish zzz") == []
