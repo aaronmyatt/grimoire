@@ -1,6 +1,7 @@
 {
   "projectName": "grimoire",
   "stack": "python",
+  "constitutionVersion": "1.1.0",
   "budgets": {
     "functionLines": 60,
     "fileLines": 500,
