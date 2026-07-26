@@ -1,0 +1,130 @@
+# Grimoire (`grim`)
+
+A script-hoarding agent harness on [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent).
+
+## Vision
+
+Grimoire replaces mini-swe-agent's raw-bash action space with six verbs
+over a SQLite spine: `write`, `update`, `read`, `list`, `find`, `run`.
+Every action the agent takes becomes a named, versioned artifact with
+recorded input/output. The agent's memory *is* its executable library —
+each accumulated script is a new verb in its vocabulary, and `find` is how
+it remembers it knows the word. Humans and the agent share the same
+binary and the same database.
+
+The thesis being tested: bash is great, the entire corpus of programming
+languages is better — and a persistent, searchable corpus of the agent's
+own scripts compounds, saving tokens on repeat work and leaving the human
+a usable library behind.
+
+Bash isn't banned — it's demoted. `sh` (run one shell command) ships as
+just another seeded script in the corpus, not a privileged escape hatch.
+
+## Architecture
+
+```
+┌─────────────────────────────┐
+│ mini-swe-agent (unmodified) │  DefaultAgent · linear history · cost limits
+│   └── GrimEnvironment ──────┼──► parses action → calls grim lib in-process
+├─────────────────────────────┤
+│ grim  (CLI + library)       │  six verbs · init/doctor/draft for humans
+│   ├── verbs/                │
+│   ├── exec/  (dispatch)─────┼──► uv run | bash | bun | run --json
+│   └── db.py  (schema/query) │
+├─────────────────────────────┤
+│ grimoire.db (SQLite)        │  scripts · versions · executions · sessions · FTS
+├─────────────────────────────┤
+│ seed library                │  sh, read_file, apply_patch… + stats/gardener/export
+├─────────────────────────────┤
+│ human surfaces              │  same CLI · Datasette · fzf one-liner · TUI (review queue)
+└─────────────────────────────┘
+```
+
+Every script write is versioned (append-only — `update` never overwrites,
+it adds a version); every run is logged as an `execution` row keyed to
+the exact version that produced it. Nothing is imperatively wired between
+scripts — "called before/after," success rate, staleness, and so on are
+all views derived from that log, not bookkept relationships.
+
+## Slices
+
+The codebase is vertical slices under `src/grim/`. A slice is
+self-contained, never imports another slice, and is reached only through
+its public entry point. Duplication between slices is a deliberate
+choice, not debt — see `ABSTRACTIONS.md` for flagged (not yet acted on)
+extraction opportunities. Each slice's own `CLAUDE.md` is the source of
+truth for its invariants; this is a summary.
+
+| Slice | Purpose | Public interface |
+|---|---|---|
+| **`db.py` / `cli.py`** (shared kernel, frozen) | SQLite connection, PRAGMAs, migration runner; argparse dispatch for the whole CLI | `connect`, `migrate`, `init_db` · `build_parser`, `main` |
+| **`verbs/`** | The six agent-facing verbs — the entire closed set the agent may invoke | one module per verb (`write.py`, `update.py`, `read.py`, `list.py`, `find.py`, `run.py`) |
+| **`exec/`** | Language dispatch table (`python → uv run`, `bash → bash`, `js/ts → bun`, else → `run --json`) and output truncation | `dispatch.dispatch(...)`, `envelope.truncate(...)` |
+| **`adapter/`** | Subclasses mini-swe-agent's environment so model actions are parsed and dispatched to `grim` in-process — the hard enforcement point for the six-verb constraint | `environment.GrimEnvironment`, `grimoire.yaml` |
+| **`seeds/`** | Seed script bodies loaded on `grim init` (`sh`, `read_file`, `apply_patch`, `stats`, `gardener`, …) — meta-tooling ships as library scripts, never new CLI verbs | `loader.load_seeds(db)` |
+
+The shared kernel (`db.py`, `cli.py`) is tiny, frozen, and versioned like
+a third-party library: slices depend on it or on nothing, never on each
+other. Within a slice, plain function calls; across slices, only the URL,
+the parent process, or a message across a time boundary — never an
+in-process event bus.
+
+## Checks & constraints
+
+This repo is built around hard budgets, enforced mechanically rather than
+by convention (full detail and current numbers: root `CLAUDE.md`,
+`.claude/budgets.json`).
+
+| Budget | Limit |
+|---|---|
+| Function length | ≤ 60 lines |
+| File length | ≤ 500 lines |
+| Change size (diff) | ≤ 300 changed lines |
+| Params per function | ≤ 4 |
+| Nesting depth | ≤ 4 |
+| Cyclomatic complexity | ≤ 10 |
+| Line width | ≤ 100 cols |
+| Assertions per function | ≥ 2 |
+| Coverage | never regresses |
+
+Enforcement is three hook layers, none of them vibes-based (see
+`.claude/hooks/`):
+
+- **`fence.sh`** (before an edit) — blocks edits outside the current
+  slice, and either asks or flatly denies writes to frozen/baseline
+  paths. The active slice is inferred from the working tree's own diff:
+  the first uncommitted write to a slice claims it; a write to a
+  different slice is denied until that one is committed or discarded.
+- **`feedback.sh`** (after an edit) — formats, lints, and typechecks the
+  file just touched; informs, never blocks.
+- **`gate.sh`** (before ending a turn) — blocks until formatter, linter,
+  and typechecker are clean, the test suite is green, and the diff is
+  within budget.
+
+**Frozen paths** (`src/grim/db.py`, `src/grim/cli.py`, `.claude/**`,
+`CLAUDE.md`, `pyproject.toml`, `uv.lock`, `.github/workflows/**`) are
+human-confirmed on every single write, individually, forever — they're
+never edited as a side effect of slice work. `.claude/mypy-baseline.txt`
+is stricter still: it's a tool-generated baseline, denied outright for
+hand edits, regenerated only by piping the real tool's output.
+
+Debt is tracked, not hidden: pre-existing violations are baselined at
+setup time and burned down deliberately via `/ratchet` (one rule × one
+slice per session), never fixed as a drive-by inside unrelated work. The
+ledger lives in `RATCHET.md`.
+
+## Getting started
+
+```bash
+uv sync
+uv run grim init      # creates ~/.grimoire/grimoire.db (or $GRIM_DB) and applies schema v1
+uv run pytest         # smoke tests: fresh init + idempotent re-init
+```
+
+## Working in this repo
+
+Root `CLAUDE.md` is the constitution (budgets, slice rules, change
+protocol, commit discipline) — read it before making a change of any
+size. Each slice's own `CLAUDE.md` (`src/grim/<slice>/CLAUDE.md`) states
+that slice's purpose, public interface, and invariants; read it before
+touching that slice.
