@@ -30,6 +30,15 @@
       ".github/workflows/**"
     ]
   },
-  "commands": {},
-  "baselinePaths": []
+  "commands": {
+    "format": "uv run ruff format --check .",
+    "formatFix": "uv run ruff format .",
+    "lint": "uv run ruff check .",
+    "typecheck": "uv run mypy",
+    "test": "uv run pytest",
+    "testCoverage": "uv run pytest --cov=src/grim --cov-report=term-missing",
+    "boundaries": ".claude/scripts/check-boundaries.sh",
+    "fileLengths": ".claude/scripts/check-file-lengths.sh"
+  },
+  "baselinePaths": [".claude/mypy-baseline.txt"]
 }
