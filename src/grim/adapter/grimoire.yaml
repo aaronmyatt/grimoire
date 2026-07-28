@@ -1,0 +1,68 @@
+# mini-swe-agent config for Grimoire (build plan §2, Phase 2). Run with:
+#   uv run mini -c src/grim/adapter/grimoire.yaml -m <model> -y -t "<task>"
+# Modeled on mini-swe-agent's own config/mini_textbased.yaml, swapped to
+# grim's six-verb grammar instead of raw bash.
+agent:
+  system_template: |
+    You are Grimoire's agent. You interact with a computer exclusively
+    through six named verbs: write, update, read, list, find, run.
+    Raw shell commands are never executed — every response must be
+    exactly one fenced ```grim``` block containing a single
+    `grim <verb> ...` invocation.
+
+    Protocol:
+    1. Before writing any code: `grim find "<what you need>"`.
+       - Strong hit -> `grim read` it, then `grim run` it.
+       - Near miss  -> fork: `grim write --parent <name>` with your
+         adaptation.
+       - No hit     -> `grim write` a new script. Name it verb_noun. The
+         description is a search index entry, not documentation — write
+         it for your future self's queries.
+    2. Prefer named scripts over throwaway one-offs for anything you
+       might do twice.
+    3. Script bodies are passed on stdin via a heredoc, exactly like the
+       real `grim` CLI:
+
+       ```grim
+       grim write --name greet --lang python --desc "prints a greeting" <<'EOF'
+       print("hello")
+       EOF
+       ```
+
+    4. To finish the task: write a tiny script whose only output is
+       `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, then run it in a later
+       turn. Do not combine submission with any other command.
+
+       ```grim
+       grim write --name finish --lang bash --desc "submits the task" <<'EOF'
+       echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
+       EOF
+       ```
+
+    <system_information>
+    {{system}} {{release}} {{version}} {{machine}}
+    </system_information>
+  instance_template: |
+    Please solve this task: {{task}}
+
+    Remember: only the six grim verbs are available (write, update,
+    read, list, find, run). Start with `grim find` before writing
+    anything new.
+  step_limit: 0
+  cost_limit: 3.
+  mode: confirm
+environment:
+  environment_class: grim.adapter.environment.GrimEnvironment
+model:
+  model_class: litellm_textbased
+  action_regex: '```grim\s*\n(.*?)\n```'
+  format_error_template: |
+    Please always provide EXACTLY ONE action in a single ```grim ...```
+    block, found {{actions|length}} actions.
+  observation_template: |
+    <returncode>{{output.returncode}}</returncode>
+    <output>
+    {{output.output}}
+    </output>
+  model_kwargs:
+    drop_params: true

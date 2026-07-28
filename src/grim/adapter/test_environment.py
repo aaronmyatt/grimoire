@@ -8,9 +8,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from minisweagent.exceptions import Submitted
 
-from grim.adapter.environment import PROTOCOL_REMINDER, GrimEnvironment
+pytest.importorskip("minisweagent")  # adapter/ needs the optional `adapter` extra
+
+from minisweagent.exceptions import Submitted  # noqa: E402
+
+from grim.adapter.environment import PROTOCOL_REMINDER, GrimEnvironment  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
