@@ -106,11 +106,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _database_ready() -> bool:
+    """Whether `grim init` has run — checked once, here, so all six verbs
+    fail the same clean way instead of a raw sqlite3.OperationalError."""
+    conn = db.connect()
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'script'"
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Parse argv and dispatch to the matching cmd_* handler."""
     parser = build_parser()
     args = parser.parse_args(argv)
     assert hasattr(args, "func"), "every subcommand must set_defaults(func=...)"
+    if args.command != "init" and not _database_ready():
+        print("error: database not initialized — run `grim init` first", file=sys.stderr)
+        return 1
     result: int = args.func(args)
     assert isinstance(result, int), "cmd_* handlers must return an int exit code"
     return result
