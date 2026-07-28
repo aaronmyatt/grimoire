@@ -27,3 +27,14 @@ def test_grim_init_twice_is_idempotent(tmp_path: Path, monkeypatch: pytest.Monke
 
     assert first == 0
     assert second == 0
+
+
+def test_verb_before_init_warns_and_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+
+    exit_code = cli.main(["list"])
+
+    assert exit_code == 1
+    assert "grim init" in capsys.readouterr().err
