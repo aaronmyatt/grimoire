@@ -8,6 +8,11 @@ dependencies = []
 [project.scripts]
 grim = "grim.cli:main"
 
+[project.optional-dependencies]
+adapter = [
+    "mini-swe-agent>=2.4,<3",
+]
+
 [dependency-groups]
 dev = [
   "ruff>=0.8",
