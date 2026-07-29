@@ -6,7 +6,7 @@ Grimoire replaces mini-swe-agent's raw-bash action space with six verbs over a S
 
 The thesis being tested: bash is great, the entire corpus of programming languages is better — and a persistent, searchable corpus of the agent's own scripts compounds, saving tokens on repeat work and leaving the human a usable library behind.
 
-> Status: Phase 0 is done (see git history: `cce0859`..`2227cdb`). Phases 1–8 below are the remaining work, in order.
+> Status: Phases 0–2 are done (see git history: `cce0859`..`5cc6f83`). Phase 2's pseudocode below is superseded by what actually shipped — mini-swe-agent's real API (2.4.6) diverged from the assumptions this doc was written against; see `src/grim/adapter/CLAUDE.md` and the commit history for the accurate contract. Phases 3–8 below are the remaining work, in order, plus Phase 2b (optional, not gating anything after it).
 
 ---
 
@@ -230,6 +230,16 @@ class GrimEnvironment(LocalEnvironment):
 ```
 
 No shell runs in the control plane — the code block is parsed and dispatched in-process, so the model *cannot* leak back to raw bash. Ship `adapter/grimoire.yaml` with a `system_template` encoding the protocol ladder (§6) and mini's unchanged completion convention. Trajectories gain `exec #id` cross-references into the DB. **Done when:** `mini -c grimoire.yaml` solves a toy task end-to-end using only grim verbs, and an injected `ls -la` action produces the reminder observation instead of output.
+
+### Phase 2b — Streaming model display (optional, ~0.5d)
+
+Cosmetic only — does **not** change the turn-based interaction model. mini's `Model.query()` needs the complete LM response before anything downstream can run: cost calculation needs full usage stats, and action parsing (regex for the textbased model, `tool_calls` for the toolcall model) needs the complete text/payload, not a partial chunk. So the agent still can't decide or act mid-generation, and `InteractiveAgent`'s confirm/reject/redirect loop (Phase 2's research notes) still only happens *between* turns — streaming just removes the blank-pause wait while a turn renders.
+
+Implementation: a custom `Model` subclass (e.g. `grim.adapter.streaming_model.GrimStreamingTextbasedModel(LitellmTextbasedModel)`) overriding `_query` to call `litellm.completion(..., stream=True)`, print each chunk live via `rich.console` as it arrives, and reconstruct a normal response object with litellm's `stream_chunk_builder(chunks)` once the stream ends — so cost calc and action parsing downstream are untouched. Selected the same config-driven way as `GrimEnvironment`, via `model.model_class:` in `grimoire.yaml` — a dotted import path, no mini-swe-agent code changes.
+
+**Fully reversible, no lock-in:** swapping `model.model_class` back to the stock `litellm_textbased` (`LitellmTextbasedModel`) is a one-line yaml edit at any time; the custom class is additive, never a fork of the original.
+
+**Done when:** a live `mini -c grimoire.yaml -m <model>` session renders tokens incrementally instead of pausing until the full response lands, and a test proves the streaming model produces output equivalent to the parent `LitellmTextbasedModel` given the same replayed chunks (existing Phase 2 tests — offline, `DeterministicModel`-based — continue to pass unchanged, since they exercise `GrimEnvironment`, not the model layer).
 
 ### Phase 3 — Seed library + protocol tuning (2–3d)
 
