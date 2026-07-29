@@ -11,6 +11,16 @@ complete assistant message again once query() returns, so the streamed
 text renders once live and once more as a block. Fixing that means
 touching InteractiveAgent's print behavior — out of scope for a
 Model-layer-only change.
+
+Deliberately imports InteractiveAgent's `console` instead of creating a
+new one: Rich's Live/Status display (the "Waiting for the LM to
+respond..." spinner, refreshed 12.5x/sec) only coordinates cursor
+movement correctly with prints going through the *same* Console object.
+A second, independent Console instance writing to the same terminal
+corrupts the spinner's redraw math — confirmed live: output rendered as
+rapid, overlapping, in-place garbage instead of scrolling text. This is
+a real (if unusual) coupling to the agent layer, forced by Rich's
+design, not a layering mistake.
 """
 
 from __future__ import annotations
@@ -18,10 +28,8 @@ from __future__ import annotations
 from typing import Any
 
 import litellm
+from minisweagent.agents.interactive import console as console  # re-exported for tests
 from minisweagent.models.litellm_textbased_model import LitellmTextbasedModel
-from rich.console import Console
-
-console = Console(highlight=False)
 
 
 class GrimStreamingTextbasedModel(LitellmTextbasedModel):
@@ -49,16 +57,27 @@ class GrimStreamingTextbasedModel(LitellmTextbasedModel):
 
 
 def _print_and_collect(stream: Any) -> Any:
+    reasoning_open = False
     for chunk in stream:
-        _print_delta(chunk)
+        reasoning_open = _print_delta(chunk, reasoning_open=reasoning_open)
         yield chunk
     console.print()  # newline once the turn finishes
 
 
-def _print_delta(chunk: Any) -> None:
+def _print_delta(chunk: Any, *, reasoning_open: bool) -> bool:
+    """Prints this chunk's delta text, returning whether a reasoning
+    block is still open (so the next content delta knows to break onto
+    its own line first, instead of running "...done thinking```grim")."""
     delta = chunk.choices[0].delta if chunk.choices else None
     if delta is None:
-        return
-    text = getattr(delta, "reasoning_content", None) or getattr(delta, "content", None)
-    if text:
-        console.print(text, end="", highlight=False, markup=False)
+        return reasoning_open
+    reasoning = getattr(delta, "reasoning_content", None)
+    content = getattr(delta, "content", None)
+    if reasoning:
+        console.print(reasoning, end="", highlight=False, markup=False)
+        return True
+    if content:
+        if reasoning_open:
+            console.print()  # separate reasoning from the final answer
+        console.print(content, end="", highlight=False, markup=False)
+    return False

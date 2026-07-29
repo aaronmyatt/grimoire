@@ -17,7 +17,9 @@ pytest.importorskip("minisweagent")  # adapter/ needs the optional `adapter` ext
 
 import litellm  # noqa: E402
 from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices  # noqa: E402
+from minisweagent.agents import interactive  # noqa: E402
 
+from grim.adapter import streaming_model  # noqa: E402
 from grim.adapter.streaming_model import GrimStreamingTextbasedModel  # noqa: E402
 
 _GRIM_BLOCK = '```grim\ngrim find "x"\n```'
@@ -90,6 +92,24 @@ def test_query_parses_the_grim_action_from_reconstructed_content(
     message = _model().query([{"role": "user", "content": "find x"}])
 
     assert message["extra"]["actions"] == [{"command": 'grim find "x"'}]
+
+
+def test_uses_interactive_agents_shared_console() -> None:
+    # Regression: a second, independent Console() instance corrupts
+    # InteractiveAgent's spinner (see streaming_model.py's docstring) —
+    # this must always be the exact same object, not just the same class.
+    assert streaming_model.console is interactive.console
+
+
+def test_reasoning_and_content_are_separated_by_a_newline(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(litellm, "completion", _fake_completion)
+
+    _model().query([{"role": "user", "content": "find x"}])
+
+    out = capsys.readouterr().out
+    assert "thinking...\n```grim" in out, f"reasoning ran into content with no break: {out!r}"
 
 
 def test_authentication_error_gets_the_helpful_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
