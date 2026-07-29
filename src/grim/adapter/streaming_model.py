@@ -16,11 +16,20 @@ Deliberately imports InteractiveAgent's `console` instead of creating a
 new one: Rich's Live/Status display (the "Waiting for the LM to
 respond..." spinner, refreshed 12.5x/sec) only coordinates cursor
 movement correctly with prints going through the *same* Console object.
-A second, independent Console instance writing to the same terminal
-corrupts the spinner's redraw math — confirmed live: output rendered as
-rapid, overlapping, in-place garbage instead of scrolling text. This is
-a real (if unusual) coupling to the agent layer, forced by Rich's
-design, not a layering mistake.
+
+That alone isn't sufficient, though — confirmed by capturing the raw
+ANSI stream under a real pty: `Status` wraps a `Live(transient=True)`,
+and printing with `end=""` (no newline) appends our text onto the exact
+same line the spinner occupies. Every ~80ms (12.5Hz) refresh erases
+that whole line and redraws only the spinner, wiping our text; when the
+Live exits, `transient=True` erases that line entirely, taking
+whatever we'd streamed onto it along with it. So `_print_and_collect`
+also stops the active Live as soon as real output starts arriving —
+which is also semantically correct: "waiting for the LM" is over once
+tokens are visibly arriving. Rich has no public API for "the currently
+active Live on this console," so this reaches into Console._live_stack
+defensively (falls back to a no-op, not a crash, if that private
+attribute is ever renamed/removed upstream).
 """
 
 from __future__ import annotations
@@ -30,6 +39,7 @@ from typing import Any
 import litellm
 from minisweagent.agents.interactive import console as console  # re-exported for tests
 from minisweagent.models.litellm_textbased_model import LitellmTextbasedModel
+from rich.console import Console
 
 
 class GrimStreamingTextbasedModel(LitellmTextbasedModel):
@@ -58,10 +68,21 @@ class GrimStreamingTextbasedModel(LitellmTextbasedModel):
 
 def _print_and_collect(stream: Any) -> Any:
     reasoning_open = False
-    for chunk in stream:
+    for index, chunk in enumerate(stream):
+        if index == 0:
+            _stop_active_live(console)
         reasoning_open = _print_delta(chunk, reasoning_open=reasoning_open)
         yield chunk
     console.print()  # newline once the turn finishes
+
+
+def _stop_active_live(console: Console) -> None:
+    """Stop InteractiveAgent's spinner (see module docstring) before we
+    print onto its line. Safe to call repeatedly or with nothing active
+    — Live.start()/.stop() are both no-ops when already in that state."""
+    live_stack = getattr(console, "_live_stack", None)
+    if live_stack:
+        live_stack[-1].stop()
 
 
 def _print_delta(chunk: Any, *, reasoning_open: bool) -> bool:

@@ -101,6 +101,21 @@ def test_uses_interactive_agents_shared_console() -> None:
     assert streaming_model.console is interactive.console
 
 
+def test_query_stops_the_active_status_spinner(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression: printing onto the same line a transient Live spinner
+    # owns gets wiped every refresh and erased entirely on exit (see
+    # streaming_model.py's docstring — confirmed via a real pty capture).
+    # The spinner must be stopped before we print our first token.
+    monkeypatch.setattr(litellm, "completion", _fake_completion)
+
+    with interactive.console.status("Waiting for the LM to respond..."):
+        assert interactive.console._live_stack, "sanity: a Live must be active here"
+        active_live = interactive.console._live_stack[-1]
+        _model().query([{"role": "user", "content": "find x"}])
+        assert not active_live.is_started
+        assert not interactive.console._live_stack, "stop() must pop itself off the live stack"
+
+
 def test_reasoning_and_content_are_separated_by_a_newline(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
