@@ -54,6 +54,9 @@ agent:
 environment:
   environment_class: grim.adapter.environment.GrimEnvironment
 model:
+  # Optional: swap to grim.adapter.streaming_model.GrimStreamingTextbasedModel
+  # for live token-by-token terminal output instead of a blank pause per
+  # turn (build plan Phase 2b) — same contract, fully reversible.
   model_class: litellm_textbased
   action_regex: '```grim\s*\n(.*?)\n```'
   format_error_template: |

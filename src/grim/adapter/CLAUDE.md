@@ -25,6 +25,12 @@ six-verb constraint (build plan D7, §2, Phase 2).
   grim-specific `action_regex`, and `environment.environment_class:
   grim.adapter.environment.GrimEnvironment`. Data, not code — safe to
   hand-edit without touching `environment.py`.
+- `streaming_model.py` — `GrimStreamingTextbasedModel` (build plan
+  Phase 2b, optional). Same `LitellmTextbasedModel` contract, live
+  terminal output instead of a blank pause per turn. Opt-in only: swap
+  `model.model_class` in `grimoire.yaml` to
+  `grim.adapter.streaming_model.GrimStreamingTextbasedModel`; the
+  shipped default stays non-streaming.
 
 ## Invariants
 - Any action that doesn't parse as one of the six verbs (via
