@@ -69,6 +69,14 @@ def test_write_script_rejects_invalid_python_with_diagnostic(
         write_script(conn, _request(name="broken_script", body="def broken(:\n    pass"))
 
 
+def test_write_script_rejects_unsupported_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="unsupported language"):
+        write_script(conn, _request(language="javascript"))
+
+
 def test_write_script_fork_sets_parent_version_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

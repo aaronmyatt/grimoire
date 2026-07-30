@@ -12,6 +12,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass
 
+from grim.exec import dispatch
 from grim.verbs import _shared
 
 
@@ -38,6 +39,9 @@ def write_script(conn: sqlite3.Connection, request: WriteRequest) -> WriteResult
     _shared.validate_slug(request.name)
     if not request.description.strip():
         raise ValueError("description is required")
+    if request.language not in dispatch.SUPPORTED_LANGUAGES:
+        supported = ", ".join(sorted(dispatch.SUPPORTED_LANGUAGES))
+        raise ValueError(f"unsupported language {request.language!r} — supported: {supported}")
     lint_error = _shared.lint(request.language, request.body)
     if lint_error:
         raise ValueError(lint_error)
