@@ -65,3 +65,53 @@ def test_write_file_writes_stdin_to_path(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert target.read_text() == content
     assert f"wrote {len(content)} bytes" in result.stdout
+
+
+def test_apply_patch_applies_a_unified_diff(tmp_path: Path) -> None:
+    (tmp_path / "greeting.txt").write_text("hello\n")
+    patch_text = "--- a/greeting.txt\n+++ b/greeting.txt\n@@ -1 +1 @@\n-hello\n+hello world\n"
+
+    result = _run("apply_patch", stdin=patch_text, cwd=str(tmp_path))
+
+    assert result.exit_code == 0
+    assert "applied via git apply" in result.stdout
+    assert (tmp_path / "greeting.txt").read_text() == "hello world\n"
+
+
+def test_apply_patch_reports_failure_on_a_bad_patch(tmp_path: Path) -> None:
+    (tmp_path / "greeting.txt").write_text("hello\n")
+    malformed = "not a real patch\n"
+
+    result = _run("apply_patch", stdin=malformed, cwd=str(tmp_path))
+
+    assert result.exit_code == 1
+    assert "git apply failed" in result.stderr
+    assert "patch -p1 also failed" in result.stderr
+
+
+def test_grep_tree_finds_a_match_with_line_number(tmp_path: Path) -> None:
+    (tmp_path / "code.py").write_text("line1\nneedle here\nline3\n")
+
+    result = _run("grep_tree", argv=["needle", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "2:needle here" in result.stdout
+
+
+def test_grep_tree_no_match_exits_nonzero(tmp_path: Path) -> None:
+    (tmp_path / "code.py").write_text("nothing interesting here\n")
+
+    result = _run("grep_tree", argv=["needle", str(tmp_path)])
+
+    assert result.exit_code != 0
+
+
+def test_list_dir_lists_files_and_subdirs(tmp_path: Path) -> None:
+    (tmp_path / "file.txt").write_text("hi")
+    (tmp_path / "subdir").mkdir()
+
+    result = _run("list_dir", argv=[str(tmp_path)])
+
+    lines = result.stdout.splitlines()
+    assert any(line.startswith("file\t") and line.endswith("\tfile.txt") for line in lines)
+    assert any(line.startswith("dir\t") and line.endswith("\tsubdir") for line in lines)

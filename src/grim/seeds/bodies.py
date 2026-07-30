@@ -49,6 +49,53 @@ with open(path, "w", encoding="utf-8") as f:
 print(f"wrote {len(content)} bytes to {path}")
 '''
 
+_APPLY_PATCH = '''"""apply_patch — apply a unified diff (stdin) via `git apply`, falling
+back to `patch -p1` if that fails or git isn't available."""
+import subprocess
+import sys
+
+patch_text = sys.stdin.read()
+
+result = subprocess.run(
+    ["git", "apply", "--whitespace=nowarn", "-"], input=patch_text, text=True, capture_output=True
+)
+if result.returncode == 0:
+    print("applied via git apply")
+    sys.exit(0)
+
+fallback = subprocess.run(["patch", "-p1"], input=patch_text, text=True, capture_output=True)
+if fallback.returncode == 0:
+    print("applied via patch -p1 (git apply failed)")
+    sys.exit(0)
+
+print(f"git apply failed:\\n{result.stderr}", file=sys.stderr)
+print(f"patch -p1 also failed:\\n{fallback.stderr}", file=sys.stderr)
+sys.exit(1)
+'''
+
+_GREP_TREE = '''"""grep_tree — ripgrep wrapper with sane defaults (line numbers, respects
+.gitignore). Usage: grep_tree PATTERN [PATH]"""
+import subprocess
+import sys
+
+pattern = sys.argv[1]
+path = sys.argv[2] if len(sys.argv) > 2 else "."
+result = subprocess.run(["rg", "--line-number", "--no-heading", pattern, path])
+sys.exit(result.returncode)
+'''
+
+_LIST_DIR = '''"""list_dir — structured directory listing (type, size, name).
+Usage: list_dir [PATH]"""
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+for entry in sorted(path.iterdir(), key=lambda p: p.name):
+    kind = "dir" if entry.is_dir() else "file"
+    size = entry.stat().st_size if entry.is_file() else "-"
+    print(f"{kind}\\t{size}\\t{entry.name}")
+'''
+
 SEEDS: list[SeedSpec] = [
     SeedSpec(
         name="shell",
@@ -67,5 +114,23 @@ SEEDS: list[SeedSpec] = [
         language="python",
         description="write stdin to a file path, overwriting it",
         body=_WRITE_FILE,
+    ),
+    SeedSpec(
+        name="apply_patch",
+        language="python",
+        description="apply a unified diff via git apply, falling back to patch -p1",
+        body=_APPLY_PATCH,
+    ),
+    SeedSpec(
+        name="grep_tree",
+        language="python",
+        description="ripgrep wrapper with sane defaults for searching a directory tree",
+        body=_GREP_TREE,
+    ),
+    SeedSpec(
+        name="list_dir",
+        language="python",
+        description="structured directory listing: type, size, name",
+        body=_LIST_DIR,
     ),
 ]
