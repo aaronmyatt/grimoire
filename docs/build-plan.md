@@ -187,6 +187,15 @@ grim find   "query" [--limit 5]     # ranked: name · desc · lang · runs · su
 grim run    NAME[@V] [--timeout 120] [--stdin-file F] [-- ARGS...]
 ```
 
+> **Known bug** (found during Phase 3's smoke suite, not yet fixed):
+> `--timeout`/`--stdin-file` only actually work when placed *before*
+> `NAME`, not after as documented above — `cli.py`'s `run` subparser's
+> trailing `args` positional is `nargs=argparse.REMAINDER`, which
+> swallows every token after `NAME` including flags that look like
+> `--stdin-file`. `cli.py` is frozen (Phase 1b); fixing this is its own
+> follow-up task, not bundled into whatever else is in flight when it's
+> noticed.
+
 Human-only extras: `grim init [--check]` (create DB, verify FTS5 availability, `run doctor` the toolchains — `init` itself landed in Phase 0; `--check` is Phase 4), `grim doctor`, and later `grim draft` (Phase 7). The adapter rejects these if the model emits them.
 
 Semantics that matter:
