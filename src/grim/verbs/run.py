@@ -104,11 +104,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     name, version = _shared.parse_name_version(args.name)
     stdin = Path(args.stdin_file).read_text() if args.stdin_file else None
-    argv = args.args[1:] if args.args and args.args[0] == "--" else (args.args or [])
     request = RunRequest(
         name=name,
         version=version,
-        argv=argv,
+        argv=args.args,
         stdin=stdin,
         cwd=None,
         timeout=args.timeout or DEFAULT_TIMEOUT_S,
