@@ -6,7 +6,7 @@ Grimoire replaces mini-swe-agent's raw-bash action space with six verbs over a S
 
 The thesis being tested: bash is great, the entire corpus of programming languages is better — and a persistent, searchable corpus of the agent's own scripts compounds, saving tokens on repeat work and leaving the human a usable library behind.
 
-> Status: Phases 0–2 and 2b are done (see git history: `cce0859`..`4bf603c`). Phase 2's pseudocode below is superseded by what actually shipped — mini-swe-agent's real API (2.4.6) diverged from the assumptions this doc was written against; see `src/grim/adapter/CLAUDE.md` and the commit history for the accurate contract. Phases 3–8 below are the remaining work, in order.
+> Status: Phases 0–3 and 2b are done (see git history: `cce0859`..`6e6f679`). Phase 2's pseudocode below is superseded by what actually shipped — mini-swe-agent's real API (2.4.6) diverged from the assumptions this doc was written against; see `src/grim/adapter/CLAUDE.md` and the commit history for the accurate contract. Phases 4–8 below are the remaining work, in order.
 
 ---
 
