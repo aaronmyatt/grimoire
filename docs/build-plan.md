@@ -315,6 +315,16 @@ All computable from the DB; `grim run stats` prints them (D11).
 | Tokens & steps per task | from mini's cost tracking, joined to sessions | the headline thesis curve |
 | Active library | scripts run in last 30d ÷ total unarchived | gardener effectiveness |
 
+Phase 3's `stats` seed implements reuse rate, shell-escape rate, and
+active library from the schema as-is. Dup pressure is **not yet
+computable** — `write_script`'s similarity nudge (build plan §4) is
+computed and printed at write time only, never persisted, so there's no
+data source for "writes that triggered it" today. Fixing this means
+either a `script.similarity_nudged` column or a lightweight event log,
+either way touching `verbs/write.py` — deliberately deferred rather
+than reopening that already-shipped file as a side effect of Phase 3.
+Find hit rate stays gated on Phase 6 as originally scoped.
+
 ---
 
 ## 8. Risks
