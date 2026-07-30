@@ -55,7 +55,13 @@ def _next_seq(conn: sqlite3.Connection, session_id: str) -> int:
 def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
     row = _shared.resolve_script_version(conn, request.name, request.version)
     _shared.ensure_session(conn, request.session_id)
-    seq = _next_seq(conn, request.session_id)
+    # Commit now, before the blocking dispatch call below: ensure_session's
+    # INSERT OR IGNORE otherwise leaves a write transaction open across the
+    # entire (possibly multi-second) subprocess call. If that dispatched
+    # script itself shells out to `grim run`/`grim write` (composition —
+    # build plan §6), the nested call would contend for this same SQLite
+    # write lock and fail with "database is locked".
+    conn.commit()
 
     result = dispatch.dispatch(
         dispatch.ScriptVersion(language=row["language"], body=row["body"]),
@@ -64,6 +70,11 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
         ),
     )
 
+    # Computed after dispatch, not before: a nested `grim run` inside the
+    # dispatched script may have already inserted execution rows for this
+    # same session, so the "next" seq must be read fresh here to avoid a
+    # UNIQUE(session_id, seq) collision with whatever it already claimed.
+    seq = _next_seq(conn, request.session_id)
     cursor = conn.execute(
         "INSERT INTO execution (script_version_id, session_id, seq, argv, stdin, cwd, "
         "exit_code, stdout, stderr, duration_ms, env_fingerprint) "

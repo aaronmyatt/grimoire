@@ -125,3 +125,42 @@ def test_run_script_truncates_shell_more_aggressively_than_named_scripts(
 
     assert "first 40 + last 10 of 59 lines" in named_result.observation
     assert "first 10 + last 3 of 59 lines" in shell_result.observation
+
+
+def test_run_script_supports_nested_grim_run_without_deadlocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression: ensure_session's uncommitted write used to stay open
+    # across the whole (blocking) dispatch call, so a script that shells
+    # out to `grim run` on another script would deadlock/fail with
+    # "database is locked". Both calls share session "human-adhoc" (the
+    # default for both the outer request and the nested subprocess, since
+    # neither sets GRIM_SESSION), matching how composition would actually
+    # be used within one agent session.
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn, body="print('base result')")
+    write_script(
+        conn,
+        WriteRequest(
+            name="wrapper_thing",
+            language="python",
+            description="wraps foo_bar",
+            body=(
+                "import subprocess\n"
+                "result = subprocess.run(['grim', 'run', 'foo_bar'], "
+                "capture_output=True, text=True)\n"
+                "print('wrapper saw:', 'base result' in result.stdout)\n"
+            ),
+            parent=None,
+            scope="global",
+            session_id="human-adhoc",
+        ),
+    )
+
+    result = run_script(conn, _request(name="wrapper_thing", timeout=30.0))
+
+    assert result.exit_code == 0
+    assert "wrapper saw: True" in result.observation
+
+    seqs = [row["seq"] for row in conn.execute("SELECT seq FROM execution ORDER BY seq")]
+    assert seqs == [1, 2], "the nested call and the outer call must both land, uncollided"
