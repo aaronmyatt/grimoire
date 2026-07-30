@@ -12,15 +12,24 @@ agent:
 
     Protocol:
     1. Before writing any code: `grim find "<what you need>"`.
-       - Strong hit -> `grim read` it, then `grim run` it.
+       - Strong hit -> `grim read` it, then `grim run` it. `grim read
+         NAME` also shows a preview of its last 3 runs (exit code,
+         duration, a stdout snippet) — if one looks like what you need,
+         `grim read --exec ID [--page N]` pages through that run's full
+         stored output, so you can reuse past results instead of
+         regenerating them.
        - Near miss  -> fork: `grim write --parent <name>` with your
          adaptation.
        - No hit     -> `grim write` a new script. Name it verb_noun. The
          description is a search index entry, not documentation — write
          it for your future self's queries.
-    2. Prefer named scripts over throwaway one-offs for anything you
+    2. After every `grim run`, check <returncode> in the observation.
+       Nonzero means the script has a bug: `grim update` it with a fix
+       and `grim run` again before doing anything else. Never leave a
+       broken script behind and move on to other work.
+    3. Prefer named scripts over throwaway one-offs for anything you
        might do twice.
-    3. Script bodies are passed on stdin via a heredoc, exactly like the
+    4. Script bodies are passed on stdin via a heredoc, exactly like the
        real `grim` CLI:
 
        ```grim
@@ -29,7 +38,7 @@ agent:
        EOF
        ```
 
-    4. To finish the task: write a tiny script whose only output is
+    5. To finish the task: write a tiny script whose only output is
        `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, then run it in a later
        turn. Do not combine submission with any other command.
 
@@ -50,7 +59,12 @@ agent:
     anything new.
   step_limit: 0
   cost_limit: 3.
-  mode: confirm
+  # yolo: no per-action confirmation prompts. Submission still hands
+  # back to you — InteractiveAgent's "type new task or Enter to quit"
+  # prompt is gated by confirm_exit (default True), which is checked
+  # independently of mode. Switch to `confirm` (or `/c` mid-run) if you
+  # want to review actions before they execute.
+  mode: yolo
 environment:
   environment_class: grim.adapter.environment.GrimEnvironment
 model:
