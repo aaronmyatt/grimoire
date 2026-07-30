@@ -9,10 +9,13 @@ only, never verb logic.
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from typing import TYPE_CHECKING
 
 from grim import db
+from grim.seeds.bodies import SEEDS
+from grim.seeds.loader import load_seeds
 from grim.verbs import find, read, run, update, write
 from grim.verbs import list as list_verb
 
@@ -25,10 +28,19 @@ else:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    """`grim init`: connect + migrate, reporting what was newly applied."""
+    """`grim init`: connect + migrate + seed the library, reporting what
+    was newly applied/seeded (build plan Phase 3)."""
     conn = db.connect()
     applied = db.migrate(conn)
     print(f"applied: {', '.join(applied)}" if applied else "already up to date")
+
+    conn.row_factory = sqlite3.Row
+    newly_seeded = load_seeds(conn)
+    if newly_seeded:
+        print(f"seeded: {', '.join(newly_seeded)}")
+    else:
+        print(f"seeds already present ({len(SEEDS)})")
+
     assert isinstance(applied, list), "migrate() must always return a list"
     assert conn is not None, "connect() must always return a connection or raise"
     return 0
