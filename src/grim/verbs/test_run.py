@@ -99,3 +99,29 @@ def test_run_script_raises_on_unknown_script(
     conn = _migrated_conn(tmp_path, monkeypatch)
     with pytest.raises(LookupError):
         run_script(conn, _request(name="does_not_exist"))
+
+
+def test_run_script_truncates_shell_more_aggressively_than_named_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    body = "for i in range(1, 60): print(f'line{i}')"
+    _seed_script(conn, body=body)  # named script foo_bar
+    write_script(
+        conn,
+        WriteRequest(
+            name="shell",
+            language="python",
+            description="d",
+            body=body,
+            parent=None,
+            scope="global",
+            session_id="human-adhoc",
+        ),
+    )
+
+    named_result = run_script(conn, _request(name="foo_bar"))
+    shell_result = run_script(conn, _request(name="shell"))
+
+    assert "first 40 + last 10 of 59 lines" in named_result.observation
+    assert "first 10 + last 3 of 59 lines" in shell_result.observation

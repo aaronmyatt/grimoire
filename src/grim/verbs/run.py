@@ -16,6 +16,14 @@ from grim.verbs import _shared
 
 DEFAULT_TIMEOUT_S = 120.0
 
+# The shell escape hatch (build plan §3/§7) gets tighter truncation than
+# named scripts so the observed token cost visibly favors promoting a
+# repeated `shell` invocation to a named script (envelope.truncate's
+# defaults — 40/10 — apply to everything else).
+SHELL_SCRIPT_NAME = "shell"
+SHELL_HEAD_LINES = 10
+SHELL_TAIL_LINES = 3
+
 
 @dataclass(frozen=True)
 class RunRequest:
@@ -81,7 +89,12 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
         f"[grim] exec #{cursor.lastrowid} · {row['name']}@{row['version']} · "
         f"exit {result.exit_code} · {result.duration_ms / 1000:.1f}s"
     )
-    body = envelope.truncate(result.stdout, result.stderr)
+    if row["name"] == SHELL_SCRIPT_NAME:
+        body = envelope.truncate(
+            result.stdout, result.stderr, head_lines=SHELL_HEAD_LINES, tail_lines=SHELL_TAIL_LINES
+        )
+    else:
+        body = envelope.truncate(result.stdout, result.stderr)
     return RunResult(
         execution_id=cursor.lastrowid, exit_code=result.exit_code, observation=f"{header}\n{body}"
     )
