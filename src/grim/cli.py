@@ -92,7 +92,12 @@ def _add_run_parser(subparsers: _SubParsers) -> None:
     parser.add_argument("name")
     parser.add_argument("--timeout", type=float)
     parser.add_argument("--stdin-file", dest="stdin_file")
-    parser.add_argument("args", nargs=argparse.REMAINDER)
+    # nargs="*" (not REMAINDER): REMAINDER swallows every token after NAME,
+    # including flags like --stdin-file if they come after it. "*" respects
+    # argparse's own "--" separator, so --timeout/--stdin-file work on
+    # either side of NAME, and a literal "--" before trailing script args
+    # is consumed rather than showing up inside `args` itself.
+    parser.add_argument("args", nargs="*")
     parser.set_defaults(func=run.cmd_run)
 
 
