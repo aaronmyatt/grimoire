@@ -78,3 +78,28 @@ def test_multiline_body_preserves_internal_lines() -> None:
     result = parse_grim(text)
     assert result is not None
     assert result.stdin == "line1\nline2"
+
+
+def test_bare_verb_without_grim_prefix_is_accepted() -> None:
+    # Regression: models routinely treat the ```grim fence tag as already
+    # saying "grim" (the same way ```python never repeats "python" inside
+    # the block) and drop the literal word from the content.
+    result = parse_grim('find "extract failing tests"')
+    assert result is not None
+    assert result.verb == "find"
+    assert result.argv == ["find", "extract failing tests"]
+
+
+def test_bare_verb_with_heredoc_matches_the_reported_failure() -> None:
+    text = "update greet --lang bash --desc \"prints a greeting\" <<'EOF'\necho hi\nEOF"
+    result = parse_grim(text)
+    assert result is not None
+    assert result.verb == "update"
+    assert result.argv == ["update", "greet", "--lang", "bash", "--desc", "prints a greeting"]
+    assert result.stdin == "echo hi"
+
+
+def test_bare_unknown_verb_still_returns_none() -> None:
+    assert parse_grim("doctor") is None
+    assert parse_grim("init") is None
+    assert parse_grim("ls -la") is None

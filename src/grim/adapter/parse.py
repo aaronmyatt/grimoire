@@ -13,7 +13,6 @@ from dataclasses import dataclass
 SIX_VERBS = frozenset({"write", "update", "read", "list", "find", "run"})
 
 _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1\s*$")
-_MIN_GRIM_ARGV_LEN = 2  # "grim" + at least the verb
 
 
 @dataclass(frozen=True)
@@ -45,9 +44,10 @@ def _extract_heredoc(
 
 def parse_grim(text: str) -> ParsedCommand | None:
     """Parse a model action's raw text into a ParsedCommand, or None if
-    it isn't a `grim <verb> ...` invocation (malformed heredoc, unbalanced
-    quotes, not `grim`, or a verb outside the six-verb set — D12's
-    human-only verbs like `init` are rejected here too)."""
+    it isn't a `[grim] <verb> ...` invocation (malformed heredoc,
+    unbalanced quotes, or a verb outside the six-verb set — D12's
+    human-only verbs like `init` are rejected here too). The leading
+    "grim" is optional — see the tolerance note below."""
     assert isinstance(text, str), "parse_grim expects the model's raw block content as text"
     lines = text.splitlines()
     cmd_idx = next((i for i, line in enumerate(lines) if line.strip()), None)
@@ -63,8 +63,19 @@ def parse_grim(text: str) -> ParsedCommand | None:
         argv = shlex.split(command_line)
     except ValueError:
         return None
-    if len(argv) < _MIN_GRIM_ARGV_LEN or argv[0] != "grim" or argv[1] not in SIX_VERBS:
+    if not argv:
         return None
 
-    assert argv[1] in SIX_VERBS, "verb must be one of the six agent-facing verbs"
-    return ParsedCommand(verb=argv[1], argv=argv[1:], stdin=stdin or "")
+    # Tolerate the model treating the ```grim fence tag as already saying
+    # "grim" and dropping the literal word from the content — a natural
+    # mistake, since every other language-tagged fence works exactly that
+    # way (you never repeat "python" inside a ```python block). Both
+    # "grim <verb> ..." and bare "<verb> ..." are accepted; the verb
+    # whitelist below is unchanged either way.
+    if argv[0] == "grim":
+        argv = argv[1:]
+    if not argv or argv[0] not in SIX_VERBS:
+        return None
+
+    assert argv[0] in SIX_VERBS, "verb must be one of the six agent-facing verbs"
+    return ParsedCommand(verb=argv[0], argv=argv, stdin=stdin or "")
