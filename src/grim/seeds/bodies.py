@@ -96,6 +96,120 @@ for entry in sorted(path.iterdir(), key=lambda p: p.name):
     print(f"{kind}\\t{size}\\t{entry.name}")
 '''
 
+_STATS = '''"""stats — usage report: total runs, shell-escape rate, reuse rate,
+active library % (build plan §7). Opens its own sqlite connection —
+this runs as an isolated subprocess with no access to grim's
+in-process connection, same as every script (D8)."""
+import os
+import sqlite3
+from pathlib import Path
+
+db_path = os.environ.get("GRIM_DB") or str(Path.home() / ".grimoire" / "grimoire.db")
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+
+total_runs = conn.execute("SELECT COUNT(*) AS n FROM execution").fetchone()["n"]
+
+shell_runs = conn.execute(
+    "SELECT COUNT(*) AS n FROM execution e "
+    "JOIN script_version sv ON sv.id = e.script_version_id "
+    "JOIN script s ON s.id = sv.script_id WHERE s.name = 'shell'"
+).fetchone()["n"]
+
+reused_runs = conn.execute(
+    "SELECT COUNT(*) AS n FROM execution e "
+    "JOIN script_version sv ON sv.id = e.script_version_id "
+    "JOIN script s ON s.id = sv.script_id "
+    "WHERE s.origin_session_id IS NOT NULL AND s.origin_session_id != e.session_id"
+).fetchone()["n"]
+
+active_scripts = conn.execute(
+    "SELECT COUNT(DISTINCT s.id) AS n FROM script s "
+    "JOIN script_version sv ON sv.script_id = s.id "
+    "JOIN execution e ON e.script_version_id = sv.id "
+    "WHERE s.archived = 0 AND e.started_at >= datetime('now', '-30 days')"
+).fetchone()["n"]
+
+total_scripts = conn.execute("SELECT COUNT(*) AS n FROM script WHERE archived = 0").fetchone()["n"]
+
+
+def pct(numerator, denominator):
+    return f"{numerator / denominator:.2%}" if denominator else "n/a"
+
+
+print(f"total runs: {total_runs}")
+print(f"shell-escape rate: {pct(shell_runs, total_runs)}")
+print(f"reuse rate: {pct(reused_runs, total_runs)}")
+print(f"active library: {pct(active_scripts, total_scripts)}")
+'''
+
+_GARDENER = '''"""gardener — dup/stale sweep. Reports candidates for archiving; never
+archives anything itself (a human reviews and acts separately)."""
+import os
+import sqlite3
+from pathlib import Path
+
+db_path = os.environ.get("GRIM_DB") or str(Path.home() / ".grimoire" / "grimoire.db")
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+
+print("=== exact duplicates (same body as another script's latest version) ===")
+dupes = conn.execute(
+    "SELECT sv.body_hash, GROUP_CONCAT(s.name, ', ') AS names FROM script_version sv "
+    "JOIN script s ON s.id = sv.script_id "
+    "WHERE sv.version = ("
+    "  SELECT MAX(v2.version) FROM script_version v2 WHERE v2.script_id = sv.script_id"
+    ") AND s.archived = 0 "
+    "GROUP BY sv.body_hash HAVING COUNT(DISTINCT s.id) > 1"
+).fetchall()
+if not dupes:
+    print("  (none)")
+for row in dupes:
+    print(f"  {row['names']}")
+
+print("=== stale (not seeded, no runs in last 30 days) ===")
+stale = conn.execute(
+    "SELECT s.name FROM script s LEFT JOIN script_health h ON h.id = s.id "
+    "WHERE s.archived = 0 AND s.seeded = 0 "
+    "AND (h.last_used IS NULL OR h.last_used < datetime('now', '-30 days')) "
+    "ORDER BY s.name"
+).fetchall()
+if not stale:
+    print("  (none)")
+for row in stale:
+    print(f"  {row['name']}")
+'''
+
+_EXPORT_LIBRARY = '''"""export_library — dump the latest version of every non-archived
+script to a git-friendly directory tree. Usage: export_library [DIR]"""
+import os
+import sqlite3
+import sys
+from pathlib import Path
+
+out_dir = Path(sys.argv[1] if len(sys.argv) > 1 else "grimoire-export")
+db_path = os.environ.get("GRIM_DB") or str(Path.home() / ".grimoire" / "grimoire.db")
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+
+EXT = {"python": "py", "bash": "sh"}
+
+rows = conn.execute(
+    "SELECT s.name, s.language, sv.body FROM script s "
+    "JOIN script_version sv ON sv.script_id = s.id "
+    "WHERE s.archived = 0 AND sv.version = ("
+    "  SELECT MAX(v2.version) FROM script_version v2 WHERE v2.script_id = s.id"
+    ")"
+).fetchall()
+
+out_dir.mkdir(parents=True, exist_ok=True)
+for row in rows:
+    ext = EXT.get(row["language"], "txt")
+    (out_dir / f"{row['name']}.{ext}").write_text(row["body"])
+
+print(f"exported {len(rows)} scripts to {out_dir}/")
+'''
+
 SEEDS: list[SeedSpec] = [
     SeedSpec(
         name="shell",
@@ -132,5 +246,23 @@ SEEDS: list[SeedSpec] = [
         language="python",
         description="structured directory listing: type, size, name",
         body=_LIST_DIR,
+    ),
+    SeedSpec(
+        name="stats",
+        language="python",
+        description="usage report: total runs, shell-escape rate, reuse rate, active library %",
+        body=_STATS,
+    ),
+    SeedSpec(
+        name="gardener",
+        language="python",
+        description="dup/stale sweep proposing archive candidates, never archives itself",
+        body=_GARDENER,
+    ),
+    SeedSpec(
+        name="export_library",
+        language="python",
+        description="dump the latest version of every non-archived script to a directory tree",
+        body=_EXPORT_LIBRARY,
     ),
 ]
