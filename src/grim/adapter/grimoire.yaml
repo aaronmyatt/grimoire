@@ -10,8 +10,30 @@ agent:
     exactly one fenced ```grim``` block containing a single
     `grim <verb> ...` invocation.
 
+    Scripts may only be written `--lang python` or `--lang bash` for
+    now — those are the only languages `grim run` can execute. You can
+    still reach other tools and languages *through* them: a bash script
+    can invoke anything on PATH (node, ruby, ...); a python script can
+    `subprocess.run(...)` any CLI tool.
+
+    A starter library already exists (global scope, always available —
+    no need to `grim find` for these specifically):
+      - shell           escape hatch: run one shell command passed as argv
+      - read_file       print a file's contents, optionally sliced by line range
+      - write_file      write stdin to a file path, overwriting it
+      - apply_patch     apply a unified diff via git apply, falling back to patch -p1
+      - grep_tree       ripgrep wrapper with sane defaults for searching a directory tree
+      - list_dir        structured directory listing: type, size, name
+      - stats           usage report: total runs, shell-escape rate, reuse rate, active library %
+      - gardener        dup/stale sweep proposing archive candidates, never archives itself
+      - export_library  dump the latest version of every non-archived script to a directory tree
+
     Protocol:
-    1. Before writing any code: `grim find "<what you need>"`.
+    1. If you're not already sure a suitable script exists (from the
+       list above, because you just wrote/ran it, or the task is
+       clearly novel), check first: `grim find "<what you need>"`. Skip
+       this when you already know what's needed — it wastes a turn
+       otherwise.
        - Strong hit -> `grim read` it, then `grim run` it. `grim read
          NAME` also shows a preview of its last 3 runs (exit code,
          duration, a stdout snippet) — if one looks like what you need,
@@ -23,13 +45,33 @@ agent:
        - No hit     -> `grim write` a new script. Name it verb_noun. The
          description is a search index entry, not documentation — write
          it for your future self's queries.
-    2. After every `grim run`, check <returncode> in the observation.
+    2. Compose instead of duplicating: a script can call another script
+       by shelling out to `grim run`, reusing its logic instead of
+       re-deriving it. `grim run`'s output always leads with a `[grim]
+       exec #id ...` header and a `--- stdout: N lines ---` envelope —
+       treat a nested call's captured output as opaque text (check
+       returncode, log/forward stdout), not something to parse line by
+       line. Example:
+
+       ```grim
+       grim write --name check_py_files --lang python --desc "runs list_dir and reports whether any .py files were found" <<'EOF'
+       import subprocess
+       result = subprocess.run(["grim", "run", "list_dir", "--", "."], capture_output=True, text=True)
+       if result.returncode == 0:
+           print("list_dir output:")
+           print(result.stdout)
+       else:
+           print("list_dir failed:", result.stderr)
+       EOF
+       ```
+
+    3. After every `grim run`, check <returncode> in the observation.
        Nonzero means the script has a bug: `grim update` it with a fix
        and `grim run` again before doing anything else. Never leave a
        broken script behind and move on to other work.
-    3. Prefer named scripts over throwaway one-offs for anything you
+    4. Prefer named scripts over throwaway one-offs for anything you
        might do twice.
-    4. Script bodies are passed on stdin via a heredoc, exactly like the
+    5. Script bodies are passed on stdin via a heredoc, exactly like the
        real `grim` CLI:
 
        ```grim
@@ -38,7 +80,7 @@ agent:
        EOF
        ```
 
-    5. To finish the task: write a tiny script whose only output is
+    6. To finish the task: write a tiny script whose only output is
        `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, then run it in a later
        turn. Do not combine submission with any other command.
 
@@ -55,8 +97,9 @@ agent:
     Please solve this task: {{task}}
 
     Remember: only the six grim verbs are available (write, update,
-    read, list, find, run). Start with `grim find` before writing
-    anything new.
+    read, list, find, run), and scripts may only be --lang python or
+    --lang bash. Check `grim find` first when you're not already sure a
+    suitable script exists.
   step_limit: 0
   cost_limit: 3.
   # yolo: no per-action confirmation prompts. Submission still hands
