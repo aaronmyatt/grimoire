@@ -25,8 +25,8 @@ class ScriptReadResult:
 def read_script(conn: sqlite3.Connection, name: str, version: int | None) -> ScriptReadResult:
     row = _shared.resolve_script_version(conn, name, version)
     executions = conn.execute(
-        "SELECT id, exit_code, duration_ms, started_at FROM execution "
-        "WHERE script_version_id = ? ORDER BY started_at DESC LIMIT 3",
+        "SELECT id, exit_code, duration_ms, started_at, substr(stdout, 1, 120) AS stdout_preview "
+        "FROM execution WHERE script_version_id = ? ORDER BY started_at DESC LIMIT 3",
         (row["id"],),
     ).fetchall()
     assert row["name"] == name, "resolved row must match the requested name"
@@ -74,6 +74,12 @@ def cmd_read(args: argparse.Namespace) -> int:
     print(result.body)
     for execution in result.recent_executions:
         print(
-            f"exec #{execution['id']}: exit {execution['exit_code']} · {execution['duration_ms']}ms"
+            f"exec #{execution['id']}: exit {execution['exit_code']} · "
+            f"{execution['duration_ms']}ms · {_preview_line(execution['stdout_preview'])}"
         )
     return 0
+
+
+def _preview_line(stdout_preview: str | None) -> str:
+    lines = (stdout_preview or "").splitlines()
+    return lines[0] if lines else ""

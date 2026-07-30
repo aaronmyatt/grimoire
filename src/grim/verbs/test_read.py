@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sqlite3
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 
 from grim import db
 from grim.verbs import _shared
-from grim.verbs.read import read_execution_page, read_script
+from grim.verbs.read import cmd_read, read_execution_page, read_script
 from grim.verbs.write import WriteRequest, write_script
 
 
@@ -66,6 +67,19 @@ def test_read_script_resolves_pinned_version(
     assert read_script(conn, "foo_bar", 1).version == 1
 
 
+def test_read_script_recent_executions_include_a_stdout_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    version_id = _seed_script(conn)
+    _seed_execution(conn, version_id, "42\nsome trailing detail\n")
+
+    result = read_script(conn, "foo_bar", None)
+
+    assert len(result.recent_executions) == 1
+    assert result.recent_executions[0]["stdout_preview"].startswith("42")
+
+
 def test_read_script_raises_on_unknown_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -106,3 +120,17 @@ def test_read_execution_page_raises_on_unknown_id(
     conn = _migrated_conn(tmp_path, monkeypatch)
     with pytest.raises(LookupError):
         read_execution_page(conn, 999, 1)
+
+
+def test_cmd_read_prints_the_stdout_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    version_id = _seed_script(conn)
+    _seed_execution(conn, version_id, "42\nsome trailing detail\n")
+
+    exit_code = cmd_read(argparse.Namespace(name="foo_bar", exec=None, page=None))
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert any(line.strip().endswith("· 42") for line in out.splitlines())
