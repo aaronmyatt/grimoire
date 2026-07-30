@@ -9,7 +9,11 @@ six-verb constraint (build plan D7, §2, Phase 2).
 - `parse.py` — `parse_grim(text: str) -> ParsedCommand | None`. Pure
   text-in/data-out: shlex on the first non-blank line, optional trailing
   heredoc for the body, verb whitelisted against the six agent-facing
-  verbs. No mini-swe-agent import.
+  verbs. A leading `grim` token is optional — models routinely drop it,
+  treating the ` ```grim ` fence tag as already having said "grim" (the
+  same convention every other language-tagged fence uses); both `grim
+  <verb> ...` and bare `<verb> ...` are accepted. No mini-swe-agent
+  import.
 - `environment.py` — `GrimEnvironment`, subclassing mini-swe-agent's
   `LocalEnvironment` and overriding `execute(action: dict, cwd: str = "",
   *, timeout: int | None = None) -> dict[str, Any]` (the real upstream
