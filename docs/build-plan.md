@@ -243,18 +243,22 @@ Implementation: a custom `Model` subclass (e.g. `grim.adapter.streaming_model.Gr
 
 ### Phase 3 — Seed library + protocol tuning (2–3d)
 
-Seed on `grim init` (all `seeded=1`, `scope=global`):
+Seed on `grim init` (all `seeded=1`, `scope=global`). Named `shell`, not
+the originally-planned `sh` — the slug validation `_shared.py` already
+enforces (`^[a-z][a-z0-9_]{2,63}$`, minimum 3 chars) rejects 2-char
+names, and reusing `write_script` for the seed insert means seeds are
+held to that same bar rather than special-cased around it:
 
 | Seed | Purpose |
 |------|---------|
-| `sh` | escape hatch: run one shell command passed as argv |
+| `shell` | escape hatch: run one shell command passed as argv |
 | `read_file` / `write_file` | file I/O with line-range support |
 | `apply_patch` | unified-diff application via `git apply` with fallback |
 | `grep_tree` | ripgrep wrapper with sane defaults |
 | `list_dir` | structured directory listing |
 | `stats` / `gardener` / `export_library` | meta-tools *as scripts* (D11): usage report; dup/stale sweep proposing archives; dump library to a git-friendly tree |
 
-Bash is thereby demoted to just another script in the corpus on day one. Then tune the economics: instrument shell-escape rate and reuse rate (§7), and truncate `sh` output more aggressively than named-script output so the observed token cost visibly favors promotion to a named script. **Done when:** a 10-task smoke suite runs entirely through the harness and the metrics land in the DB per session.
+Bash is thereby demoted to just another script in the corpus on day one. Then tune the economics: instrument shell-escape rate and reuse rate (§7), and truncate `shell` output more aggressively than named-script output so the observed token cost visibly favors promotion to a named script. **Done when:** a 10-task smoke suite runs entirely through the harness and the metrics land in the DB per session.
 
 ### Phase 4 — Executor hardening (2–4d)
 
@@ -274,7 +278,7 @@ Full dispatch table: `python → uv run` (PEP 723 inline metadata makes dependen
 
 ### Phase 8 — Evaluation (4–7d + dogfood weeks)
 
-Two tracks. **Benchmark:** SWE-bench Verified, instances grouped per repo and ordered chronologically, one shared DB per repo; baseline is vanilla mini with the identical model. The compounding thesis makes a falsifiable prediction: *tokens-per-instance and steps-per-instance decline with instance index under Grimoire; the baseline stays flat.* Also report solve rate, reuse rate, escape rate, and ablations (cold vs warm DB; find disabled; `sh` seed removed). Cross-instance state violates standard SWE-bench isolation, so report this as its own track, not a leaderboard number. **Daily driver:** a 2–4 week dogfood diary — library growth, reuse trend, escape-rate trend, and the qualitative question that actually matters: do you reach for the library unprompted?
+Two tracks. **Benchmark:** SWE-bench Verified, instances grouped per repo and ordered chronologically, one shared DB per repo; baseline is vanilla mini with the identical model. The compounding thesis makes a falsifiable prediction: *tokens-per-instance and steps-per-instance decline with instance index under Grimoire; the baseline stays flat.* Also report solve rate, reuse rate, escape rate, and ablations (cold vs warm DB; find disabled; `shell` seed removed). Cross-instance state violates standard SWE-bench isolation, so report this as its own track, not a leaderboard number. **Daily driver:** a 2–4 week dogfood diary — library growth, reuse trend, escape-rate trend, and the qualitative question that actually matters: do you reach for the library unprompted?
 
 ---
 
@@ -289,7 +293,7 @@ Before writing any code: grim find "<what you need>".
 3. No hit    → grim write a new script. Name it verb_noun. The description
    is a search index entry, not documentation — write it for your future
    self's queries.
-Prefer named scripts over `sh` for anything you might do twice.
+Prefer named scripts over `shell` for anything you might do twice.
 Before finishing: if you wrote throwaway logic twice this session,
 consolidate it into one named script.
 ```
@@ -305,7 +309,7 @@ All computable from the DB; `grim run stats` prints them (D11).
 | Metric | Definition | Watching for |
 |--------|-----------|--------------|
 | Reuse rate | runs of scripts authored in *earlier* sessions ÷ all runs | the compounding signal |
-| Shell-escape rate | runs of `sh` ÷ all runs | the bypass failure mode |
+| Shell-escape rate | runs of `shell` ÷ all runs | the bypass failure mode |
 | Find hit rate / p@5 | finds followed by a run of a result; labeled precision | retrieval quality (gates Phase 6) |
 | Dup pressure | writes that triggered the similarity nudge ÷ all writes | library rot leading indicator |
 | Tokens & steps per task | from mini's cost tracking, joined to sessions | the headline thesis curve |
@@ -318,7 +322,7 @@ All computable from the DB; `grim run stats` prints them (D11).
 | Risk | Mitigation |
 |------|------------|
 | Library rot / near-duplicates | Write-time similarity nudge; `body_hash` exact-dup check; `gardener` sweeps proposing archives; `archived` flag keeps history intact. |
-| Model bypasses the library via `sh` | Protocol ladder; asymmetric output truncation; escape-rate metric with a review threshold. |
+| Model bypasses the library via `shell` | Protocol ladder; asymmetric output truncation; escape-rate metric with a review threshold. |
 | Stale scripts silently rot | `script_health` success-rate surfaced in `find`/`list`; `env_fingerprint` for triage; gardener re-verification runs. |
 | Persistent prompt-injection payloads | Persistence changes the threat model: an injected script can be re-run later with unearned trust. Same sandbox as vanilla mini (Docker env for untrusted repos); repo scope by default (D10); human-gated promotion in the TUI; provenance always displayed. |
 | Naming drift kills retrieval | Slug lint + mandatory descriptions at write; gardener proposes renames; Phase 6 embeddings reduce dependence on exact wording. |
