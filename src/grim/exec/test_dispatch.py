@@ -9,7 +9,13 @@ import time
 
 import pytest
 
-from grim.exec.dispatch import TIMEOUT_EXIT_CODE, ExecutionRequest, ScriptVersion, dispatch
+from grim.exec.dispatch import (
+    SUPPORTED_LANGUAGES,
+    TIMEOUT_EXIT_CODE,
+    ExecutionRequest,
+    ScriptVersion,
+    dispatch,
+)
 
 BASH_TIMEOUT_S = 5
 PYTHON_TIMEOUT_S = 30
@@ -95,3 +101,9 @@ def test_env_fingerprint_present_for_bash_and_python() -> None:
     )
     assert bash_result.env_fingerprint.startswith("bash:")
     assert python_result.env_fingerprint.startswith("uv:")
+
+
+def test_supported_languages_is_bash_and_python_only() -> None:
+    # Documents the exact contract verbs/write.py validates against —
+    # catches accidental drift when Phase 4 extends the dispatch table.
+    assert SUPPORTED_LANGUAGES == frozenset({"bash", "python"})

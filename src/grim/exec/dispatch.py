@@ -47,6 +47,10 @@ _RUNNERS: dict[str, tuple[str, Callable[[Path], list[str]], list[str]]] = {
     "python": (".py", lambda path: ["uv", "run", str(path)], ["uv", "--version"]),
 }
 
+# Public so verbs/write.py can reject unsupported languages at write
+# time instead of only failing later here at run time.
+SUPPORTED_LANGUAGES: frozenset[str] = frozenset(_RUNNERS)
+
 
 def _env_fingerprint(version_argv: list[str]) -> str:
     """`<tool> --version`, first line only — cheap and always available.
