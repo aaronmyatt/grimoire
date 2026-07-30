@@ -6,7 +6,7 @@ Grimoire replaces mini-swe-agent's raw-bash action space with six verbs over a S
 
 The thesis being tested: bash is great, the entire corpus of programming languages is better — and a persistent, searchable corpus of the agent's own scripts compounds, saving tokens on repeat work and leaving the human a usable library behind.
 
-> Status: Phases 0–3 and 2b are done (see git history: `cce0859`..`6e6f679`). Phase 2's pseudocode below is superseded by what actually shipped — mini-swe-agent's real API (2.4.6) diverged from the assumptions this doc was written against; see `src/grim/adapter/CLAUDE.md` and the commit history for the accurate contract. Phases 4–8 below are the remaining work, in order.
+> Status: Phases 0–3 and 2b are done (see git history: `cce0859`..`e5a8b3d`). Phases 4–8 below are the remaining work, in order.
 
 ---
 
@@ -48,7 +48,7 @@ Five components, one database.
 ├─────────────────────────────┤
 │ grimoire.db (SQLite)        │  scripts · versions · executions · sessions · FTS
 ├─────────────────────────────┤
-│ seed library                │  sh, read_file, apply_patch… + stats/gardener/export
+│ seed library                │  shell, read_file, apply_patch… + stats/gardener/export
 ├─────────────────────────────┤
 │ human surfaces              │  same CLI · Datasette · fzf one-liner · TUI (review queue)
 └─────────────────────────────┘
@@ -63,14 +63,16 @@ grimoire/
     cli.py                  # argparse dispatch; exit-code semantics            [done]
     db.py                   # DDL, migrations, query helpers                    [done]
     migrations/              # numbered SQL files (0001_initial.sql landed)      [done]
-    verbs/                  # write.py update.py read.py list.py find.py run.py [Phase 1]
+    verbs/                  # write.py update.py read.py list.py find.py run.py [done]
     exec/
-      dispatch.py           # language → runner table                          [Phase 1/4]
-      envelope.py           # truncation + formatting of observations           [Phase 1/4]
+      dispatch.py           # language → runner table, bash+python only        [done; Phase 4 extends]
+      envelope.py           # truncation + formatting of observations           [done]
     adapter/
-      environment.py        # GrimEnvironment for mini-swe-agent                [Phase 2]
-      grimoire.yaml          # mini config: system_template with the protocol ladder [Phase 2]
-    seeds/                  # seed script bodies + loader                      [Phase 3]
+      parse.py              # parse_grim: fenced block -> ParsedCommand         [done]
+      environment.py        # GrimEnvironment for mini-swe-agent                [done]
+      streaming_model.py    # optional live-token display (Phase 2b)           [done]
+      grimoire.yaml          # mini config: system_template with the protocol ladder [done]
+    seeds/                  # bodies.py (9 seeds) + loader.py                  [done]
   surfaces/
     datasette/metadata.json # canned queries                                   [Phase 5]
     tui/                    # Phase 5b (Textual)
@@ -187,15 +189,6 @@ grim find   "query" [--limit 5]     # ranked: name · desc · lang · runs · su
 grim run    NAME[@V] [--timeout 120] [--stdin-file F] [-- ARGS...]
 ```
 
-> **Known bug** (found during Phase 3's smoke suite, not yet fixed):
-> `--timeout`/`--stdin-file` only actually work when placed *before*
-> `NAME`, not after as documented above — `cli.py`'s `run` subparser's
-> trailing `args` positional is `nargs=argparse.REMAINDER`, which
-> swallows every token after `NAME` including flags that look like
-> `--stdin-file`. `cli.py` is frozen (Phase 1b); fixing this is its own
-> follow-up task, not bundled into whatever else is in flight when it's
-> noticed.
-
 Human-only extras: `grim init [--check]` (create DB, verify FTS5 availability, `run doctor` the toolchains — `init` itself landed in Phase 0; `--check` is Phase 4), `grim doctor`, and later `grim draft` (Phase 7). The adapter rejects these if the model emits them.
 
 Semantics that matter:
@@ -221,26 +214,27 @@ Estimates assume one developer, ideal days. Phases 0–4 (~2 working weeks) yiel
 
 `uv init`, package skeleton, `grim init` applies schema + PRAGMAs idempotently, migration runner, pytest smoke test against a temp DB. Landed as: schema v1 migration, `db.py` (`resolve_db_path`/`connect`/`migrate`/`init_db`), `cli.py` (`build_parser`/`cmd_init`/`main`), the `grim` console-script entry point, and smoke tests (`test_db.py`, `test_cli.py`) — 7 passing. **Done when:** fresh init and re-init both succeed; CI runs the smoke suite. *(CI itself is still deferred — see Open questions.)*
 
-### Phase 1 — The six verbs (3–5d)
+### Phase 1 — The six verbs (3–5d) — **done**
 
 Implement all verbs per §4 against the schema in §3, including FTS5 search with weighted columns (name > description > body, BM25), write-time lint + similarity nudge, versioned updates, execution capture with truncation, and `--timeout` (kill after N seconds, record exit 124). Start with the `bash` and `python` runners only; the dispatch table is designed for Phase 4 to extend. **Done when:** a scripted end-to-end exercise (write → find → read → run → update → run@old-version) passes on a fresh DB, and invalid Python is rejected at write time with the compiler diagnostic in the response.
 
-### Phase 2 — mini-swe-agent adapter (2–3d)
+### Phase 2 — mini-swe-agent adapter (2–3d) — **done**
 
-Subclass the environment; mini's agent loop, linear history, cost limits, and trajectory saving are inherited untouched. The adapter is the hard enforcement point:
+Subclass the environment; mini's agent loop, linear history, cost limits, and trajectory saving are inherited untouched. The adapter is the hard enforcement point. What actually shipped (mini-swe-agent 2.4.6's real API differs from an earlier draft of this section — `execute` takes the already-extracted action dict, not the raw model text, and dispatch reuses `cli.main()` in-process rather than a separate `grim.dispatch`; see `src/grim/adapter/CLAUDE.md`):
 
 ```python
 class GrimEnvironment(LocalEnvironment):
-    def execute(self, action: str) -> dict:
-        cmd = parse_grim(action)          # shlex on line 1 + heredoc extraction
-        if cmd is None or cmd.verb not in SIX_VERBS:
-            return {"output": REMINDER}   # canned protocol reminder, no execution
-        return {"output": grim.dispatch(cmd, session=self.session_id)}
+    def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict:
+        cmd = parse_grim(action["command"])   # shlex on line 1 + heredoc extraction
+        if cmd is None:
+            return {"output": PROTOCOL_REMINDER, "returncode": 1}   # no execution
+        text, exit_code = _invoke(cmd.argv, cmd.stdin, self.session_id)  # cli.main() in-process
+        return {"output": text, "returncode": exit_code}
 ```
 
-No shell runs in the control plane — the code block is parsed and dispatched in-process, so the model *cannot* leak back to raw bash. Ship `adapter/grimoire.yaml` with a `system_template` encoding the protocol ladder (§6) and mini's unchanged completion convention. Trajectories gain `exec #id` cross-references into the DB. **Done when:** `mini -c grimoire.yaml` solves a toy task end-to-end using only grim verbs, and an injected `ls -la` action produces the reminder observation instead of output.
+No shell runs in the control plane — the code block is parsed and dispatched in-process, so the model *cannot* leak back to raw bash. Ships `adapter/grimoire.yaml` with a `system_template` encoding the protocol ladder (§6) via mini's text-based (non-tool-calling) model — `model.model_class: litellm_textbased` with a `` ```grim ``` `` fence in place of mini's default `` ```mswea_bash_command ``` `` one. Submission reuses the same sentinel convention as vanilla mini (`COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`), but `_check_finished` is overridden to match it as any line of `run`'s enveloped output rather than requiring it to be the literal first line — the agent writes a tiny script that echoes the sentinel, then runs it. **Done when:** `mini -c grimoire.yaml` solves a toy task end-to-end using only grim verbs, and an injected `ls -la` action produces the reminder observation instead of output — proved offline with mini's `DeterministicModel` (no live API key needed) in `adapter/test_grimoire_e2e.py`.
 
-### Phase 2b — Streaming model display (optional, ~0.5d)
+### Phase 2b — Streaming model display (optional, ~0.5d) — **done**
 
 Cosmetic only — does **not** change the turn-based interaction model. mini's `Model.query()` needs the complete LM response before anything downstream can run: cost calculation needs full usage stats, and action parsing (regex for the textbased model, `tool_calls` for the toolcall model) needs the complete text/payload, not a partial chunk. So the agent still can't decide or act mid-generation, and `InteractiveAgent`'s confirm/reject/redirect loop (Phase 2's research notes) still only happens *between* turns — streaming just removes the blank-pause wait while a turn renders.
 
@@ -250,7 +244,7 @@ Implementation: a custom `Model` subclass (e.g. `grim.adapter.streaming_model.Gr
 
 **Done when:** a live `mini -c grimoire.yaml -m <model>` session renders tokens incrementally instead of pausing until the full response lands, and a test proves the streaming model produces output equivalent to the parent `LitellmTextbasedModel` given the same replayed chunks (existing Phase 2 tests — offline, `DeterministicModel`-based — continue to pass unchanged, since they exercise `GrimEnvironment`, not the model layer).
 
-### Phase 3 — Seed library + protocol tuning (2–3d)
+### Phase 3 — Seed library + protocol tuning (2–3d) — **done**
 
 Seed on `grim init` (all `seeded=1`, `scope=global`). Named `shell`, not
 the originally-planned `sh` — the slug validation `_shared.py` already
@@ -308,6 +302,8 @@ consolidate it into one named script.
 ```
 
 Naming and description quality are load-bearing (they *are* the retrieval surface), so the write-time similarity nudge and slug lint from Phase 1 back this up mechanically rather than by exhortation alone.
+
+Submission (Phase 2, `adapter/grimoire.yaml`'s real `system_template`): write a tiny script whose only output is `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, then run it in a later turn — the same sentinel convention as vanilla mini-swe-agent, but never combined with any other command. Nothing is special-cased; finishing a task is just another `write` + `run`.
 
 ---
 
