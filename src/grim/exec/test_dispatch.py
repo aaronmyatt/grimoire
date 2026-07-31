@@ -5,6 +5,7 @@ a bare python script with no PEP 723 header runs fine under `uv run`.
 
 from __future__ import annotations
 
+import subprocess
 import time
 
 import pytest
@@ -107,3 +108,23 @@ def test_supported_languages_is_bash_and_python_only() -> None:
     # Documents the exact contract verbs/write.py validates against —
     # catches accidental drift when Phase 4 extends the dispatch table.
     assert SUPPORTED_LANGUAGES == frozenset({"bash", "python"})
+
+
+def test_python_runner_never_attaches_to_grimoires_own_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A python script must run isolated from grimoire's own pyproject.toml/
+    .venv (which `uv run` would otherwise attach to whenever cwd resolves
+    inside this repo) — regression test for the --no-project flag, not an
+    end-to-end run, so no network access is needed."""
+    captured: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.append(command)
+        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("grim.exec.dispatch.subprocess.run", fake_run)
+    dispatch(ScriptVersion(language="python", body="pass"), _request(timeout=PYTHON_TIMEOUT_S))
+
+    script_argv = next(cmd for cmd in captured if cmd[:2] == ["uv", "run"])
+    assert "--no-project" in script_argv

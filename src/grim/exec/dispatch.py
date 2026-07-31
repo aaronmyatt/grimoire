@@ -42,9 +42,23 @@ class ExecutionRequest:
 # language -> (file suffix, argv-prefix builder, version-check argv)
 # Phase 1 scope: bash + python only; Phase 4 extends this table with
 # js/ts -> bun and a `run --json` fallback for everything else (D9).
+#
+# python's --no-project (https://docs.astral.sh/uv/reference/cli/#uv-run)
+# stops `uv run` from ever attaching to *grimoire's own* pyproject.toml/
+# .venv, which it would otherwise do by default whenever the dispatched
+# script's cwd resolves inside this repo. A script that declares its own
+# dependencies via PEP 723 inline metadata (a `# /// script` header) still
+# gets an isolated, uv-cached venv resolved from that header alone — this
+# is the sandboxed "install a dependency" story for python scripts, not a
+# regression in it. A bare script with no header just runs against uv's
+# base interpreter, dependency-free.
 _RUNNERS: dict[str, tuple[str, Callable[[Path], list[str]], list[str]]] = {
     "bash": (".sh", lambda path: ["bash", str(path)], ["bash", "--version"]),
-    "python": (".py", lambda path: ["uv", "run", str(path)], ["uv", "--version"]),
+    "python": (
+        ".py",
+        lambda path: ["uv", "run", "--no-project", str(path)],
+        ["uv", "--version"],
+    ),
 }
 
 # Public so verbs/write.py can reject unsupported languages at write
