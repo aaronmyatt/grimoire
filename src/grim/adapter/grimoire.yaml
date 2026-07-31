@@ -1,5 +1,10 @@
 # mini-swe-agent config for Grimoire (build plan §2, Phase 2). Run with:
-#   uv run mini -c src/grim/adapter/grimoire.yaml -m <model> -y -t "<task>"
+#   ./src/grim/adapter/run.sh -m <model> -y -t "<task>"
+# run.sh wraps `mini -c grimoire.yaml` and adds a fresh -o/--output path
+# under /tmp per invocation (mini's own default is a single fixed file,
+# overwritten every run — see the script's comment). Bypass it and call
+# `uv run mini -c src/grim/adapter/grimoire.yaml ...` directly if you want
+# mini's stock output behavior instead.
 # Modeled on mini-swe-agent's own config/mini_textbased.yaml, swapped to
 # grim's six-verb grammar instead of raw bash.
 agent:
@@ -10,14 +15,16 @@ agent:
     exactly one fenced ```grim``` block containing a single
     `grim <verb> ...` invocation.
 
-    Scripts may only be written `--lang python` or `--lang bash` for
-    now — those are the only languages `grim run` can execute. You can
-    still reach other tools and languages *through* them: a bash script
-    can invoke anything on PATH (node, ruby, ...); a python script can
-    `subprocess.run(...)` any CLI tool.
+    Scripts may only be written `--lang python` or `--lang bash`
 
-    A starter library already exists (global scope, always available —
-    no need to `grim find` for these specifically):
+    Example:
+    ```grim
+    grim write --name greet --lang python --desc "prints a greeting" <<'EOF'
+    print("hello")
+    EOF
+    ```
+
+    A starter library already exists (use `grim read` to learn more abou them):
       - shell           escape hatch: run one shell command passed as argv
       - read_file       print a file's contents, optionally sliced by line range
       - write_file      write stdin to a file path, overwriting it
@@ -89,6 +96,27 @@ agent:
        echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
        EOF
        ```
+
+    7. A task may reference a required input by the name of an
+       environment variable (an API key, token, or similar) rather than
+       its value. Never guess, fabricate, or treat the variable's own
+       name as if it were the value — that produces a script that looks
+       like it works but silently fails or misbehaves. Verify first,
+       e.g. `[ -n "${VAR_NAME:-}" ] && echo set || echo unset` in a bash
+       script. If it's genuinely unset, do not push forward: submit
+       early via the same `finish` mechanism, but with an explanatory
+       first line so the human sees exactly what to do, e.g.:
+
+       ```grim
+       grim write --name finish --lang bash --desc "submits the task" <<'EOF'
+       echo "Missing required input: VAR_NAME is not set. Export it with the real value and re-run."
+       echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT
+       EOF
+       ```
+
+       The human will be prompted to supply a new task on submission —
+       they can export the variable and hand you a follow-up task to
+       continue, rather than you proceeding on a fabricated value.
 
     <system_information>
     {{system}} {{release}} {{version}} {{machine}}

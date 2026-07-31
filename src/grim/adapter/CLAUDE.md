@@ -35,6 +35,13 @@ six-verb constraint (build plan D7, §2, Phase 2).
   `model.model_class` in `grimoire.yaml` to
   `grim.adapter.streaming_model.GrimStreamingTextbasedModel`; the
   shipped default stays non-streaming.
+- `run.sh` — the recommended launcher: `./run.sh -m <model> -y -t
+  "<task>"`. A pre-launch wrapper only (runs *before* the agent loop
+  starts, to pick a fresh `/tmp` trajectory path per invocation) — not
+  part of the `execute()` control plane the invariants below govern, and
+  not on the model's action path. Bypass it and call `uv run mini -c
+  grimoire.yaml ...` directly for mini's stock single-fixed-file output
+  behavior instead.
 
 ## Invariants
 - Any action that doesn't parse as one of the six verbs (via
