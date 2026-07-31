@@ -34,6 +34,17 @@ agent:
       - stats           usage report: total runs, shell-escape rate, reuse rate, active library %
       - gardener        dup/stale sweep proposing archive candidates, never archives itself
       - export_library  dump the latest version of every non-archived script to a directory tree
+    {%- if grim_strong_matches is defined and grim_strong_matches %}
+
+    An automatic search against this task's own wording found these as
+    strong, high-confidence matches (weak/coincidental hits are already
+    filtered out — this is not the full library, just what looks directly
+    relevant right now):
+    {%- for m in grim_strong_matches %}
+      - {{ m.name }} ({{ m.language }}): {{ m.description }}
+    {%- endfor %}
+    `grim read` one of these before writing anything new.
+    {%- endif %}
 
     Protocol:
     1. If you're not already sure a suitable script exists (from the
@@ -136,6 +147,12 @@ agent:
   # independently of mode. Switch to `confirm` (or `/c` mid-run) if you
   # want to review actions before they execute.
   mode: yolo
+  # GrimAgent (adapter/agent.py) extends run() to inject the raw task's
+  # strict FTS strong-match list into system_template's grim_strong_matches
+  # before the first turn — never falls back to InteractiveAgent silently,
+  # so if this is ever unset the {% if grim_strong_matches is defined %}
+  # guard above just renders nothing instead of erroring.
+  agent_class: grim.adapter.agent.GrimAgent
 environment:
   environment_class: grim.adapter.environment.GrimEnvironment
 model:

@@ -26,9 +26,21 @@ six-verb constraint (build plan D7, §2, Phase 2).
   `cli.py` needs zero changes for the agent path.
 - `grimoire.yaml` — mini config carrying the `system_template` protocol
   ladder (build plan §6), `model.model_class: litellm_textbased` with a
-  grim-specific `action_regex`, and `environment.environment_class:
-  grim.adapter.environment.GrimEnvironment`. Data, not code — safe to
-  hand-edit without touching `environment.py`.
+  grim-specific `action_regex`, `environment.environment_class:
+  grim.adapter.environment.GrimEnvironment`, and `agent.agent_class:
+  grim.adapter.agent.GrimAgent`. Data, not code — safe to hand-edit
+  without touching `environment.py`/`agent.py`.
+- `agent.py` — `GrimAgent`, subclassing mini-swe-agent's
+  `InteractiveAgent` to extend `run(task, **kwargs)`: before the first
+  turn, it queries the script library's FTS5 index directly against the
+  raw task text (own tiny tokenizer + query, not an import of
+  `verbs/_shared.py` — slices don't share internals, root CLAUDE.md §2)
+  and stashes only *strict* hits (`STRONG_MATCH_THRESHOLD`, bm25
+  sign-flipped so higher = closer) into `extra_template_vars` as
+  `grim_strong_matches`, which `system_template` renders conditionally.
+  Mitigates build plan §8's "optional find misses/duplicates existing
+  scripts" risk by surfacing a high-confidence hit before the agent
+  decides whether to search at all.
 - `streaming_model.py` — `GrimStreamingTextbasedModel` (build plan
   Phase 2b, optional). Same `LitellmTextbasedModel` contract, live
   terminal output instead of a blank pause per turn. Opt-in only: swap
