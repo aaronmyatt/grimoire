@@ -14,6 +14,7 @@ from grim.exec.dispatch import (
     SUPPORTED_LANGUAGES,
     TIMEOUT_EXIT_CODE,
     ExecutionRequest,
+    ExecutionResult,
     ScriptVersion,
     dispatch,
 )
@@ -115,16 +116,69 @@ def test_python_runner_never_attaches_to_grimoires_own_project(
 ) -> None:
     """A python script must run isolated from grimoire's own pyproject.toml/
     .venv (which `uv run` would otherwise attach to whenever cwd resolves
-    inside this repo) — regression test for the --no-project flag, not an
-    end-to-end run, so no network access is needed."""
-    captured: list[list[str]] = []
+    inside this repo) — regression test for the --no-project flag. Patches the
+    _run subprocess layer so it's a pure argv check with no real execution."""
+    captured: dict[str, list[str]] = {}
 
-    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured.append(command)
-        return subprocess.CompletedProcess(command, returncode=0, stdout="", stderr="")
+    def fake_run(
+        command: list[str], stdin: str | None, cwd: str | None, timeout: float
+    ) -> ExecutionResult:
+        captured["command"] = command
+        return ExecutionResult(exit_code=0, stdout="", stderr="", duration_ms=0, env_fingerprint="")
 
-    monkeypatch.setattr("grim.exec.dispatch.subprocess.run", fake_run)
+    monkeypatch.setattr("grim.exec.dispatch._run", fake_run)
     dispatch(ScriptVersion(language="python", body="pass"), _request(timeout=PYTHON_TIMEOUT_S))
 
-    script_argv = next(cmd for cmd in captured if cmd[:2] == ["uv", "run"])
-    assert "--no-project" in script_argv
+    assert "--no-project" in captured["command"]
+
+
+# Distinctive sleep durations so pgrep can't collide with unrelated processes.
+_ORPHAN_MARKER_TIMEOUT = "sleep 88881"
+_ORPHAN_MARKER_KILLGRP = "sleep 88882"
+
+
+def _running(pattern: str) -> bool:
+    return bool(
+        subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True).stdout.strip()
+    )
+
+
+def _poll(pattern: str, *, want: bool, tries: int = 40, delay: float = 0.05) -> bool:
+    """Poll pgrep until the pattern's presence matches `want` (bounded ~2s) —
+    a deterministic wait for async process start/kill, not a blind sleep."""
+    for _ in range(tries):
+        if _running(pattern) == want:
+            return True
+        time.sleep(delay)
+    return False
+
+
+def test_timeout_reaps_grandchildren_not_just_direct_child() -> None:
+    # bash forks `sleep`, so the sleeper is a grandchild of the python process.
+    # The old subprocess.run path SIGKILLed only bash, orphaning that sleep;
+    # killing the whole process group must take the grandchild down too.
+    sv = ScriptVersion(language="bash", body=_ORPHAN_MARKER_TIMEOUT)
+    try:
+        result = dispatch(sv, _request(timeout=SLOW_SCRIPT_TIMEOUT_S))
+        assert result.exit_code == TIMEOUT_EXIT_CODE
+        assert _poll(_ORPHAN_MARKER_TIMEOUT, want=False), "timeout orphaned the grandchild"
+    finally:
+        subprocess.run(["pkill", "-f", _ORPHAN_MARKER_TIMEOUT], capture_output=True)
+
+
+def test_kill_group_terminates_a_grandchild() -> None:
+    from grim.exec.dispatch import _kill_group
+
+    proc = subprocess.Popen(
+        ["bash", "-c", _ORPHAN_MARKER_KILLGRP],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        assert _poll(_ORPHAN_MARKER_KILLGRP, want=True), "grandchild should be up before kill"
+        _kill_group(proc)
+        assert _poll(_ORPHAN_MARKER_KILLGRP, want=False), "_kill_group left an orphan"
+    finally:
+        subprocess.run(["pkill", "-f", _ORPHAN_MARKER_KILLGRP], capture_output=True)

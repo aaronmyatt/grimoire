@@ -6,6 +6,9 @@ every call is a pure function of its arguments; nothing persists.
 
 from __future__ import annotations
 
+import contextlib
+import os
+import signal
 import subprocess
 import tempfile
 import time
@@ -14,6 +17,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TIMEOUT_EXIT_CODE = 124
+# After killing a job's process group, how long to wait for its pipes to close
+# while draining output before falling back to a direct kill(). SIGKILL makes
+# this near-instant; the bound only guards a pathological unkillable descendant.
+_REAP_TIMEOUT_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -112,29 +119,57 @@ def dispatch(script_version: ScriptVersion, request: ExecutionRequest) -> Execut
     )
 
 
-def _run(command: list[str], stdin: str | None, cwd: str | None, timeout: float) -> ExecutionResult:
-    """Turns a timeout into exit 124 instead of propagating TimeoutExpired —
-    subprocess.run() already kills the process for us on timeout.
-    Ref: https://docs.python.org/3/library/subprocess.html#subprocess.run
+def _kill_group(proc: subprocess.Popen[str]) -> tuple[str, str]:
+    """SIGKILL the child's whole process group, then drain its output. Because
+    _run starts the child with start_new_session, the child leads its own
+    group, so this reaps grandchildren too — a `uv run` python, a bash-spawned
+    `sleep` — that proc.kill() (which signals only the direct child) would
+    orphan. Ref: https://docs.python.org/3/library/os.html#os.killpg
     """
-    started = time.monotonic()
+    assert proc.pid is not None, "a started Popen always has a pid"
+    # getpgid/killpg race the child's own exit; a dead group is not an error.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     try:
-        completed = subprocess.run(
-            command,
-            input=stdin,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=timeout,
-            check=False,
-        )
-        exit_code = completed.returncode
-        stdout, stderr = completed.stdout, completed.stderr
-    except subprocess.TimeoutExpired as exc:
+        stdout, stderr = proc.communicate(timeout=_REAP_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+    assert proc.returncode is not None, "process is reaped after kill"
+    return stdout or "", stderr or ""
+
+
+def _run(command: list[str], stdin: str | None, cwd: str | None, timeout: float) -> ExecutionResult:
+    """Run `command` in its OWN process group (start_new_session) so a timeout
+    or a Ctrl-C can take down the whole job tree. subprocess.run only SIGKILLs
+    the direct child on timeout/interrupt, orphaning grandchildren; killing the
+    group (see _kill_group) does not. Timeout -> exit 124. KeyboardInterrupt ->
+    kill the group, then re-raise so the harness's interrupt handler still runs
+    (two Ctrl-C: the first cancels the run here, the second exits upstream).
+    Ref: https://docs.python.org/3/library/subprocess.html#subprocess.Popen
+    """
+    assert timeout > 0, "timeout must be positive"
+    started = time.monotonic()
+    proc = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE if stdin is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(input=stdin, timeout=timeout)
+        exit_code = proc.returncode
+    except subprocess.TimeoutExpired:
+        stdout, stderr = _kill_group(proc)
         exit_code = TIMEOUT_EXIT_CODE
-        stdout = exc.stdout or "" if isinstance(exc.stdout, str) else ""
-        stderr = exc.stderr or "" if isinstance(exc.stderr, str) else ""
+    except KeyboardInterrupt:
+        _kill_group(proc)
+        raise
     duration_ms = int((time.monotonic() - started) * 1000)
+    assert exit_code is not None, "a resolved run always has an exit code"
     return ExecutionResult(
         exit_code=exit_code,
         stdout=stdout,

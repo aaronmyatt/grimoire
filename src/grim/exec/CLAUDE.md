@@ -22,5 +22,8 @@ returned to the agent (build plan D8, D9, §4).
   The `execution` table (owned by `db.py`) is the only persistence.
 - Every execution records an `env_fingerprint` (interpreter versions) —
   required for the staleness triage the build plan's gardener depends on.
-- A timeout always kills the subprocess and records exit code 124 — never
-  hangs the caller.
+- A timeout always kills the subprocess **process group** (the child runs
+  with `start_new_session`, so its grandchildren die too — no orphans) and
+  records exit code 124; never hangs the caller. A `KeyboardInterrupt`
+  during a run kills the same group and re-raises, so the harness's
+  two-press Ctrl-C (cancel the run, then exit) stays intact.
