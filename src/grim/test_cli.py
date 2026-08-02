@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from grim import cli
+from grim import cli, config
 
 
 def test_grim_init_creates_db_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,3 +59,49 @@ def test_run_parser_accepts_stdin_file_before_the_name() -> None:
 def test_run_parser_strips_the_double_dash_separator_from_trailing_args() -> None:
     args = cli.build_parser().parse_args(["run", "greet", "--", "echo", "hi"])
     assert args.args == ["echo", "hi"]
+
+
+def test_grim_config_reports_value_and_global_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    global_cfg = tmp_path / "config.toml"
+    global_cfg.write_text('model = "cfg/model"\n')
+    monkeypatch.setattr(config, "CONFIG_PATH", global_cfg)
+    monkeypatch.chdir(tmp_path)  # no ./.grimoire here, so no repo layer
+    monkeypatch.delenv("GRIM_MODEL", raising=False)
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+
+    exit_code = cli.main(["config"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "GRIM_MODEL" in out
+    assert "cfg/model" in out
+    assert "global" in out
+
+
+def test_grim_config_marks_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    global_cfg = tmp_path / "config.toml"
+    global_cfg.write_text('model = "cfg/model"\n')
+    monkeypatch.setattr(config, "CONFIG_PATH", global_cfg)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GRIM_MODEL", "shell/model")
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+
+    assert cli.main(["config"]) == 0
+    out = capsys.readouterr().out
+    assert "shell/model" in out  # shell value wins, classified as env
+
+
+def test_grim_config_works_without_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # config is a diagnostic — it must not be gated behind `grim init`.
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "absent.toml")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "never-initialized.db"))
+
+    assert cli.main(["config"]) == 0
+    assert "GRIM_MODEL" in capsys.readouterr().out

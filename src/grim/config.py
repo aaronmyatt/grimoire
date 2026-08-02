@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sys
 import tomllib  # stdlib TOML reader, py3.11+  https://docs.python.org/3/library/tomllib.html
+from dataclasses import dataclass
 from pathlib import Path
 
 # Fixed location (not affected by GRIM_DB, which only moves the database): grim's
@@ -99,3 +100,42 @@ def apply_global_config(path: Path | None = None) -> None:
     if repo_path is not None:  # applied first, so repo beats global under setdefault
         _apply_config(_load_config(repo_path))
     _apply_config(_load_config(global_path))
+
+
+@dataclass(frozen=True)
+class Setting:
+    key: str  # the config.toml key
+    env: str  # the env var it seeds
+    value: str | None  # effective value now (None = unset -> a slice's built-in default)
+    source: str  # "env" | "repo" | "global" | "default"
+
+
+def _classify(value: str | None, repo_val: object, global_val: object) -> str:
+    """Infer a setting's source by precedence (env > repo > global > default).
+    A shell value that coincidentally equals a file's is reported as that file
+    — a harmless approximation for a read-only diagnostic."""
+    assert value is None or isinstance(value, str), "env value is a str or None"
+    if value is None:
+        return "default"
+    if repo_val is not None and value == str(repo_val):
+        return "repo"
+    if global_val is not None and value == str(global_val):
+        return "global"
+    return "env"
+
+
+def effective_config() -> list[Setting]:
+    """Resolve every known key to its effective value + source, for `grim
+    config`. Pure over os.environ + the two config files — needs neither the DB
+    nor apply_global_config to have run, so it works when things are broken."""
+    repo_path = _repo_config_path()
+    repo = _load_config(repo_path) if repo_path is not None else {}
+    global_data = _load_config(CONFIG_PATH)
+    settings: list[Setting] = []
+    for key, env in _CONFIG_ENV_KEYS.items():
+        value = os.environ.get(env)
+        source = _classify(value, repo.get(key), global_data.get(key))
+        settings.append(Setting(key=key, env=env, value=value, source=source))
+    assert len(settings) == len(_CONFIG_ENV_KEYS), "one setting per known key"
+    assert all(isinstance(s, Setting) for s in settings), "settings are Setting rows"
+    return settings

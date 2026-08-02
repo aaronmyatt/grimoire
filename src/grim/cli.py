@@ -46,6 +46,19 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_config(args: argparse.Namespace) -> int:
+    """`grim config`: print each known setting, its effective value, and its
+    source (env / repo / global / default) — like `git config --list`. Reads
+    files + env only, so it works even before `grim init` (human-only, D12)."""
+    settings = config.effective_config()
+    for setting in settings:
+        value = setting.value if setting.value is not None else "(unset)"
+        print(f"{setting.key:<9} {setting.env:<16} {value:<42} ({setting.source})")
+    assert settings, "there is always at least one known setting"
+    assert all(s.env for s in settings), "every setting names an env var"
+    return 0
+
+
 def _add_write_parser(subparsers: _SubParsers) -> None:
     parser = subparsers.add_parser("write", help="create a new script (body on stdin)")
     parser.add_argument("--name", required=True)
@@ -115,6 +128,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_parser = subparsers.add_parser("init", help="create/migrate the grimoire database")
     init_parser.set_defaults(func=cmd_init)
+    config_parser = subparsers.add_parser("config", help="show effective settings and their source")
+    config_parser.set_defaults(func=cmd_config)
     for add_parser in (
         _add_write_parser,
         _add_update_parser,
@@ -151,7 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     assert hasattr(args, "func"), "every subcommand must set_defaults(func=...)"
-    if args.command != "init" and not _database_ready():
+    # init creates the DB; config is a files+env diagnostic — both must work
+    # before the library exists, so neither is gated on a ready database.
+    if args.command not in ("init", "config") and not _database_ready():
         print("error: database not initialized — run `grim init` first", file=sys.stderr)
         return 1
     result: int = args.func(args)
