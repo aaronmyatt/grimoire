@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from grim import cli
+from grim.seeds.bodies import SEEDS
 
 
 def _run(
@@ -29,7 +30,7 @@ def test_ten_task_smoke_suite_and_stats_reflect_the_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
-    assert cli.main(["init"]) == 0  # seeds all 9 under session "human-adhoc"
+    assert cli.main(["init"]) == 0  # seeds the library under session "human-adhoc"
     capsys.readouterr()
 
     monkeypatch.setenv("GRIM_SESSION", "test-session-1")
@@ -105,11 +106,16 @@ def _assert_stats_reflect_the_session(
 ) -> None:
     """7 execution rows precede this call (2 shell, 5 named-script runs);
     2 of those 7 are the shell escape hatch, 5 are reused seeds/scripts
-    from an earlier session than "test-session-1", and 6 of the 11
-    unarchived scripts (9 seeds + greet + double) were actually run."""
+    from an earlier session than "test-session-1". 6 distinct scripts were
+    run (shell, greet, double, write_file, read_file, list_dir) out of
+    len(SEEDS) + 2 unarchived (every seed plus greet and double); the active
+    ratio is computed so adding a seed doesn't silently break this golden."""
+    scripts_run = 6
+    unarchived = len(SEEDS) + 2  # all seeds + greet + double
+    expected_active = f"{scripts_run / unarchived:.2%}"
     exit_code, out = _run(monkeypatch, capsys, ["run", "stats"])
     assert exit_code == 0
     assert "total runs: 7" in out
     assert "shell-escape rate: 28.57%" in out
     assert "reuse rate: 71.43%" in out
-    assert "active library: 54.55%" in out
+    assert f"active library: {expected_active}" in out
