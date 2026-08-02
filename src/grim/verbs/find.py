@@ -35,8 +35,11 @@ def cmd_find(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     rows = find_scripts(conn, args.query, args.limit or DEFAULT_FIND_LIMIT)
     for row in rows:
+        # last_used is NULL until a script's first run; show "-" so the column
+        # stays aligned rather than printing the literal "None".
         print(
             f"{row['name']}\t{row['language']}\t{row['description']}"
             f"\truns={row['runs']}\tsuccess={row['success_rate']:.2f}"
+            f"\tlast={row['last_used'] or '-'}"
         )
     return 0

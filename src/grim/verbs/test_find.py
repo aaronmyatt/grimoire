@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sqlite3
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 
 from grim import db
 from grim.verbs import _shared
-from grim.verbs.find import find_scripts
+from grim.verbs.find import cmd_find, find_scripts
 from grim.verbs.write import WriteRequest, write_script
 
 
@@ -69,3 +70,16 @@ def test_find_scripts_no_match_returns_empty(
     conn = _migrated_conn(tmp_path, monkeypatch)
     _write(conn, "extract_failing_tests", "extracts failing pytest tests")
     assert find_scripts(conn, "completely unrelated gibberish zzz") == []
+
+
+def test_cmd_find_shows_last_used_dash_for_never_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _migrated_conn(tmp_path, monkeypatch).close()  # GRIM_DB set; cmd_find opens its own conn
+    conn = _shared.connect()
+    _write(conn, "extract_failing_tests", "extracts failing pytest tests")
+    exit_code = cmd_find(argparse.Namespace(query="extract failing tests", limit=None))
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    # never-run script -> "last=-" placeholder, not "last=None".
+    assert "last=-" in out

@@ -40,6 +40,70 @@ def _write(
     )
 
 
+def _record_run(conn: sqlite3.Connection, name: str, started_at: str) -> None:
+    """Insert an execution row so script_health.last_used/runs reflect it —
+    started_at is set explicitly so `--sort recent` has a deterministic order
+    (no wall clock in tests, root CLAUDE.md §7)."""
+    version = conn.execute(
+        "SELECT sv.id FROM script_version sv JOIN script s ON s.id = sv.script_id "
+        "WHERE s.name = ? ORDER BY sv.version DESC LIMIT 1",
+        (name,),
+    ).fetchone()
+    _shared.ensure_session(conn, "human-adhoc")
+    seq = conn.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM execution WHERE session_id = 'human-adhoc'"
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO execution (script_version_id, session_id, seq, exit_code, started_at) "
+        "VALUES (?, 'human-adhoc', ?, 0, ?)",
+        (version["id"], seq, started_at),
+    )
+    conn.commit()
+
+
+def test_list_scripts_sort_recent_orders_by_last_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "old_one")
+    _write(conn, "new_one")
+    _record_run(conn, "old_one", "2020-01-01 00:00:00")
+    _record_run(conn, "new_one", "2025-01-01 00:00:00")
+    rows = list_scripts(
+        conn, ListFilters(scope=None, language=None, limit=20, offset=0, sort="recent")
+    )
+    # most-recently-run first; never-run scripts (last_used NULL) sort last.
+    assert [row["name"] for row in rows] == ["new_one", "old_one"]
+
+
+def test_list_scripts_sort_recent_puts_never_run_last(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "ran_once")
+    _write(conn, "never_ran")
+    _record_run(conn, "ran_once", "2024-06-01 00:00:00")
+    rows = list_scripts(
+        conn, ListFilters(scope=None, language=None, limit=20, offset=0, sort="recent")
+    )
+    assert [row["name"] for row in rows] == ["ran_once", "never_ran"]
+
+
+def test_list_scripts_sort_runs_orders_by_run_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "busy_one")
+    _write(conn, "quiet_one")
+    _record_run(conn, "busy_one", "2024-01-01 00:00:00")
+    _record_run(conn, "busy_one", "2024-01-02 00:00:00")
+    _record_run(conn, "quiet_one", "2024-01-03 00:00:00")
+    rows = list_scripts(
+        conn, ListFilters(scope=None, language=None, limit=20, offset=0, sort="runs")
+    )
+    assert [row["name"] for row in rows] == ["busy_one", "quiet_one"]
+
+
 def test_list_scripts_returns_all_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
