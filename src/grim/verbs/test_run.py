@@ -10,7 +10,15 @@ import pytest
 
 from grim import db
 from grim.verbs import _shared
-from grim.verbs.run import MAX_CALL_DEPTH, CallDepthExceeded, RunRequest, run_script
+from grim.verbs.run import (
+    DEFAULT_TIMEOUT_S,
+    MAX_CALL_DEPTH,
+    MAX_TIMEOUT_S,
+    CallDepthExceeded,
+    RunRequest,
+    resolve_timeout,
+    run_script,
+)
 from grim.verbs.write import WriteRequest, write_script
 
 
@@ -207,3 +215,27 @@ def test_run_script_supports_nested_grim_run_without_deadlocking(
 
     seqs = [row["seq"] for row in conn.execute("SELECT seq FROM execution ORDER BY seq")]
     assert seqs == [1, 2], "the nested call and the outer call must both land, uncollided"
+
+
+def test_resolve_timeout_prefers_explicit_over_env_and_default() -> None:
+    # explicit --timeout wins even when $GRIM_TIMEOUT is set.
+    explicit = 30.0
+    assert resolve_timeout(explicit, "300") == explicit
+
+
+def test_resolve_timeout_falls_back_to_env_then_default() -> None:
+    env_seconds = 300.0
+    assert resolve_timeout(None, "300") == env_seconds
+    assert resolve_timeout(None, None) == DEFAULT_TIMEOUT_S
+
+
+def test_resolve_timeout_ignores_malformed_or_nonpositive_env() -> None:
+    assert resolve_timeout(None, "not-a-number") == DEFAULT_TIMEOUT_S
+    assert resolve_timeout(None, "0") == DEFAULT_TIMEOUT_S
+    assert resolve_timeout(None, "-5") == DEFAULT_TIMEOUT_S
+
+
+def test_resolve_timeout_clamps_to_the_ceiling() -> None:
+    # both an explicit runaway and a runaway env value are capped.
+    assert resolve_timeout(999_999.0, None) == MAX_TIMEOUT_S
+    assert resolve_timeout(None, "999999") == MAX_TIMEOUT_S

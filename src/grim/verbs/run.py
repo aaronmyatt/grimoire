@@ -20,6 +20,38 @@ from grim.exec import dispatch, envelope
 from grim.verbs import _shared
 
 DEFAULT_TIMEOUT_S = 120.0
+# Hard ceiling on any single `grim run`, mirroring MAX_CALL_DEPTH below: an
+# explicit --timeout or $GRIM_TIMEOUT is clamped to this. `grim run` is for
+# bounded work; a genuinely long-lived process (a dev server, a watcher)
+# belongs in a background job (a `grimbg:`-tagged seed), not a blocking run.
+MAX_TIMEOUT_S = 3600.0
+_TIMEOUT_ENV = "GRIM_TIMEOUT"
+
+
+def _timeout_from_env(env_value: str | None) -> float:
+    """$GRIM_TIMEOUT as a positive float, else DEFAULT_TIMEOUT_S. External
+    input, so a missing/malformed/non-positive value falls back rather than
+    asserting (mirrors _current_call_depth's defensive parse below)."""
+    if not env_value:
+        return DEFAULT_TIMEOUT_S
+    try:
+        parsed = float(env_value)
+    except ValueError:
+        return DEFAULT_TIMEOUT_S
+    result = parsed if parsed > 0 else DEFAULT_TIMEOUT_S
+    assert result > 0, "timeout fallback is always positive"
+    return result
+
+
+def resolve_timeout(explicit: float | None, env_value: str | None) -> float:
+    """Resolve the run timeout: explicit --timeout > $GRIM_TIMEOUT > default,
+    clamped to (0, MAX_TIMEOUT_S]. Pure so it is unit-testable."""
+    chosen = explicit if explicit and explicit > 0 else _timeout_from_env(env_value)
+    clamped = min(chosen, MAX_TIMEOUT_S)
+    assert clamped > 0, "resolved timeout must be positive"
+    assert clamped <= MAX_TIMEOUT_S, "resolved timeout must not exceed the ceiling"
+    return clamped
+
 
 # Composition (build plan §6) lets a script shell out to `grim run` on
 # another script, transitively — with no bound, a cyclic or runaway chain
@@ -180,13 +212,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     name, version = _shared.parse_name_version(args.name)
     stdin = Path(args.stdin_file).read_text() if args.stdin_file else None
+    timeout = resolve_timeout(args.timeout, os.environ.get(_TIMEOUT_ENV))
+    if args.timeout and args.timeout > MAX_TIMEOUT_S:
+        print(
+            f"[grim] --timeout {args.timeout:g}s exceeds the {MAX_TIMEOUT_S:g}s ceiling; "
+            "clamped. Run long-lived processes as a background job instead.",
+            file=sys.stderr,
+        )
     request = RunRequest(
         name=name,
         version=version,
         argv=args.args,
         stdin=stdin,
         cwd=None,
-        timeout=args.timeout or DEFAULT_TIMEOUT_S,
+        timeout=timeout,
         session_id=_shared.session_id_from_env(),
         # getattr keeps this working before cli.py (frozen, committed
         # separately) grows the --head/--tail options; absent → None → full.
