@@ -9,8 +9,11 @@ only, never verb logic.
 from __future__ import annotations
 
 import argparse
+import shutil
 import sqlite3
 import sys
+import tomllib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from grim import config, db
@@ -57,6 +60,79 @@ def cmd_config(args: argparse.Namespace) -> int:
     assert settings, "there is always at least one known setting"
     assert all(s.env for s in settings), "every setting names an env var"
     return 0
+
+
+@dataclass
+class _Check:
+    label: str
+    ok: bool
+    detail: str
+    critical: bool = True  # a failed critical check makes `grim doctor` exit nonzero
+
+
+# uv/bash are required (python + bash dispatch, the shell seed); rg/git back
+# specific seeds (grep_tree, apply_patch — git has a patch fallback), so their
+# absence is a warning, not a hard failure.
+_REQUIRED_TOOLS = ("uv", "bash")
+_OPTIONAL_TOOLS = ("rg", "git")
+
+
+def _tool_check(tool: str, *, critical: bool) -> _Check:
+    path = shutil.which(tool)
+    hint = "required" if critical else "a seed needs it"
+    return _Check(f"tool: {tool}", path is not None, path or f"not on PATH — {hint}", critical)
+
+
+def _fts5_check() -> _Check:
+    """FTS5 backs `find`; probe a throwaway in-memory table rather than assume
+    the SQLite build has it compiled in."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("CREATE VIRTUAL TABLE _probe USING fts5(x)")
+        return _Check("sqlite: fts5", True, "available")
+    except sqlite3.OperationalError as exc:
+        return _Check("sqlite: fts5", False, f"unavailable: {exc}")
+    finally:
+        conn.close()
+
+
+def _db_check() -> _Check:
+    ready = _database_ready()
+    detail = f"{db.resolve_db_path()} ({'migrated' if ready else 'run `grim init`'})"
+    return _Check("database", ready, detail, critical=False)
+
+
+def _config_check() -> _Check:
+    path = config.CONFIG_PATH
+    if not path.is_file():
+        return _Check("config", True, "no global config (using defaults)", critical=False)
+    try:
+        tomllib.loads(path.read_text())
+        return _Check("config", True, f"{path} parses", critical=False)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return _Check("config", False, f"{path}: {exc}", critical=False)
+
+
+def _doctor_checks() -> list[_Check]:
+    checks = [_tool_check(t, critical=True) for t in _REQUIRED_TOOLS]
+    checks += [_tool_check(t, critical=False) for t in _OPTIONAL_TOOLS]
+    checks += [_fts5_check(), _db_check(), _config_check()]
+    assert len(checks) >= len(_REQUIRED_TOOLS), "doctor runs at least the required-tool checks"
+    return checks
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """`grim doctor`: verify the runtime substrate — required tools (uv/bash),
+    optional seed tools (rg/git), FTS5, DB state, config parse — in-process, so
+    it works even when dispatch or the DB is broken (human-only, D12). Exits
+    nonzero only if a *critical* check fails."""
+    failed = 0
+    for check in _doctor_checks():
+        status = "ok" if check.ok else ("FAIL" if check.critical else "warn")
+        failed += 1 if (not check.ok and check.critical) else 0
+        print(f"[{status:>4}] {check.label:<14} {check.detail}")
+    assert failed >= 0, "failure count is non-negative"
+    return 1 if failed else 0
 
 
 def _add_write_parser(subparsers: _SubParsers) -> None:
@@ -130,6 +206,8 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.set_defaults(func=cmd_init)
     config_parser = subparsers.add_parser("config", help="show effective settings and their source")
     config_parser.set_defaults(func=cmd_config)
+    doctor_parser = subparsers.add_parser("doctor", help="check tools, FTS5, database, and config")
+    doctor_parser.set_defaults(func=cmd_doctor)
     for add_parser in (
         _add_write_parser,
         _add_update_parser,
@@ -166,9 +244,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     assert hasattr(args, "func"), "every subcommand must set_defaults(func=...)"
-    # init creates the DB; config is a files+env diagnostic — both must work
-    # before the library exists, so neither is gated on a ready database.
-    if args.command not in ("init", "config") and not _database_ready():
+    # init creates the DB; config and doctor are diagnostics that must work
+    # before (and when) the library is broken, so none is gated on a ready DB.
+    if args.command not in ("init", "config", "doctor") and not _database_ready():
         print("error: database not initialized — run `grim init` first", file=sys.stderr)
         return 1
     result: int = args.func(args)

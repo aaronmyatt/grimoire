@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -105,3 +106,45 @@ def test_grim_config_works_without_init(
 
     assert cli.main(["config"]) == 0
     assert "GRIM_MODEL" in capsys.readouterr().out
+
+
+def test_grim_doctor_reports_substrate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    cli.main(["init"])  # so the database check reads as migrated
+    capsys.readouterr()
+
+    exit_code = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0  # required tools + fts5 present in the test env
+    for token in ("uv", "bash", "fts5", "database"):
+        assert token in out
+
+
+def test_grim_doctor_works_without_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "never.db"))
+
+    exit_code = cli.main(["doctor"])  # unmigrated DB is a warn, not a hard fail
+
+    assert exit_code == 0
+    assert "database" in capsys.readouterr().out
+
+
+def test_grim_doctor_fails_when_required_tool_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    real_which = shutil.which
+    # hide `uv` (a required tool) but leave everything else discoverable.
+    # Patch the shutil module cli imports, not cli.shutil (not re-exported).
+    monkeypatch.setattr(shutil, "which", lambda t: None if t == "uv" else real_which(t))
+
+    exit_code = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "FAIL" in out
