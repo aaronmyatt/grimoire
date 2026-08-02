@@ -7,10 +7,24 @@ dependencies = []
 
 [project.scripts]
 grim = "grim.cli:main"
+# The installable yolo-mode harness (like `mini`/`pi`): one command runs the
+# agent loop. Lives in the adapter slice; needs the `agent` extra below.
+grim-agent = "grim.adapter.launcher:main"
 
 [project.optional-dependencies]
-adapter = [
+# Public-facing name: `uv tool install "grimoire[agent]"` installs what the
+# `grim-agent` harness needs (mini-swe-agent). The slice implementing it stays
+# internally named `adapter/`; the extra says what you get, not how.
+agent = [
     "mini-swe-agent>=2.4,<3",
+    # Cap litellm below 1.95: 1.95+ ships a native Rust extension (pyo3/
+    # maturin) with no CPython 3.14 wheel yet, so a fresh resolver (e.g.
+    # `uv tool install`, which ignores uv.lock) builds it from source and
+    # fails unless rustc >= 1.94.1 is present. Keeping it <1.95 stays on the
+    # pure-Python line so the harness installs with no toolchain. Drop this
+    # cap once litellm publishes 3.14 wheels. (litellm arrives transitively
+    # via mini-swe-agent; pinned here because it's the one that breaks builds.)
+    "litellm<1.95",
 ]
 
 [dependency-groups]
