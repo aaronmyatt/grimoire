@@ -166,6 +166,9 @@ def _add_list_parser(subparsers: _SubParsers) -> None:
     parser.add_argument("--lang")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--offset", type=int)
+    # choices gate the value so verbs/list.py can interpolate it into ORDER BY
+    # safely (see _SORT_CLAUSES there); default keeps stable alphabetical order.
+    parser.add_argument("--sort", choices=("name", "recent", "runs"), default="name")
     parser.set_defaults(func=list_verb.cmd_list)
 
 
