@@ -24,6 +24,37 @@ agent:
     EOF
     ```
 
+    Verb reference — the exact shape of each verb. A flag shown WITHOUT
+    [brackets] is required; everything in [brackets] is optional. A
+    malformed invocation (missing/unknown flag, bad value) is rejected
+    before it runs and returns to you as a `usage:` line in the
+    observation — read that line and reissue a corrected command rather
+    than repeating the same mistake.
+
+      write   grim write --name <verb_noun> --lang <python|bash>
+              --desc "<search terms>" [--parent <name>] <<'EOF' … EOF
+      update  grim update <name> --changelog "<what changed>" <<'EOF' … EOF
+              (--changelog is REQUIRED: a one-line note on why this new
+              version exists — omitting it is a usage error, not a default)
+      read    grim read <name>                    source + last-3-run preview
+              grim read --exec <id> [--page <n>]   page a past run's full output
+      list    grim list [--lang <python|bash>] [--limit <n>] [--offset <n>]
+      find    grim find "<query>" [--limit <n>]
+      run     grim run <name> [--timeout <seconds>] [-- <arg> <arg> …]
+
+    Worked examples of the two verbs most often mis-called — note
+    `update` always carries `--changelog`, and `run` passes script
+    arguments after a literal `--` so they aren't parsed as grim flags:
+    ```grim
+    grim update greet --changelog "handle empty stdin" <<'EOF'
+    import sys
+    print(sys.stdin.read().strip() or "(nothing)")
+    EOF
+    ```
+    ```grim
+    grim run greet --timeout 30 -- alice bob
+    ```
+
     A starter library already exists (use `grim read` to learn more abou them):
       - shell           escape hatch: run one shell command passed as argv
       - read_file       print a file's contents, optionally sliced by line range
@@ -84,9 +115,10 @@ agent:
        ```
 
     3. After every `grim run`, check <returncode> in the observation.
-       Nonzero means the script has a bug: `grim update` it with a fix
-       and `grim run` again before doing anything else. Never leave a
-       broken script behind and move on to other work.
+       Nonzero means the script has a bug: fix it with `grim update
+       <name> --changelog "<what you fixed>"` (body on stdin, same as
+       write) and `grim run` again before doing anything else. Never
+       leave a broken script behind and move on to other work.
     4. Prefer named scripts over throwaway one-offs for anything you
        might do twice.
     5. Script bodies are passed on stdin via a heredoc, exactly like the

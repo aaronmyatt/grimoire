@@ -95,6 +95,17 @@ def _invoke(argv: list[str], stdin: str, session_id: str) -> tuple[str, int]:
     """Calls cli.main(argv) in-process with captured stdio — the only
     path from the agent into verbs/*, matching D7's "no shell in the
     control plane" (adapter/CLAUDE.md). Requires no changes to cli.py.
+
+    Malformed actions (unknown flag, missing/invalid argument) make
+    argparse call ``sys.exit()`` instead of returning — and because this
+    runs IN-PROCESS, that ``SystemExit`` would otherwise tear straight
+    through the whole agent loop: it's a ``BaseException``, so mini's
+    ``run()`` (which only catches ``except Exception``) never sees it and
+    the entire session dies mid-turn. Catching it here converts the
+    mistake into an ordinary nonzero-returncode observation the agent can
+    read (argparse's usage text is already captured on stderr) and
+    self-correct from — which is the entire point of the six-verb sandbox.
+    Ref: https://docs.python.org/3/library/argparse.html#exiting-methods
     """
     stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
     original_stdin = sys.stdin
@@ -106,7 +117,17 @@ def _invoke(argv: list[str], stdin: str, session_id: str) -> tuple[str, int]:
             contextlib.redirect_stderr(stderr_buf),
         ):
             exit_code = cli.main(argv)
+    except SystemExit as exit_signal:
+        # Normalize SystemExit.code to a shell-style int the same way the
+        # CPython interpreter does on process exit: None -> 0, an int ->
+        # itself, anything else -> 1 (argparse uses 2 for usage errors, 0
+        # for --help). The redirected buffers already hold argparse's
+        # message because it writes before calling sys.exit.
+        # Ref: https://docs.python.org/3/library/exceptions.html#SystemExit
+        code = exit_signal.code
+        exit_code = code if isinstance(code, int) else (0 if code is None else 1)
     finally:
         sys.stdin = original_stdin
-    assert isinstance(exit_code, int), "cli.main must always return an int exit code"
+    assert isinstance(exit_code, int), "invoke must always resolve an int exit code"
+    assert sys.stdin is original_stdin, "invoke must restore the caller's stdin"
     return stdout_buf.getvalue() + stderr_buf.getvalue(), exit_code

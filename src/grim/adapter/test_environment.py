@@ -73,3 +73,37 @@ def test_sentinel_with_nonzero_exit_does_not_submit() -> None:
     env.execute(_write_action("finish", "bash", "submits", body))
     result = env.execute({"command": "grim run finish"})
     assert result["returncode"] != 0
+
+
+# Regression: argparse calls sys.exit() on malformed input rather than
+# returning. Since execute() runs cli.main() in-process, that SystemExit
+# (a BaseException mini's `run()` loop doesn't catch) used to tear through
+# the whole agent and end the session mid-turn. _invoke now traps it and
+# hands back a normal nonzero-returncode observation the agent can read
+# and fix. These pin that behavior so the hole can't silently reopen.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grim update greet <<'EOF'\nprint('x')\nEOF",  # missing required --changelog
+        "grim run greet --timeout notanumber",  # --timeout wants a float
+        "grim list --bogus",  # unknown flag
+        "grim find",  # missing required positional 'query'
+    ],
+)
+def test_malformed_action_returns_error_observation_not_systemexit(command: str) -> None:
+    env = GrimEnvironment(session_id="s1")
+    # No pytest.raises(SystemExit): the point is that execute() must *return*.
+    result = env.execute({"command": command})
+    assert result["returncode"] != 0
+    # argparse writes its usage/error to the captured stderr — the agent
+    # needs that text to self-correct, so it must survive into the output.
+    assert "usage:" in result["output"]
+
+
+def test_help_action_returns_zero_without_submitting() -> None:
+    # --help exits 0; _invoke must normalize that to returncode 0 without
+    # tripping the submit sentinel (returncode 0 alone must never submit).
+    env = GrimEnvironment(session_id="s1")
+    result = env.execute({"command": "grim update --help"})
+    assert result["returncode"] == 0
+    assert "usage:" in result["output"]
