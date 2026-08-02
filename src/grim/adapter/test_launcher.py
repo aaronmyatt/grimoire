@@ -103,6 +103,56 @@ def test_main_inits_the_library_then_invokes_mini_in_process(
     assert (tmp_path / "grimoire.db").exists()
 
 
+def test_main_help_prints_grim_screen_without_init_or_mini(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    # If --help fell through to init, this DB would be created; it must not be.
+    import minisweagent.run.mini as minirun
+
+    def boom(**_: object) -> None:  # mini must never be invoked for grim --help
+        raise AssertionError("mini app should not run for --help")
+
+    monkeypatch.setattr(minirun, "app", boom)
+
+    assert launcher.main(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert "grim-agent" in out and "six verbs" in out
+    assert "--mini-help" in out  # pointer to the underlying option list
+    assert not (tmp_path / "grimoire.db").exists()  # no DB init on help
+
+
+def test_main_mini_help_delegates_without_init(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    captured: dict[str, object] = {}
+    import minisweagent.run.mini as minirun
+
+    def fake_app(args: list[str], standalone_mode: bool) -> None:
+        captured["args"] = args
+
+    monkeypatch.setattr(minirun, "app", fake_app)
+
+    assert launcher.main(["--mini-help"]) == 0
+    assert captured["args"] == ["--help"]  # forwarded to mini's own help
+    assert not (tmp_path / "grimoire.db").exists()  # still no DB init
+
+
+def test_main_silences_mini_startup_banner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    monkeypatch.delenv("MSWEA_SILENT_STARTUP", raising=False)
+    import minisweagent.run.mini as minirun
+
+    monkeypatch.setattr(minirun, "app", lambda args, standalone_mode: None)
+
+    assert launcher.main(["a task", "-m", "x/y"]) == 0
+    # mini's import-time banner is guarded by this env var; main forces it on.
+    import os
+
+    assert os.environ["MSWEA_SILENT_STARTUP"] == "1"
+
+
 def test_main_reports_missing_agent_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     # Simulate a core-only install: block the mini import with a real
     # ModuleNotFoundError via a meta-path finder, so main() must return the
