@@ -1,35 +1,39 @@
 # Slice: adapter
 
 ## Purpose
-Subclasses mini-swe-agent's environment so the model's action is parsed
-and dispatched to `grim` in-process — the hard enforcement point for the
-six-verb constraint (build plan D7, §2, Phase 2).
+Subclasses mini-swe-agent's model and environment so the agent acts through
+native LLM tool calls that are dispatched to `grim` in-process — the hard
+enforcement point for the six-verb constraint (build plan D7, §2, Phase 2;
+D6 revised → native tool-calling).
 
 ## Public interface
-- `parse.py` — `parse_grim(text: str) -> ParsedCommand | None`. Pure
-  text-in/data-out: shlex on the first non-blank line, optional trailing
-  heredoc for the body, verb whitelisted against the six agent-facing
-  verbs. A leading `grim` token is optional — models routinely drop it,
-  treating the ` ```grim ` fence tag as already having said "grim" (the
-  same convention every other language-tagged fence uses); both `grim
-  <verb> ...` and bare `<verb> ...` are accepted. No mini-swe-agent
-  import.
+- `tools.py` — `GRIM_TOOLS` (OpenAI function schemas for the six agent
+  verbs + a terminal `submit` control) and `tool_call_to_argv(tool, args)
+  -> (argv, stdin)`, the pure structured-args → `cli.main` argv mapper.
+  Text/data in, data out; no mini-swe-agent import. This is the successor
+  to the old text-based `parse.py`.
+- `toolcall_model.py` — `GrimToolcallModel(LitellmModel)`. Overrides
+  `_query` (hands the model `GRIM_TOOLS` instead of the single `bash`
+  tool) and `_parse_actions` (validates each tool call — name + required
+  args — into a `{tool, args, tool_call_id}` action, raising `FormatError`
+  with a precise message on any deviation). Inherited
+  `format_observation_messages` renders results as `role: "tool"` messages.
 - `environment.py` — `GrimEnvironment`, subclassing mini-swe-agent's
-  `LocalEnvironment` and overriding `execute(action: dict, cwd: str = "",
-  *, timeout: int | None = None) -> dict[str, Any]` (the real upstream
-  signature — mini's Model layer already extracted `action["command"]`
-  from the fenced block before this is called). No shell runs in the
-  control plane: `execute` calls `parse_grim`, then a private `_invoke`
-  helper that runs `cli.main(argv)` **in-process** with redirected
-  stdio — the only calls this module makes into the rest of the
-  codebase. Reusing `cli.main()` (not a hand-rolled dispatcher) means
-  `cli.py` needs zero changes for the agent path.
+  `LocalEnvironment` and overriding `execute(action, cwd="", *,
+  timeout=None)`. No shell in the control plane: `execute` reads the
+  structured `action["tool"]`/`action["args"]`, maps them via
+  `tool_call_to_argv`, and runs `cli.main(argv)` **in-process** through the
+  private `_invoke` helper (redirected stdio; traps argparse's
+  `SystemExit` so a bad arg value returns as a nonzero observation, never
+  a process kill). The `submit` tool raises `Submitted` directly — the
+  deterministic stop. Reusing `cli.main()` means `cli.py` needs zero
+  changes for the agent path.
 - `grimoire.yaml` — mini config carrying the `system_template` protocol
-  ladder (build plan §6), `model.model_class: litellm_textbased` with a
-  grim-specific `action_regex`, `environment.environment_class:
-  grim.adapter.environment.GrimEnvironment`, and `agent.agent_class:
-  grim.adapter.agent.GrimAgent`. Data, not code — safe to hand-edit
-  without touching `environment.py`/`agent.py`.
+  ladder (build plan §6), `model.model_class:
+  grim.adapter.toolcall_model.GrimToolcallModel`,
+  `environment.environment_class: grim.adapter.environment.GrimEnvironment`,
+  and `agent.agent_class: grim.adapter.agent.GrimAgent`. Data, not code —
+  safe to hand-edit without touching the Python.
 - `agent.py` — `GrimAgent`, subclassing mini-swe-agent's
   `InteractiveAgent` to extend `run(task, **kwargs)`: before the first
   turn, it queries the script library's FTS5 index directly against the
@@ -41,30 +45,22 @@ six-verb constraint (build plan D7, §2, Phase 2).
   Mitigates build plan §8's "optional find misses/duplicates existing
   scripts" risk by surfacing a high-confidence hit before the agent
   decides whether to search at all.
-- `streaming_model.py` — `GrimStreamingTextbasedModel` (build plan
-  Phase 2b, optional). Same `LitellmTextbasedModel` contract, live
-  terminal output instead of a blank pause per turn. Opt-in only: swap
-  `model.model_class` in `grimoire.yaml` to
-  `grim.adapter.streaming_model.GrimStreamingTextbasedModel`; the
-  shipped default stays non-streaming.
 - `run.sh` — the recommended launcher: `./run.sh -m <model> -y -t
   "<task>"`. A pre-launch wrapper only (runs *before* the agent loop
   starts, to pick a fresh `/tmp` trajectory path per invocation) — not
-  part of the `execute()` control plane the invariants below govern, and
-  not on the model's action path. Bypass it and call `uv run mini -c
-  grimoire.yaml ...` directly for mini's stock single-fixed-file output
-  behavior instead.
+  part of the `execute()` control plane the invariants below govern.
+  Bypass it and call `uv run mini -c grimoire.yaml ...` directly for
+  mini's stock single-fixed-file output behavior instead.
 
 ## Invariants
-- Any action that doesn't parse as one of the six verbs (via
-  `parse_grim`) returns the canned `PROTOCOL_REMINDER` observation —
-  never falls through to actual execution.
-- This module is the only caller of `cli.main()` on the agent's behalf;
-  a human using the CLI directly invokes `grim`/`cli.py` themselves, not
+- The model may only call the tools in `GRIM_TOOLS`; `GrimToolcallModel`
+  rejects anything else (unknown tool, missing/invalid args) with a
+  `FormatError` — an action never falls through to unvalidated execution.
+- Task completion is *only* the `submit` tool call, which raises
+  `Submitted` with the model's `result`. There is no output-sentinel scan
+  — a script may freely print any text, including old sentinels.
+- This module is the only caller of `cli.main()` on the agent's behalf; a
+  human using the CLI directly invokes `grim`/`cli.py` themselves, not
   through here.
 - No new shell/subprocess call is ever added to this slice — that would
   reopen exactly the bypass D7 exists to close.
-- `_check_finished` is overridden (not inherited) because `run`'s
-  observation always leads with a `[grim] exec #id...` header, so the
-  submission sentinel is matched as any whole line of output rather than
-  requiring it to be the literal first line.
