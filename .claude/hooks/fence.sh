@@ -21,6 +21,7 @@ SHARED_ROOT=src/grim
 FROZEN_PATTERNS=(
   'src/grim/db.py'
   'src/grim/cli.py'
+  'src/grim/config.py'
   '.claude/**'
   '.pi/extensions/**'
   'CLAUDE.md'

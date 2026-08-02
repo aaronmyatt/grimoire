@@ -178,6 +178,7 @@ every push.
 
 - `src/grim/db.py`
 - `src/grim/cli.py`
+- `src/grim/config.py`
 - `.claude/**`
 - `CLAUDE.md`
 - `pyproject.toml`

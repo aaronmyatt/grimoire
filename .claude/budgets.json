@@ -20,10 +20,11 @@
     "root": "src/grim",
     "shared": "src/grim",
     "slices": ["verbs", "exec", "adapter", "seeds"],
-    "sharedFiles": ["src/grim/db.py", "src/grim/cli.py"],
+    "sharedFiles": ["src/grim/db.py", "src/grim/cli.py", "src/grim/config.py"],
     "frozenPaths": [
       "src/grim/db.py",
       "src/grim/cli.py",
+      "src/grim/config.py",
       ".claude/**",
       ".pi/extensions/**",
       "CLAUDE.md",

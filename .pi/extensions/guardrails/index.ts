@@ -20,7 +20,7 @@ import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 // --- generated from budgets.json — edit there, not here ---
 const SLICE_ROOT: string = "src/grim";
 const SHARED_ROOT: string = "src/grim";
-const FROZEN_PATTERNS: string[] = ["src/grim/db.py","src/grim/cli.py",".claude/**","CLAUDE.md","pyproject.toml","uv.lock",".github/workflows/**"];
+const FROZEN_PATTERNS: string[] = ["src/grim/db.py","src/grim/cli.py","src/grim/config.py",".claude/**","CLAUDE.md","pyproject.toml","uv.lock",".github/workflows/**"];
 const BASELINE_PATTERNS: string[] = [".claude/mypy-baseline.txt"];
 const DIFF_BUDGET: number = 300;
 const CMD_FORMAT: string = "uv run ruff format --check .";
