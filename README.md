@@ -57,15 +57,15 @@ truth for its invariants; this is a summary.
 
 | Slice | Purpose | Public interface |
 |---|---|---|
-| **`db.py` / `cli.py`** (shared kernel, frozen) | SQLite connection, PRAGMAs, migration runner; argparse dispatch for the whole CLI | `connect`, `migrate`, `init_db` · `build_parser`, `main` |
+| **`db.py` / `cli.py` / `config.py`** (shared kernel, frozen) | SQLite connection, PRAGMAs, migration runner; argparse dispatch; global-config → env-var defaults | `connect`, `migrate`, `init_db` · `build_parser`, `main` · `apply_global_config` |
 | **`verbs/`** | The six agent-facing verbs — the entire closed set the agent may invoke | one module per verb (`write.py`, `update.py`, `read.py`, `list.py`, `find.py`, `run.py`) |
 | **`exec/`** | Language dispatch table (`python → uv run`, `bash → bash`, `js/ts → bun`, else → `run --json`) and output truncation | `dispatch.dispatch(...)`, `envelope.truncate(...)` |
 | **`adapter/`** | Subclasses mini-swe-agent's environment so model actions are parsed and dispatched to `grim` in-process — the hard enforcement point for the six-verb constraint | `environment.GrimEnvironment`, `grimoire.yaml` |
 | **`seeds/`** | Seed script bodies loaded on `grim init` (`sh`, `read_file`, `apply_patch`, `stats`, `gardener`, …) — meta-tooling ships as library scripts, never new CLI verbs | `loader.load_seeds(db)` |
 
-The shared kernel (`db.py`, `cli.py`) is tiny, frozen, and versioned like
-a third-party library: slices depend on it or on nothing, never on each
-other. Within a slice, plain function calls; across slices, only the URL,
+The shared kernel (`db.py`, `cli.py`, `config.py`) is tiny, frozen, and
+versioned like a third-party library: slices depend on it or on nothing,
+never on each other. Within a slice, plain function calls; across slices, only the URL,
 the parent process, or a message across a time boundary — never an
 in-process event bus.
 
@@ -101,8 +101,9 @@ Enforcement is three hook layers, none of them vibes-based (see
   and typechecker are clean, the test suite is green, and the diff is
   within budget.
 
-**Frozen paths** (`src/grim/db.py`, `src/grim/cli.py`, `.claude/**`,
-`CLAUDE.md`, `pyproject.toml`, `uv.lock`, `.github/workflows/**`) are
+**Frozen paths** (`src/grim/db.py`, `src/grim/cli.py`, `src/grim/config.py`,
+`.claude/**`, `CLAUDE.md`, `pyproject.toml`, `uv.lock`,
+`.github/workflows/**`) are
 human-confirmed on every single write, individually, forever — they're
 never edited as a side effect of slice work. `.claude/mypy-baseline.txt`
 is stricter still: it's a tool-generated baseline, denied outright for
@@ -119,6 +120,21 @@ ledger lives in `RATCHET.md`.
 uv sync
 uv run grim init      # creates ~/.grimoire/grimoire.db (or $GRIM_DB) and applies schema v1
 uv run pytest         # smoke tests: fresh init + idempotent re-init
+```
+
+## Global config
+
+Persistent defaults live in `~/.grimoire/config.toml` (TOML). Each key seeds
+the matching environment variable via `os.environ.setdefault`, so **a value
+exported in your shell always wins** — precedence is shell env → config file →
+built-in default. Missing or malformed files are ignored with a warning.
+
+```toml
+# ~/.grimoire/config.toml
+model    = "anthropic/claude-sonnet-4-5"   # -> GRIM_MODEL   (grim-agent's model)
+timeout  = 300                             # -> GRIM_TIMEOUT (grim run default, capped at 3600s)
+# db     = "/path/to/grimoire.db"          # -> GRIM_DB
+# traj_dir = "/path/to/trajectories"       # -> GRIM_TRAJ_DIR
 ```
 
 ## Install as a CLI harness

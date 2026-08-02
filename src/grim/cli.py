@@ -13,7 +13,7 @@ import sqlite3
 import sys
 from typing import TYPE_CHECKING
 
-from grim import db
+from grim import config, db
 from grim.seeds.bodies import SEEDS
 from grim.seeds.loader import load_seeds
 from grim.verbs import find, read, run, update, write
@@ -143,6 +143,11 @@ def _database_ready() -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     """Parse argv and dispatch to the matching cmd_* handler."""
+    # Seed env-var defaults from ~/.grimoire/config.toml before any handler
+    # reads them (a shell-set var still wins). This is the single entry point
+    # for both the human CLI and the agent (adapter -> cli.main), so config
+    # applies everywhere without any slice or the launcher knowing about it.
+    config.apply_global_config()
     parser = build_parser()
     args = parser.parse_args(argv)
     assert hasattr(args, "func"), "every subcommand must set_defaults(func=...)"
