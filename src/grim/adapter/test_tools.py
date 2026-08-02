@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import pytest
 
-from grim.adapter.tools import GRIM_TOOLS, SUBMIT_TOOL_NAME, tool_call_to_argv
+from grim.adapter.tools import (
+    GRIM_TOOLS,
+    SUBMIT_TOOL_NAME,
+    render_command,
+    tool_call_to_argv,
+)
 
 
 def test_write_maps_flags_and_body_to_stdin() -> None:
@@ -81,3 +86,10 @@ def test_grim_tools_expose_six_verbs_plus_submit() -> None:
 def test_submit_schema_requires_a_result() -> None:
     submit = next(t for t in GRIM_TOOLS if t["function"]["name"] == SUBMIT_TOOL_NAME)
     assert submit["function"]["parameters"]["required"] == ["result"]
+
+
+def test_render_command_gives_a_readable_cli_string() -> None:
+    # Actions must carry a display `command` for mini's InteractiveAgent.
+    assert render_command("find", {"query": "github repos"}) == "grim find 'github repos'"
+    assert render_command("run", {"name": "greet", "args": ["a b"]}) == "grim run greet -- 'a b'"
+    assert render_command(SUBMIT_TOOL_NAME, {"result": "done"}) == "submit"

@@ -23,7 +23,7 @@ from jinja2 import StrictUndefined, Template
 from minisweagent.exceptions import FormatError
 from minisweagent.models.litellm_model import LitellmModel
 
-from grim.adapter.tools import GRIM_TOOLS
+from grim.adapter.tools import GRIM_TOOLS, render_command
 
 _TOOL_NAMES = frozenset(t["function"]["name"] for t in GRIM_TOOLS)
 # name -> its required-argument list, precomputed from the schemas so
@@ -91,7 +91,14 @@ class GrimToolcallModel(LitellmModel):
                 finish_reason,
             )
         assert isinstance(tool_call.id, str), "a tool call must carry an id for result correlation"
-        return {"tool": name, "args": args, "tool_call_id": tool_call.id}
+        # `command` is a display string mini's InteractiveAgent reads
+        # unconditionally; GrimEnvironment dispatches from tool/args.
+        return {
+            "tool": name,
+            "args": args,
+            "tool_call_id": tool_call.id,
+            "command": render_command(name, args),
+        }
 
     def _format_error(self, error: str, finish_reason: Any) -> FormatError:
         content = Template(self.config.format_error_template, undefined=StrictUndefined).render(

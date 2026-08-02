@@ -19,8 +19,10 @@ from minisweagent.models import get_model_class  # noqa: E402
 from minisweagent.models.test_models import DeterministicModel, make_output  # noqa: E402
 
 from grim import db  # noqa: E402
+from grim.adapter.agent import GrimAgent  # noqa: E402
 from grim.adapter.environment import GrimEnvironment  # noqa: E402
 from grim.adapter.toolcall_model import GrimToolcallModel  # noqa: E402
+from grim.adapter.tools import render_command  # noqa: E402
 
 GRIMOIRE_YAML = Path(__file__).parent / "grimoire.yaml"
 
@@ -81,3 +83,45 @@ def test_toy_task_end_to_end_via_tool_calls() -> None:
     assert result["submission"] == "said hi"  # the submit tool's result flows through
     ran = [m for m in agent.messages if "hi" in m.get("content", "")]
     assert ran, "the greet run's output should appear in an observation"
+
+
+def test_grim_agent_runs_tool_actions_end_to_end() -> None:
+    # Regression: the production agent is GrimAgent -> InteractiveAgent,
+    # whose execute_actions reads action["command"] for every action (even
+    # in yolo). Tool actions must carry that display field or the whole run
+    # dies with KeyError('command') on the first step. (The DefaultAgent
+    # test above does NOT exercise this path.)
+    db.migrate(db.connect())
+
+    def act(tool: str, args: dict[str, object]) -> dict[str, object]:
+        # Shape actions exactly as GrimToolcallModel produces them, incl. the
+        # `command` display field InteractiveAgent requires.
+        return {
+            "tool": tool,
+            "args": args,
+            "tool_call_id": "c",
+            "command": render_command(tool, args),
+        }
+
+    outputs = [
+        make_output(
+            "write greet",
+            [act("write", {"name": "greet", "lang": "bash", "desc": "greets", "body": "echo hi"})],
+        ),
+        make_output("run greet", [act("run", {"name": "greet"})]),
+        make_output("finish", [act("submit", {"result": "said hi"})]),
+    ]
+    agent = GrimAgent(
+        DeterministicModel(outputs=outputs),  # type: ignore[no-untyped-call]
+        GrimEnvironment(session_id="grim-agent-e2e"),
+        system_template="You are a test agent.",
+        instance_template="{{task}}",
+        mode="yolo",  # no per-action confirmation prompt (no stdin in tests)
+        confirm_exit=False,  # submit ends the run without the "new task?" prompt
+        cost_limit=0,
+    )
+
+    result = agent.run("say hi")
+
+    assert result["exit_status"] == "Submitted"
+    assert result["submission"] == "said hi"

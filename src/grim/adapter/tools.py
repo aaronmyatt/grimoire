@@ -17,6 +17,7 @@ six-verb data surface (root CLAUDE.md §2, build plan D11/D12) is unchanged.
 
 from __future__ import annotations
 
+import shlex
 from typing import Any
 
 SUBMIT_TOOL_NAME = "submit"
@@ -69,6 +70,18 @@ def tool_call_to_argv(tool: str, args: dict[str, Any]) -> tuple[list[str], str |
                 argv += ["--", *(_str(a) for a in script_args)]
             return argv, args.get("stdin")
     raise AssertionError(f"unhandled data verb {tool!r}")  # unreachable past the guard
+
+
+def render_command(tool: str, args: dict[str, Any]) -> str:
+    """A one-line human-readable rendering of a tool call. Every action
+    must carry a `command` string: mini's InteractiveAgent reads it
+    unconditionally (for the confirm-mode prompt and whitelist matching),
+    exactly as mini's own tool-calling model attaches one. Display only —
+    GrimEnvironment dispatches from `tool`/`args`, not this string."""
+    if tool == SUBMIT_TOOL_NAME:
+        return "submit"
+    argv, _ = tool_call_to_argv(tool, args)
+    return "grim " + shlex.join(argv)
 
 
 def _fn(

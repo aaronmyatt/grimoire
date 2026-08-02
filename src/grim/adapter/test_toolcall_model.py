@@ -37,7 +37,13 @@ def _model() -> GrimToolcallModel:
 def test_valid_tool_call_lowers_to_a_grim_action() -> None:
     actions = _model()._parse_actions(_response([_tool_call("find", {"query": "github repos"})]))
     assert actions == [
-        {"tool": "find", "args": {"query": "github repos"}, "tool_call_id": "call_1"}
+        {
+            "tool": "find",
+            "args": {"query": "github repos"},
+            "tool_call_id": "call_1",
+            # every action carries a display command for mini's InteractiveAgent
+            "command": "grim find 'github repos'",
+        }
     ]
 
 
@@ -57,7 +63,12 @@ def test_parallel_tool_calls_all_parse() -> None:
 def test_submit_is_a_valid_tool_call() -> None:
     actions = _model()._parse_actions(_response([_tool_call("submit", {"result": "118 repos"})]))
     assert actions == [
-        {"tool": "submit", "args": {"result": "118 repos"}, "tool_call_id": "call_1"}
+        {
+            "tool": "submit",
+            "args": {"result": "118 repos"},
+            "tool_call_id": "call_1",
+            "command": "submit",
+        }
     ]
 
 
