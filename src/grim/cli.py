@@ -92,6 +92,13 @@ def _add_run_parser(subparsers: _SubParsers) -> None:
     parser.add_argument("name")
     parser.add_argument("--timeout", type=float)
     parser.add_argument("--stdin-file", dest="stdin_file")
+    # --head/--tail: opt into first-N/last-M line limiting of the run
+    # observation. Omitted (both None) means full output — grim run shows
+    # the script's complete stdout/stderr by default; these are the escape
+    # hatch for the occasional huge-output script (the full text is stored
+    # regardless and pageable via `grim read --exec <id>`).
+    parser.add_argument("--head", type=int, dest="head")
+    parser.add_argument("--tail", type=int, dest="tail")
     # nargs="*" (not REMAINDER): REMAINDER swallows every token after NAME,
     # including flags like --stdin-file if they come after it. "*" respects
     # argparse's own "--" separator, so --timeout/--stdin-file work on
