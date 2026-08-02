@@ -57,7 +57,15 @@ class GrimEnvironment(LocalEnvironment):
         else:
             text, exit_code = _invoke(cmd.argv, cmd.stdin, self.session_id)
             output = {"output": text, "returncode": exit_code, "exception_info": ""}
-        self._check_finished(output)
+            # Submission is defined as the OUTPUT OF A RUN (protocol: write a
+            # tiny script whose only output is the sentinel, then `grim run`
+            # it). Only `run` can finish. Other verbs — notably `grim read`,
+            # but also `list`/`find` — merely DISPLAY a script's body or a
+            # past run's stored output, which may legitimately contain the
+            # sentinel string; checking those falsely finishes the task and,
+            # because the agent then re-reads the same script, loops forever.
+            if cmd.verb == "run":
+                self._check_finished(output)
         assert "output" in output, "execute() must always return an 'output' key"
         return output
 
@@ -65,7 +73,8 @@ class GrimEnvironment(LocalEnvironment):
         """Overrides LocalEnvironment's: that version requires the
         sentinel as output's literal first line, but `run`'s observation
         always leads with a "[grim] exec #id..." header (build plan §4),
-        so the sentinel is matched as any whole line instead."""
+        so the sentinel is matched as any whole line instead. Only ever
+        called for the `run` verb — see execute()."""
         lines = output.get("output", "").splitlines()
         if output.get("returncode") == 0 and any(
             line.strip() == _SUBMIT_SENTINEL for line in lines

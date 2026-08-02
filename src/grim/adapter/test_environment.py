@@ -75,6 +75,25 @@ def test_sentinel_with_nonzero_exit_does_not_submit() -> None:
     assert result["returncode"] != 0
 
 
+def test_reading_a_script_containing_the_sentinel_does_not_submit() -> None:
+    # Regression: `grim read` merely DISPLAYS a script's body/preview. A
+    # script whose body literally contains a bare sentinel line (like the
+    # explain_grimiore_prompt script that reproduced the finish protocol
+    # inside a triple-quoted string) must NOT finish the task when read —
+    # doing so trapped the agent in a re-read → re-submit loop.
+    env = GrimEnvironment(session_id="s1")
+    sentinel = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
+    body = f'print("""To finish, output this on its own line:\n{sentinel}\n""")'
+    env.execute(_write_action("explain_finish", "python", "explains finishing", body))
+
+    read = env.execute({"command": "grim read explain_finish"})
+    # The read output really does contain a bare sentinel line (the whole
+    # premise of the bug) ...
+    assert any(line.strip() == sentinel for line in read["output"].splitlines())
+    # ... yet reading it must return normally, not raise Submitted.
+    assert read["returncode"] == 0
+
+
 # Regression: argparse calls sys.exit() on malformed input rather than
 # returning. Since execute() runs cli.main() in-process, that SystemExit
 # (a BaseException mini's `run()` loop doesn't catch) used to tear through
