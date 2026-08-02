@@ -1,0 +1,30 @@
+{
+  "title": "Grimoire",
+  "description": "The agent's executable library: scripts, versions, and every recorded execution.",
+  "databases": {
+    "grimoire": {
+      "queries": {
+        "recent_executions": {
+          "title": "Recent executions",
+          "description": "The append-only run log, newest first.",
+          "sql": "SELECT e.id AS exec, s.name, sv.version, e.exit_code, round(e.duration_ms / 1000.0, 2) AS seconds, e.started_at\nFROM execution e\nJOIN script_version sv ON sv.id = e.script_version_id\nJOIN script s ON s.id = sv.script_id\nORDER BY e.started_at DESC, e.id DESC\nLIMIT 100"
+        },
+        "top_scripts_by_use": {
+          "title": "Top scripts by use",
+          "description": "Most-run scripts with their success rate (from the script_health view).",
+          "sql": "SELECT name, runs, round(success_rate, 3) AS success_rate, last_used\nFROM script_health\nWHERE runs > 0\nORDER BY runs DESC, last_used DESC\nLIMIT 50"
+        },
+        "failure_feed": {
+          "title": "Failure feed",
+          "description": "Non-zero-exit executions, newest first — the triage queue.",
+          "sql": "SELECT e.id AS exec, s.name, sv.version, e.exit_code, e.started_at\nFROM execution e\nJOIN script_version sv ON sv.id = e.script_version_id\nJOIN script s ON s.id = sv.script_id\nWHERE e.exit_code != 0\nORDER BY e.started_at DESC, e.id DESC\nLIMIT 100"
+        },
+        "script_affinity": {
+          "title": "Script affinity (ran adjacently)",
+          "description": "Pairs where one script ran immediately after another in a session — emergent pipelines, from the script_affinity view.",
+          "sql": "SELECT sa.name AS ran_first, sb.name AS then_ran, aff.times_adjacent\nFROM script_affinity aff\nJOIN script sa ON sa.id = aff.a\nJOIN script sb ON sb.id = aff.b\nWHERE aff.a != aff.b\nORDER BY aff.times_adjacent DESC, ran_first, then_ran\nLIMIT 50"
+        }
+      }
+    }
+  }
+}

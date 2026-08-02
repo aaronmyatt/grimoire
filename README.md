@@ -121,6 +121,35 @@ uv run grim init      # creates ~/.grimoire/grimoire.db (or $GRIM_DB) and applie
 uv run pytest         # smoke tests: fresh init + idempotent re-init
 ```
 
+## Human surfaces
+
+The whole library is one SQLite file, so the human surfaces are just
+different lenses over it — no separate store to keep in sync (Phase 5a).
+
+**Browse it (Datasette).** Canned queries — recent executions, top scripts
+by use, the failure feed, and the emergent-pipeline affinity view — ship in
+`surfaces/datasette/metadata.json`:
+
+```bash
+uvx datasette ~/.grimoire/grimoire.db -m surfaces/datasette/metadata.json
+# open http://127.0.0.1:8001 → "Queries" (the -m db key is the file stem,
+# "grimoire"; point it elsewhere if you run with a non-default $GRIM_DB)
+```
+
+**Pick + preview (fzf).** A one-liner turns `grim list` into a fuzzy picker
+with the script's source in the preview pane:
+
+```bash
+grim list | fzf --preview 'grim read {1}'
+```
+
+**Snapshot it to disk.** The `export_library` seed dumps the latest version
+of every non-archived script to a git-friendly tree:
+
+```bash
+grim run export_library -- ./library-export
+```
+
 ## Working in this repo
 
 Root `CLAUDE.md` is the constitution (budgets, slice rules, change
