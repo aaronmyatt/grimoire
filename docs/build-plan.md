@@ -6,7 +6,7 @@ Grimoire replaces mini-swe-agent's raw-bash action space with six verbs over a S
 
 The thesis being tested: bash is great, the entire corpus of programming languages is better — and a persistent, searchable corpus of the agent's own scripts compounds, saving tokens on repeat work and leaving the human a usable library behind.
 
-> Status: Phases 0–3 and 2b are done, plus a post-Phase-3 protocol refinement round (language scope, composition, optional `find`, seed list). Since then: adapter hardening (argparse `SystemExit` no longer kills the agent; `run.sh --stream`), `grim run` now shows full output by default with opt-in `--head`/`--tail` limits, the composition recursion cap landed (§9 → `GRIM_CALL_DEPTH`), and **Phase 5a** (Datasette canned queries + fzf/export docs) shipped. **Phase 4 is deliberately deferred** — validating with `python`/`bash` only before extending the runner table. Remaining, in order: Phase 4 (when un-deferred), Phase 5b (TUI), 6, 7, 8.
+> Status: Phases 0–3 and 2b are done, plus a post-Phase-3 protocol refinement round (language scope, composition, optional `find`, seed list). Since then: adapter hardening (argparse `SystemExit` no longer kills the agent), `grim run` now shows full output by default with opt-in `--head`/`--tail` limits, the composition recursion cap landed (§9 → `GRIM_CALL_DEPTH`), **Phase 5a** (Datasette canned queries + fzf/export docs) shipped, and the adapter migrated from the text-based fenced-block grammar to **native tool-calling** (D6 revised — `GRIM_TOOLS` + a deterministic `submit` stop; the text-based path, including `run.sh --stream`, was removed). **Phase 4 is deliberately deferred** — validating with `python`/`bash` only before extending the runner table. Remaining, in order: Phase 4 (when un-deferred), Phase 5b (TUI), 6, 7, 8.
 
 ---
 
@@ -21,13 +21,13 @@ Locked for v1; all revisitable, but changing them mid-build should require a wri
 | D3 | Storage | One SQLite file (`~/.grimoire/grimoire.db`, `GRIM_DB` override), WAL mode, FTS5 | Single portable artifact; Datasette-browsable for free; scripts can introspect it. |
 | D4 | Versioning | Append-only. `update` writes a new version row; executions pin to an exact version | Reproducibility; forks point at versions, not scripts. |
 | D5 | Relationship graphs | Derived views over the execution log — never imperatively maintained edges | Nothing to keep consistent; richer queries (affinity, pipelines) fall out of joins. |
-| D6 | Action grammar | One fenced code block = one `grim` command; script bodies pass via heredoc | Keeps mini's "model emits a code block" contract untouched. |
+| D6 | Action grammar | **Revised → native tool-calling.** Originally one fenced ` ```grim ` block per turn (heredoc bodies), with completion signalled by a sentinel scanned from command output. Superseded because parsing the model's response text and scanning output for the sentinel proved flaky (a `grim read` of a script whose body held the sentinel falsely finished the task). Now the agent acts via native LLM tool calls over `GRIM_TOOLS` (the six verbs + a terminal `submit`), validated deterministically; the text-based path was ripped out. | Structured actions and a deterministic stop instead of regex/sentinel string-matching. |
 | D7 | Control-plane enforcement | The mini adapter parses the action and calls grim **in-process** — no shell in the control plane | Hard enforcement of the six-verb constraint; bash exists only *inside* scripts. |
 | D8 | Execution model | Stateless by default (script = f(argv, stdin)); per-run timeout; full output in DB and, since the full-output change, in the observation too — `--head`/`--tail` opt into a truncated envelope | Matches mini's `subprocess.run` philosophy; executions stay comparable and cacheable. |
 | D9 | Executor dispatch | `python → uv run` (PEP 723 inline deps), `bash → bash`, `js/ts → bun`, everything else → `run --json` (Esubaalew/run) | Self-contained Python scripts; `run`'s `--json` envelope maps 1:1 onto the execution row. |
 | D10 | Scope model | `global` \| `repo:<fingerprint>`. Repo-scoped by default when cwd is a git repo; promotion to global is human-gated | Contains blast radius of injected/stale scripts; makes the TUI the review queue. |
 | D11 | Meta-tooling | Stats, gardener, export ship as *library scripts*, not CLI verbs | The six agent-facing verbs stay closed forever; capability grows in the data plane. |
-| D12 | Agent vs human surface | Agent sees exactly six verbs. Humans additionally get `grim init`, `grim doctor`, `grim draft` (Phase 7); the adapter rejects these from the model | Honors the "only these tools may be invoked" constraint without crippling human ops. |
+| D12 | Agent vs human surface | Agent sees exactly six verbs. Humans additionally get `grim init`, `grim doctor`, `grim draft` (Phase 7); the adapter rejects these from the model | Honors the "only these tools may be invoked" constraint without crippling human ops. (D6-revised: the agent also gets a terminal `submit` control tool — not a data verb, so the six-verb *library* surface is unchanged.) |
 | D13 | First target | Personal daily driver first; benchmark track (Phase 8) second | Compounding shows up where problems actually recur. Flip this if the research result is the priority. |
 
 ---
@@ -68,10 +68,10 @@ grimoire/
       dispatch.py           # language → runner table, bash+python only        [done; Phase 4 extends]
       envelope.py           # truncation + formatting of observations           [done]
     adapter/
-      parse.py              # parse_grim: fenced block -> ParsedCommand         [done]
-      environment.py        # GrimEnvironment for mini-swe-agent                [done]
-      streaming_model.py    # optional live-token display (Phase 2b)           [done]
-      grimoire.yaml          # mini config: system_template with the protocol ladder [done]
+      tools.py              # GRIM_TOOLS schemas + tool_call_to_argv mapper     [done]
+      toolcall_model.py     # GrimToolcallModel: grim tool set + action parsing [done]
+      environment.py        # GrimEnvironment: tool-call dispatch + submit stop [done]
+      grimoire.yaml          # mini config: tool-calling model + system_template [done]
     seeds/                  # bodies.py (9 seeds) + loader.py                  [done]
   surfaces/
     datasette/metadata.json # canned queries                                   [Phase 5]
@@ -337,11 +337,12 @@ round after live dogfooding. The real ladder, encoded in
   behind.
 - **Prefer named scripts** over throwaway one-offs for anything the
   agent might do twice.
-- **Submission:** write a tiny script whose only output is
-  `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, then run it in a later turn —
-  the same sentinel convention as vanilla mini-swe-agent, never combined
-  with any other command. Nothing is special-cased; finishing a task is
-  just another `write` + `run`.
+- **Submission:** call the `submit` tool with the final answer as
+  `result` (D6-revised). This is the deterministic stop — there is no
+  output sentinel and no "finish" script to write. (Originally: write a
+  tiny script echoing `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` and run it —
+  replaced because scanning output for that string false-triggered on any
+  script that merely contained it.)
 
 Naming and description quality are load-bearing (they *are* the
 retrieval surface), so the write-time similarity nudge and slug lint
