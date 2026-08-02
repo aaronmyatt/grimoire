@@ -7,7 +7,6 @@
 #
 #   $1              the initial task/prompt handed to the agent (required)
 #   $2.. (optional) forwarded verbatim to the adapter launcher, e.g.
-#                     ./run.sh "list my repos" --stream
 #                     ./run.sh "list my repos" -m anthropic/claude-sonnet-4-5
 #
 # Override the defaults with env vars:
@@ -20,7 +19,7 @@ set -euo pipefail
 if [ "$#" -eq 0 ] || [ -z "${1:-}" ]; then
   echo 'usage: ./run.sh "<initial prompt>" [extra mini/adapter args...]' >&2
   echo '  e.g. ./run.sh "list the public github repos for aaronmyatt"' >&2
-  echo '       ./run.sh "summarize README.md" --stream' >&2
+  echo '       ./run.sh "summarize README.md" -m anthropic/claude-sonnet-4-5' >&2
   exit 2
 fi
 
@@ -38,9 +37,8 @@ export GRIM_DB
 
 # cd into the repo so `uv run` (invoked inside the adapter launcher)
 # resolves this project's venv regardless of where ./run.sh was called
-# from. The adapter launcher adds `-c grimoire.yaml`, a fresh trajectory
-# path, and its own `--stream` handling; grimoire.yaml already sets yolo
-# mode, so no -y is needed here.
+# from. The adapter launcher adds `-c grimoire.yaml` and a fresh trajectory
+# path; grimoire.yaml already sets yolo mode, so no -y is needed here.
 cd "$repo_dir"
 exec ./src/grim/adapter/run.sh \
   -m "$GRIM_MODEL" \

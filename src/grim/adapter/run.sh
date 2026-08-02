@@ -19,28 +19,6 @@ set -euo pipefail
 adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 traj_path="/tmp/grimoire-mini-$(date +%Y%m%dT%H%M%S)-$$.traj.json"
 
-# `--stream` opts into GrimStreamingTextbasedModel (live token-by-token
-# terminal output) without hand-assembling a second -c spec — the fragile
-# step that's easy to drop from a multi-line command. mini merges -c specs
-# left-to-right (recursive_merge in run/mini.py), so appending this
-# override AFTER grimoire.yaml wins over the yaml's model.model_class.
-# Every other argument is forwarded to mini untouched.
-stream_class="grim.adapter.streaming_model.GrimStreamingTextbasedModel"
-stream_override=()
-forwarded=()
-for arg in "$@"; do
-  if [ "$arg" = "--stream" ]; then
-    stream_override=(-c "model.model_class=${stream_class}")
-  else
-    forwarded+=("$arg")
-  fi
-done
-
 echo "[grim] trajectory: $traj_path" >&2
-# `${arr[@]+"${arr[@]}"}` expands to nothing when the array is empty
-# instead of tripping `set -u` on older bash (macOS ships 3.2).
-exec uv run mini \
-  -c "$adapter_dir/grimoire.yaml" \
-  ${stream_override[@]+"${stream_override[@]}"} \
-  -o "$traj_path" \
-  ${forwarded[@]+"${forwarded[@]}"}
+# All arguments are forwarded to mini untouched.
+exec uv run mini -c "$adapter_dir/grimoire.yaml" -o "$traj_path" "$@"
