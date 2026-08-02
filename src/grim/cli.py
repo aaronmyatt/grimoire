@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from grim import config, db
+from grim.curate import near, recent
 from grim.seeds.bodies import SEEDS
 from grim.seeds.loader import load_seeds
 from grim.verbs import find, read, run, update, write
@@ -211,6 +212,15 @@ def build_parser() -> argparse.ArgumentParser:
     config_parser.set_defaults(func=cmd_config)
     doctor_parser = subparsers.add_parser("doctor", help="check tools, FTS5, database, and config")
     doctor_parser.set_defaults(func=cmd_doctor)
+    # Human-only browse commands (curate slice) — dispatched here but never
+    # added to adapter/tools.py::GRIM_TOOLS, so they stay off the agent surface.
+    near_parser = subparsers.add_parser("near", help="scripts that run adjacently to NAME")
+    near_parser.add_argument("name")
+    near_parser.add_argument("--limit", type=int)
+    near_parser.set_defaults(func=near.cmd_near)
+    recent_parser = subparsers.add_parser("recent", help="library by last-run time, newest first")
+    recent_parser.add_argument("--limit", type=int)
+    recent_parser.set_defaults(func=recent.cmd_recent)
     for add_parser in (
         _add_write_parser,
         _add_update_parser,
