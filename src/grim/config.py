@@ -27,7 +27,14 @@ _CONFIG_ENV_KEYS: dict[str, str] = {
     "db": "GRIM_DB",
     "timeout": "GRIM_TIMEOUT",
     "traj_dir": "GRIM_TRAJ_DIR",
+    "run_dir": "GRIM_RUN_DIR",  # background-job dir (run_bg/list_bg/stop_bg seeds)
+    "cost": "GRIM_COST_LIMIT",  # mini agent limits — consumed by the launcher, not verbs
+    "step": "GRIM_STEP_LIMIT",
 }
+
+# Bound the upward search for a repo-local config (CLAUDE.md §3: every loop has
+# an explicit max) — deep enough to reach a repo root from any real subdir.
+_MAX_PARENTS = 64
 
 
 def _load_config(path: Path) -> dict[str, object]:
@@ -46,14 +53,29 @@ def _load_config(path: Path) -> dict[str, object]:
     return data
 
 
-def apply_global_config(path: Path | None = None) -> None:
-    """Seed env-var defaults from the config file. A shell-set var is never
-    overwritten (os.environ.setdefault) — precedence is env > file > default.
-    Idempotent: safe to call on every cli.main() entry, including the adapter's
-    repeated in-process calls within one agent run."""
-    cfg_path = path if path is not None else CONFIG_PATH
-    assert cfg_path is not None, "config path resolves to a value"
-    data = _load_config(cfg_path)
+def _repo_config_path() -> Path | None:
+    """Nearest ./.grimoire/config.toml walking up from cwd (like git's .git
+    discovery), or None. Excludes the global config itself so a cwd under $HOME
+    doesn't rediscover ~/.grimoire/config.toml as a repo config. Bounded climb —
+    never an unbounded walk up the tree."""
+    assert _MAX_PARENTS > 0, "the upward search must be bounded and positive"
+    global_resolved = CONFIG_PATH.resolve()
+    current = Path.cwd().resolve()
+    for _ in range(_MAX_PARENTS):
+        candidate = current / ".grimoire" / "config.toml"
+        if candidate.is_file() and candidate != global_resolved:
+            return candidate
+        if current.parent == current:  # reached the filesystem root
+            return None
+        current = current.parent
+    return None
+
+
+def _apply_config(data: dict[str, object]) -> None:
+    """setdefault each known key's env var from a parsed config table. A
+    shell-set var is never overwritten, and a key already seeded by a
+    higher-priority file wins over a lower one — both fall out of setdefault."""
+    assert isinstance(data, dict), "config data is a parsed table"
     applied = 0
     for key, env in _CONFIG_ENV_KEYS.items():
         value = data.get(key)
@@ -62,3 +84,18 @@ def apply_global_config(path: Path | None = None) -> None:
             os.environ.setdefault(env, str(value))
             applied += 1
     assert applied <= len(_CONFIG_ENV_KEYS), "cannot apply more keys than are known"
+
+
+def apply_global_config(path: Path | None = None) -> None:
+    """Seed env-var defaults from the config files. Precedence, all falling out
+    of os.environ.setdefault (first-set-wins): shell env > repo config (nearest
+    ./.grimoire/config.toml) > global (~/.grimoire/config.toml) > built-in
+    default. `path` overrides the GLOBAL location (tests/tooling). Idempotent —
+    safe to call on every cli.main() entry, including the adapter's repeated
+    in-process calls within one agent run."""
+    global_path = path if path is not None else CONFIG_PATH
+    assert global_path is not None, "global config path resolves to a value"
+    repo_path = _repo_config_path()
+    if repo_path is not None:  # applied first, so repo beats global under setdefault
+        _apply_config(_load_config(repo_path))
+    _apply_config(_load_config(global_path))
