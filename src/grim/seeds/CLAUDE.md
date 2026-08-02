@@ -1,10 +1,14 @@
 # Slice: seeds
 
 ## Purpose
-Seed script bodies loaded on `grim init` (`sh`, `read_file`, `write_file`,
-`apply_patch`, `grep_tree`, `list_dir`, `stats`, `gardener`,
-`export_library` — build plan §3 Phase 3, D11). Meta-tooling ships as
-library scripts here, not as new CLI verbs.
+Seed script bodies loaded on `grim init` (`shell`, `read_file`,
+`write_file`, `apply_patch`, `grep_tree`, `list_dir`, `stats`, `gardener`,
+`export_library`, plus the background-job trio `run_bg`/`list_bg`/`stop_bg`
+— build plan §3 Phase 3, D11). Meta-tooling ships as library scripts here,
+not as new CLI verbs. The background trio tags detached processes
+`grimbg:<name>` and tracks them under `$GRIM_RUN_DIR` (default
+`~/.grimoire/run`): the answer to "long-lived work" is a background job,
+not a longer `grim run` timeout (which is hard-capped, see verbs/run.py).
 
 ## Public interface
 `loader.py` — `load_seeds(db) -> None`. The only function anything outside

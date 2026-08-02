@@ -232,3 +232,43 @@ def test_export_library_writes_latest_bodies_to_disk(
     assert "exported 2 scripts" in result.stdout
     assert (out_dir / "shell.py").read_text() == "b"
     assert (out_dir / "greet.py").read_text() == "b"
+
+
+def test_list_bg_reports_no_jobs_when_run_dir_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
+    result = _run("list_bg")
+    assert result.exit_code == 0
+    assert "no background jobs" in result.stdout
+
+
+def test_run_bg_then_list_then_stop_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    monkeypatch.setenv("GRIM_RUN_DIR", str(run_dir))
+
+    # `sleep 30` is the managed workload (not a test-timing sleep): it stays
+    # alive for the ms-scale window until stop_bg kills it, and self-destructs
+    # if the test ever crashes before stopping it.
+    started = _run("run_bg", argv=["job1", "sleep 30"])
+    assert started.exit_code == 0
+    assert "grimbg:job1" in started.stdout
+    assert (run_dir / "job1.pid").is_file()
+
+    listed = _run("list_bg")
+    assert "job1" in listed.stdout
+    assert "running" in listed.stdout
+
+    stopped = _run("stop_bg", argv=["job1"])
+    assert stopped.exit_code == 0
+    assert "job1" in stopped.stdout
+    assert not (run_dir / "job1.pid").is_file()  # pid file removed on stop
+
+
+def test_stop_bg_reports_unknown_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
+    result = _run("stop_bg", argv=["nope"])
+    assert result.exit_code == 1
+    assert "no such job" in result.stderr
