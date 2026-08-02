@@ -1,0 +1,20 @@
+# Keep the build context small and the image reproducible. The host .venv
+# is the single most important exclusion: it is built against the host's
+# interpreter (here python3.14) and would silently shadow the image's own
+# uv-managed 3.12 venv if copied in. Everything else here is either
+# regenerated in-image, host-only, or runtime cruft.
+# Ref: https://docs.docker.com/build/building/context/#dockerignore-files
+.venv/
+.git/
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+*.traj.json
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.claude/
+htmlcov/
+.coverage

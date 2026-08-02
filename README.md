@@ -121,6 +121,68 @@ uv run grim init      # creates ~/.grimoire/grimoire.db (or $GRIM_DB) and applie
 uv run pytest         # smoke tests: fresh init + idempotent re-init
 ```
 
+## Install as a CLI harness
+
+For your own machine, install grim as a standalone yolo-mode agent harness
+(like `mini` or `pi`) — one command runs the autonomous loop, no repo
+checkout required. The `[agent]` extra pulls in mini-swe-agent:
+
+```bash
+uv tool install "grimoire[agent]"
+
+# GRIM_MODEL/-m picks the model; litellm reads the matching <PROVIDER>_API_KEY
+# from the environment itself. The first bare argument is the task.
+grim-agent "summarize README.md" -m anthropic/claude-sonnet-4-5
+```
+
+This installs two commands from one package: `grim` (the library CLI — the
+six verbs plus `init`/`doctor`) and `grim-agent` (the harness launcher). The
+run is fully unattended (`-y --exit-immediately`): no per-action confirmation,
+and it exits on `submit` instead of prompting for a new task. Each run writes
+a trajectory JSON under `$GRIM_TRAJ_DIR` (default the system temp dir).
+
+> **Safety.** `grim-agent` executes model-authored scripts directly on your
+> host with no confirmation — fine for your own tasks, not for untrusted
+> repos. For isolation (and for eval runs), use the container below.
+
+## Run in a container
+
+A self-contained image runs arbitrary LLM prompts through the grim adapter.
+The model id and provider API key come from the environment at run time —
+nothing is baked in.
+
+```bash
+docker build -t grimoire .
+
+# Run a prompt. GRIM_MODEL picks the model; litellm reads the matching
+# <PROVIDER>_API_KEY from the env itself. Mount a volume at /data to keep
+# the accumulated library between runs.
+docker run --rm \
+  -e GRIM_MODEL=anthropic/claude-sonnet-4-5 \
+  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  -v "$HOME/.grimoire:/data" \
+  grimoire "summarize README.md"
+```
+
+The run is fully unattended (`--exit-immediately -y`): no per-action
+confirmation, and it exits on `submit` instead of prompting for a new task.
+
+The same image doubles as the plain CLI when the first argument is a known
+binary — no model needed:
+
+```bash
+docker run --rm grimoire grim list
+docker run --rm grimoire grim run shell -- echo hi
+```
+
+**Verify the image without an API key.** `docker/smoke.sh` builds the image
+and checks the non-LLM surface end to end (seeds load, a python script
+dispatches, the entrypoint fails fast when `GRIM_MODEL` is unset):
+
+```bash
+./docker/smoke.sh
+```
+
 ## Human surfaces
 
 The whole library is one SQLite file, so the human surfaces are just
