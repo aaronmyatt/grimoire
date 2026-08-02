@@ -578,7 +578,8 @@ version = "0.1.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
-adapter = [
+agent = [
+    { name = "litellm" },
     { name = "mini-swe-agent" },
 ]
 
@@ -591,8 +592,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mini-swe-agent", marker = "extra == 'adapter'", specifier = ">=2.4,<3" }]
-provides-extras = ["adapter"]
+requires-dist = [
+    { name = "litellm", marker = "extra == 'agent'", specifier = "<1.95" },
+    { name = "mini-swe-agent", marker = "extra == 'agent'", specifier = ">=2.4,<3" },
+]
+provides-extras = ["agent"]
 
 [package.metadata.requires-dev]
 dev = [
