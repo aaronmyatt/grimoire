@@ -40,7 +40,10 @@ agent:
               grim read --exec <id> [--page <n>]   page a past run's full output
       list    grim list [--lang <python|bash>] [--limit <n>] [--offset <n>]
       find    grim find "<query>" [--limit <n>]
-      run     grim run <name> [--timeout <seconds>] [-- <arg> <arg> …]
+      run     grim run <name> [--timeout <seconds>] [--head <n>] [--tail <n>]
+              [-- <arg> <arg> …]
+              (full output by default; --head/--tail cap a huge observation
+              to its first/last lines — see protocol step 2)
 
     Worked examples of the two verbs most often mis-called — note
     `update` always carries `--changelog`, and `run` passes script
@@ -97,8 +100,12 @@ agent:
     2. Compose instead of duplicating: a script can call another script
        by shelling out to `grim run`, reusing its logic instead of
        re-deriving it. `grim run`'s output always leads with a `[grim]
-       exec #id ...` header and a `--- stdout: N lines ---` envelope —
-       treat a nested call's captured output as opaque text (check
+       exec #id ...` header and a `--- stdout: N lines ---` envelope. By
+       default it shows the script's FULL stdout/stderr — nothing is
+       hidden. If you expect a huge amount of output and only need the
+       ends, add `--head <n>` and/or `--tail <n>` to cap the observation
+       (the full text is still stored — `grim read --exec <id>` pages all
+       of it). Treat a nested call's captured output as opaque text (check
        returncode, log/forward stdout), not something to parse line by
        line. Example:
 
