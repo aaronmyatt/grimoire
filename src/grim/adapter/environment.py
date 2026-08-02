@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from grim import cli, db
 from grim.adapter.parse import parse_grim
+from grim.adapter.tools import SUBMIT_TOOL_NAME, tool_call_to_argv
 
 _SUBMIT_SENTINEL = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 
@@ -47,6 +48,10 @@ class GrimEnvironment(LocalEnvironment):
     def execute(
         self, action: dict[str, Any], cwd: str = "", *, timeout: int | None = None
     ) -> dict[str, Any]:
+        # Native tool-calling path (GrimToolcallModel): the action carries a
+        # structured {tool, args} instead of a `command` string to parse.
+        if "tool" in action:
+            return self._execute_tool(action)
         cmd = parse_grim(action.get("command", ""))
         if cmd is None:
             output: dict[str, Any] = {
@@ -66,6 +71,27 @@ class GrimEnvironment(LocalEnvironment):
             # because the agent then re-reads the same script, loops forever.
             if cmd.verb == "run":
                 self._check_finished(output)
+        assert "output" in output, "execute() must always return an 'output' key"
+        return output
+
+    def _execute_tool(self, action: dict[str, Any]) -> dict[str, Any]:
+        """Run one structured tool call. `submit` is the deterministic stop
+        — it raises Submitted with the model's result and never scans output
+        for a sentinel. Every other tool maps to a cli.main invocation."""
+        tool = action["tool"]
+        args = action.get("args", {})
+        if tool == SUBMIT_TOOL_NAME:
+            result = args.get("result", "")
+            raise Submitted(
+                {
+                    "role": "exit",
+                    "content": result,
+                    "extra": {"exit_status": "Submitted", "submission": result},
+                }
+            )
+        argv, stdin = tool_call_to_argv(tool, args)
+        text, exit_code = _invoke(argv, stdin or "", self.session_id)
+        output = {"output": text, "returncode": exit_code, "exception_info": ""}
         assert "output" in output, "execute() must always return an 'output' key"
         return output
 

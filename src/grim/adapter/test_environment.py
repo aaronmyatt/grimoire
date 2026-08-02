@@ -126,3 +126,55 @@ def test_help_action_returns_zero_without_submitting() -> None:
     result = env.execute({"command": "grim update --help"})
     assert result["returncode"] == 0
     assert "usage:" in result["output"]
+
+
+# --- native tool-calling path (structured {tool, args} actions) ---
+
+
+def test_tool_action_write_then_run_round_trips() -> None:
+    env = GrimEnvironment(session_id="s1")
+    write = env.execute(
+        {
+            "tool": "write",
+            "args": {"name": "greet", "lang": "python", "desc": "greets", "body": "print('hi')"},
+            "tool_call_id": "c1",
+        }
+    )
+    assert write["returncode"] == 0
+    assert "wrote greet@1" in write["output"]
+
+    run = env.execute({"tool": "run", "args": {"name": "greet"}, "tool_call_id": "c2"})
+    assert run["returncode"] == 0
+    assert "hi" in run["output"]
+
+
+def test_submit_tool_raises_submitted_with_the_result() -> None:
+    # The deterministic stop: no output scanning, the result flows straight
+    # into the submission — even though "submit" is not a library verb.
+    env = GrimEnvironment(session_id="s1")
+    with pytest.raises(Submitted) as exc:
+        env.execute(
+            {"tool": "submit", "args": {"result": "aaronmyatt has 118 repos"}, "tool_call_id": "c9"}
+        )
+    assert exc.value.messages[0]["extra"]["submission"] == "aaronmyatt has 118 repos"
+
+
+def test_running_a_sentinel_printing_script_via_tool_does_not_submit() -> None:
+    # With tool-calling, finishing is ONLY the submit tool — a script that
+    # happens to print the old sentinel must run like any other, never end
+    # the task (the whole class of false-submission bugs is gone).
+    env = GrimEnvironment(session_id="s1")
+    env.execute(
+        {
+            "tool": "write",
+            "args": {
+                "name": "prints_sentinel",
+                "lang": "bash",
+                "desc": "prints the old sentinel",
+                "body": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT",
+            },
+            "tool_call_id": "c1",
+        }
+    )
+    run = env.execute({"tool": "run", "args": {"name": "prints_sentinel"}, "tool_call_id": "c2"})
+    assert run["returncode"] == 0  # ran fine, did NOT raise Submitted
