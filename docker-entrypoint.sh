@@ -38,6 +38,6 @@ fi
 : "${GRIM_MODEL:?set GRIM_MODEL (e.g. anthropic/claude-sonnet-4-5) and the matching <PROVIDER>_API_KEY}"
 
 # grim-agent takes a bare positional prompt as the task and forwards the rest
-# to mini; it runs `grim init` itself and picks a fresh trajectory path (under
-# $GRIM_TRAJ_DIR, default /tmp). One launch path, shared with native installs.
-exec grim-agent "$@" -m "$GRIM_MODEL"
+# to mini; it runs `grim init` itself, reads $GRIM_MODEL (verified above), and
+# picks a fresh trajectory path. One launch path, shared with native installs.
+exec grim-agent "$@"

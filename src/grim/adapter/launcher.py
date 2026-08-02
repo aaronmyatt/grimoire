@@ -62,7 +62,18 @@ def _trajectory_path() -> str:
     return path
 
 
-def build_mini_args(user_argv: list[str], config: str, trajectory: str) -> list[str]:
+def _has_flag(args: list[str], short: str, long: str) -> bool:
+    """True if `-x`, `--xxx`, `-x=v`, or `--xxx=v` appears in args — used to
+    honor a user-supplied flag over an injected default."""
+    assert short.startswith("-") and long.startswith("--"), "flag names must be dashed"
+    present = any(a in (short, long) or a.startswith((short + "=", long + "=")) for a in args)
+    assert isinstance(present, bool), "flag presence is a bool"
+    return present
+
+
+def build_mini_args(
+    user_argv: list[str], config: str, trajectory: str, model_default: str | None = None
+) -> list[str]:
     """Assemble the argv handed to mini's Typer app. Pure (no I/O) so it is
     unit-testable without launching the loop.
 
@@ -70,8 +81,9 @@ def build_mini_args(user_argv: list[str], config: str, trajectory: str) -> list[
     `grim-agent "do X"` works); everything else forwards to mini verbatim.
     The harness is always unattended — `-y` (yolo) and `--exit-immediately`
     are forced on, and our config is prepended (mini merges multiple `-c`,
-    so a user's own `-c extra.yaml` still layers on top). `-o` is injected
-    only when the user did not supply their own.
+    so a user's own `-c extra.yaml` still layers on top). `-o` and `-m` are
+    injected only when the user did not supply their own, so an explicit
+    flag always wins over the `$GRIM_MODEL` / trajectory defaults.
     """
     assert config, "config path required"
     assert trajectory, "trajectory path required"
@@ -81,9 +93,11 @@ def build_mini_args(user_argv: list[str], config: str, trajectory: str) -> list[
         args += ["-t", rest[0]]  # ergonomic positional task -> mini's -t/--task
         rest = rest[1:]
     args += rest
-    has_output = any(a in ("-o", "--output") or a.startswith(("-o=", "--output=")) for a in args)
-    if not has_output:
+    if not _has_flag(args, "-o", "--output"):
         args += ["-o", trajectory]
+    # $GRIM_MODEL is a default, not an override: skip it if the user passed -m.
+    if model_default and not _has_flag(args, "-m", "--model"):
+        args += ["-m", model_default]
     assert "-y" in args and "--exit-immediately" in args, "harness runs must be unattended"
     return args
 
@@ -111,7 +125,11 @@ def main(argv: list[str] | None = None) -> int:
         print("grim-agent: library init failed (see above)", file=sys.stderr)
         return init_code
 
-    mini_args = build_mini_args(raw, _config_path(), _trajectory_path())
+    # $GRIM_MODEL supplies the model when the user didn't pass -m, matching the
+    # container entrypoint and giving `export GRIM_MODEL=…; grim-agent "task"`.
+    mini_args = build_mini_args(
+        raw, _config_path(), _trajectory_path(), model_default=os.environ.get("GRIM_MODEL")
+    )
     try:
         # Typer app.__call__ -> click main(args=..., standalone_mode=False):
         # returns instead of sys.exit, so real errors propagate (fail loud).

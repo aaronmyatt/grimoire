@@ -48,6 +48,33 @@ def test_build_mini_args_forwards_flags_and_respects_user_output() -> None:
     assert args.count("-o") == 1 and "/mine.json" in args
 
 
+def test_build_mini_args_injects_model_default_when_absent() -> None:
+    args = launcher.build_mini_args(["do X"], "/c.yaml", "/t.traj.json", model_default="prov/model")
+    assert args[args.index("-m") + 1] == "prov/model"
+
+
+def test_build_mini_args_explicit_model_beats_the_default() -> None:
+    args = launcher.build_mini_args(
+        ["-t", "q", "-m", "chosen/one"], "/c.yaml", "/t.traj.json", model_default="prov/default"
+    )
+    # user's -m wins: the env default is not appended a second time.
+    assert args.count("-m") == 1 and "prov/default" not in args
+
+
+def test_main_reads_grim_model_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    monkeypatch.setenv("GRIM_MODEL", "env/model")
+    captured: dict[str, object] = {}
+    import minisweagent.run.mini as minirun
+
+    monkeypatch.setattr(minirun, "app", lambda args, standalone_mode: captured.update(args=args))
+
+    assert launcher.main(["a task"]) == 0  # no -m passed; env supplies it
+    forwarded = captured["args"]
+    assert isinstance(forwarded, list)
+    assert forwarded[forwarded.index("-m") + 1] == "env/model"
+
+
 def test_main_inits_the_library_then_invokes_mini_in_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
