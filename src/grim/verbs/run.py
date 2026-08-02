@@ -1,5 +1,7 @@
-"""`grim run` — dispatch through exec/, record the execution, return a
-truncated observation. Exit code propagates for humans (build plan §4).
+"""`grim run` — dispatch through exec/, record the execution, return the
+observation. Full stdout/stderr by default; `--head`/`--tail` opt into
+first-N/last-M limiting for huge output. Exit code propagates for humans
+(build plan §4).
 """
 
 from __future__ import annotations
@@ -16,14 +18,6 @@ from grim.verbs import _shared
 
 DEFAULT_TIMEOUT_S = 120.0
 
-# The shell escape hatch (build plan §3/§7) gets tighter truncation than
-# named scripts so the observed token cost visibly favors promoting a
-# repeated `shell` invocation to a named script (envelope.truncate's
-# defaults — 40/10 — apply to everything else).
-SHELL_SCRIPT_NAME = "shell"
-SHELL_HEAD_LINES = 10
-SHELL_TAIL_LINES = 3
-
 
 @dataclass(frozen=True)
 class RunRequest:
@@ -34,6 +28,10 @@ class RunRequest:
     cwd: str | None
     timeout: float
     session_id: str
+    # None/None means full output; either set collapses the middle of a
+    # long stream to its first head_lines and last tail_lines.
+    head_lines: int | None = None
+    tail_lines: int | None = None
 
 
 @dataclass(frozen=True)
@@ -100,12 +98,11 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
         f"[grim] exec #{cursor.lastrowid} · {row['name']}@{row['version']} · "
         f"exit {result.exit_code} · {result.duration_ms / 1000:.1f}s"
     )
-    if row["name"] == SHELL_SCRIPT_NAME:
-        body = envelope.truncate(
-            result.stdout, result.stderr, head_lines=SHELL_HEAD_LINES, tail_lines=SHELL_TAIL_LINES
-        )
-    else:
-        body = envelope.truncate(result.stdout, result.stderr)
+    # Full output by default (head_lines/tail_lines default to None on the
+    # request); the caller opts into first-N/last-M limiting via --head/--tail.
+    body = envelope.truncate(
+        result.stdout, result.stderr, head_lines=request.head_lines, tail_lines=request.tail_lines
+    )
     return RunResult(
         execution_id=cursor.lastrowid, exit_code=result.exit_code, observation=f"{header}\n{body}"
     )
@@ -123,6 +120,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         cwd=None,
         timeout=args.timeout or DEFAULT_TIMEOUT_S,
         session_id=_shared.session_id_from_env(),
+        # getattr keeps this working before cli.py (frozen, committed
+        # separately) grows the --head/--tail options; absent → None → full.
+        head_lines=getattr(args, "head", None),
+        tail_lines=getattr(args, "tail", None),
     )
     try:
         result = run_script(conn, request)

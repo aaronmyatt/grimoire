@@ -101,30 +101,31 @@ def test_run_script_raises_on_unknown_script(
         run_script(conn, _request(name="does_not_exist"))
 
 
-def test_run_script_truncates_shell_more_aggressively_than_named_scripts(
+def test_run_script_shows_full_output_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     conn = _migrated_conn(tmp_path, monkeypatch)
-    body = "for i in range(1, 60): print(f'line{i}')"
-    _seed_script(conn, body=body)  # named script foo_bar
-    write_script(
-        conn,
-        WriteRequest(
-            name="shell",
-            language="python",
-            description="d",
-            body=body,
-            parent=None,
-            scope="global",
-            session_id="human-adhoc",
-        ),
-    )
+    _seed_script(conn, body="for i in range(1, 60): print(f'line{i}')")
 
-    named_result = run_script(conn, _request(name="foo_bar"))
-    shell_result = run_script(conn, _request(name="shell"))
+    result = run_script(conn, _request())  # no head/tail → full
 
-    assert "first 40 + last 10 of 59 lines" in named_result.observation
-    assert "first 10 + last 3 of 59 lines" in shell_result.observation
+    assert "--- stdout: 59 lines ---" in result.observation
+    assert "line1\n" in result.observation
+    assert "line59" in result.observation
+    assert "skipped" not in result.observation
+
+
+def test_run_script_limits_output_when_head_tail_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn, body="for i in range(1, 60): print(f'line{i}')")
+
+    result = run_script(conn, _request(head_lines=40, tail_lines=10))
+
+    assert "first 40 + last 10 of 59 lines" in result.observation
+    assert "line41" not in result.observation
+    assert "... (9 skipped) ..." in result.observation
 
 
 def test_run_script_supports_nested_grim_run_without_deadlocking(
