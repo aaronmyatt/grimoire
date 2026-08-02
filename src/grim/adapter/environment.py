@@ -1,8 +1,9 @@
 """GrimEnvironment — the hard enforcement point for the six-verb
-constraint (build plan D7, Phase 2). Subclasses mini-swe-agent's
-LocalEnvironment but never shells out: every action is parsed for the
-grim six-verb grammar and dispatched in-process via cli.main(), or
-answered with a protocol reminder.
+constraint (build plan D7, Phase 2; D6 revised → native tool-calling).
+Subclasses mini-swe-agent's LocalEnvironment but never shells out: the
+model's action is a structured grim tool call (GrimToolcallModel),
+dispatched in-process via cli.main(). The `submit` tool is the
+deterministic task-completion signal — no output sentinel.
 """
 
 from __future__ import annotations
@@ -19,17 +20,7 @@ from minisweagent.exceptions import Submitted
 from pydantic import BaseModel
 
 from grim import cli, db
-from grim.adapter.parse import parse_grim
 from grim.adapter.tools import SUBMIT_TOOL_NAME, tool_call_to_argv
-
-_SUBMIT_SENTINEL = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-
-PROTOCOL_REMINDER = (
-    "Not a grim command. Every response must be exactly one fenced code "
-    "block containing a single `grim <verb> ...` invocation, where <verb> "
-    "is one of: write, update, read, list, find, run. Raw shell commands "
-    'are not executed. Example:\n\n```grim\ngrim find "extract failing tests"\n```'
-)
 
 
 class GrimEnvironmentConfig(BaseModel):
@@ -48,36 +39,12 @@ class GrimEnvironment(LocalEnvironment):
     def execute(
         self, action: dict[str, Any], cwd: str = "", *, timeout: int | None = None
     ) -> dict[str, Any]:
-        # Native tool-calling path (GrimToolcallModel): the action carries a
-        # structured {tool, args} instead of a `command` string to parse.
-        if "tool" in action:
-            return self._execute_tool(action)
-        cmd = parse_grim(action.get("command", ""))
-        if cmd is None:
-            output: dict[str, Any] = {
-                "output": PROTOCOL_REMINDER,
-                "returncode": 1,
-                "exception_info": "",
-            }
-        else:
-            text, exit_code = _invoke(cmd.argv, cmd.stdin, self.session_id)
-            output = {"output": text, "returncode": exit_code, "exception_info": ""}
-            # Submission is defined as the OUTPUT OF A RUN (protocol: write a
-            # tiny script whose only output is the sentinel, then `grim run`
-            # it). Only `run` can finish. Other verbs — notably `grim read`,
-            # but also `list`/`find` — merely DISPLAY a script's body or a
-            # past run's stored output, which may legitimately contain the
-            # sentinel string; checking those falsely finishes the task and,
-            # because the agent then re-reads the same script, loops forever.
-            if cmd.verb == "run":
-                self._check_finished(output)
-        assert "output" in output, "execute() must always return an 'output' key"
-        return output
-
-    def _execute_tool(self, action: dict[str, Any]) -> dict[str, Any]:
-        """Run one structured tool call. `submit` is the deterministic stop
-        — it raises Submitted with the model's result and never scans output
-        for a sentinel. Every other tool maps to a cli.main invocation."""
+        """Run one structured grim tool call. GrimToolcallModel produces
+        {tool, args} and has already validated the tool name and required
+        args. `submit` is the deterministic stop — it raises Submitted with
+        the model's result and never scans output for a sentinel. Every
+        other tool maps to a single in-process cli.main invocation."""
+        assert "tool" in action, "tool-calling only: an action must carry a 'tool'"
         tool = action["tool"]
         args = action.get("args", {})
         if tool == SUBMIT_TOOL_NAME:
@@ -94,23 +61,6 @@ class GrimEnvironment(LocalEnvironment):
         output = {"output": text, "returncode": exit_code, "exception_info": ""}
         assert "output" in output, "execute() must always return an 'output' key"
         return output
-
-    def _check_finished(self, output: dict[str, Any]) -> None:
-        """Overrides LocalEnvironment's: that version requires the
-        sentinel as output's literal first line, but `run`'s observation
-        always leads with a "[grim] exec #id..." header (build plan §4),
-        so the sentinel is matched as any whole line instead. Only ever
-        called for the `run` verb — see execute()."""
-        lines = output.get("output", "").splitlines()
-        if output.get("returncode") == 0 and any(
-            line.strip() == _SUBMIT_SENTINEL for line in lines
-        ):
-            submission = {
-                "role": "exit",
-                "content": "",
-                "extra": {"exit_status": "Submitted", "submission": ""},
-            }
-            raise Submitted(submission)
 
 
 @contextlib.contextmanager

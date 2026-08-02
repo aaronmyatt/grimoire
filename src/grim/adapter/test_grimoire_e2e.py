@@ -30,10 +30,6 @@ def _grim_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
 
 
-def _write_command(name: str, lang: str, desc: str, body: str) -> str:
-    return f"grim write --name {name} --lang {lang} --desc \"{desc}\" <<'EOF'\n{body}\nEOF"
-
-
 def test_grimoire_yaml_resolves_the_grim_environment_class() -> None:
     config = yaml.safe_load(GRIMOIRE_YAML.read_text())
     spec = config["environment"]["environment_class"]
@@ -46,26 +42,28 @@ def test_grimoire_yaml_resolves_the_toolcall_model_class() -> None:
     assert get_model_class("placeholder-model", spec) is GrimToolcallModel
 
 
-def test_toy_task_end_to_end_with_injected_ls_producing_reminder() -> None:
+def test_toy_task_end_to_end_via_tool_calls() -> None:
+    # DefaultAgent + GrimEnvironment solving a toy task through structured
+    # tool-call actions, finishing with the submit tool (the deterministic
+    # stop). No fenced-block parsing, no sentinel.
     db.migrate(db.connect())
     outputs = [
-        make_output("let me look around first", [{"command": "ls -la"}]),
         make_output(
             "writing the greeting script",
-            [{"command": _write_command("greet", "bash", "prints a greeting", "echo hi")}],
-        ),
-        make_output("running it", [{"command": "grim run greet"}]),
-        make_output(
-            "writing the submission script",
             [
                 {
-                    "command": _write_command(
-                        "finish", "bash", "submits", "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-                    )
+                    "tool": "write",
+                    "args": {
+                        "name": "greet",
+                        "lang": "bash",
+                        "desc": "prints a greeting",
+                        "body": "echo hi",
+                    },
                 }
             ],
         ),
-        make_output("submitting", [{"command": "grim run finish"}]),
+        make_output("running it", [{"tool": "run", "args": {"name": "greet"}}]),
+        make_output("submitting", [{"tool": "submit", "args": {"result": "said hi"}}]),
     ]
     model = DeterministicModel(outputs=outputs)  # type: ignore[no-untyped-call]
     env = GrimEnvironment(session_id="e2e-test")
@@ -80,5 +78,6 @@ def test_toy_task_end_to_end_with_injected_ls_producing_reminder() -> None:
     result = agent.run("say hi")
 
     assert result["exit_status"] == "Submitted"
-    reminders = [m for m in agent.messages if "Not a grim command" in m.get("content", "")]
-    assert reminders, "the injected `ls -la` action should have produced the protocol reminder"
+    assert result["submission"] == "said hi"  # the submit tool's result flows through
+    ran = [m for m in agent.messages if "hi" in m.get("content", "")]
+    assert ran, "the greet run's output should appear in an observation"
