@@ -15,10 +15,12 @@ pytest.importorskip("minisweagent")  # adapter/ needs the optional `adapter` ext
 import yaml  # type: ignore[import-untyped]  # noqa: E402 -- no stubs shipped for PyYAML
 from minisweagent.agents.default import DefaultAgent  # noqa: E402
 from minisweagent.environments import get_environment_class  # noqa: E402
+from minisweagent.models import get_model_class  # noqa: E402
 from minisweagent.models.test_models import DeterministicModel, make_output  # noqa: E402
 
 from grim import db  # noqa: E402
 from grim.adapter.environment import GrimEnvironment  # noqa: E402
+from grim.adapter.toolcall_model import GrimToolcallModel  # noqa: E402
 
 GRIMOIRE_YAML = Path(__file__).parent / "grimoire.yaml"
 
@@ -36,6 +38,12 @@ def test_grimoire_yaml_resolves_the_grim_environment_class() -> None:
     config = yaml.safe_load(GRIMOIRE_YAML.read_text())
     spec = config["environment"]["environment_class"]
     assert get_environment_class(spec) is GrimEnvironment
+
+
+def test_grimoire_yaml_resolves_the_toolcall_model_class() -> None:
+    config = yaml.safe_load(GRIMOIRE_YAML.read_text())
+    spec = config["model"]["model_class"]
+    assert get_model_class("placeholder-model", spec) is GrimToolcallModel
 
 
 def test_toy_task_end_to_end_with_injected_ls_producing_reminder() -> None:
