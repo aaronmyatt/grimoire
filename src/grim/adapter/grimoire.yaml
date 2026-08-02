@@ -89,6 +89,14 @@ agent:
     <system_information>
     {{system}} {{release}} {{version}} {{machine}}
     </system_information>
+    {%- if grim_user_prompt is defined and grim_user_prompt %}
+
+    <operator_instructions>
+    The human operating this grimoire has left standing instructions for you
+    (from ~/.grimoire/system.md). Follow them as part of this protocol:
+    {{ grim_user_prompt }}
+    </operator_instructions>
+    {%- endif %}
   instance_template: |
     Please solve this task: {{task}}
 

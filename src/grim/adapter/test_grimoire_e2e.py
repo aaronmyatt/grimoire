@@ -125,3 +125,17 @@ def test_grim_agent_runs_tool_actions_end_to_end() -> None:
 
     assert result["exit_status"] == "Submitted"
     assert result["submission"] == "said hi"
+
+
+def test_system_template_renders_operator_instructions() -> None:
+    # The system_template must surface ~/.grimoire/system.md content when
+    # grim_user_prompt is set, and render nothing when it's empty/absent.
+    import jinja2  # ships transitively with mini-swe-agent
+
+    template = yaml.safe_load(GRIMOIRE_YAML.read_text())["agent"]["system_template"]
+    with_prompt = jinja2.Template(template).render(grim_user_prompt="ALWAYS use ripgrep.")
+    assert "<operator_instructions>" in with_prompt
+    assert "ALWAYS use ripgrep." in with_prompt
+
+    without = jinja2.Template(template).render(grim_user_prompt="")
+    assert "operator_instructions" not in without

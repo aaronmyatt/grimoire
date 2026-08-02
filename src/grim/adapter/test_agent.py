@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from grim import db
-from grim.adapter.agent import STRONG_MATCH_LIMIT, strong_matches
+from grim.adapter.agent import STRONG_MATCH_LIMIT, strong_matches, user_prompt_extension
 
 
 def _migrated_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
@@ -94,3 +94,19 @@ def test_strong_matches_never_exceeds_its_limit(
         )
     results = strong_matches("extract failing pytest tests from ci logs")
     assert len(results) <= STRONG_MATCH_LIMIT
+
+
+def test_user_prompt_extension_reads_and_strips_the_file(tmp_path: Path) -> None:
+    p = tmp_path / "system.md"
+    p.write_text("\n  Prefer bash over python for one-offs.\n\n")
+    assert user_prompt_extension(p) == "Prefer bash over python for one-offs."
+
+
+def test_user_prompt_extension_missing_file_returns_empty(tmp_path: Path) -> None:
+    assert user_prompt_extension(tmp_path / "absent.md") == ""
+
+
+def test_user_prompt_extension_blank_file_returns_empty(tmp_path: Path) -> None:
+    p = tmp_path / "system.md"
+    p.write_text("   \n\t\n")
+    assert user_prompt_extension(p) == ""  # renders nothing under the yaml guard

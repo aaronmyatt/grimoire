@@ -13,10 +13,17 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from pathlib import Path
 
 from minisweagent.agents.interactive import InteractiveAgent
 
 from grim import db
+
+# Operator-authored system-prompt extension, the agent-harness analogue of a
+# global ~/.claude or ~/.pi instruction file. Lives under grim's home dir (the
+# same ~/.grimoire that holds the DB and config.toml). Read fresh each run so
+# edits take effect without a reinstall.
+SYSTEM_PROMPT_PATH = Path.home() / ".grimoire" / "system.md"
 
 # bm25() in FTS5 is more-negative-is-better (https://sqlite.org/fts5.html
 # #the_bm25_function); sign-flipped here so higher = closer, matching
@@ -65,10 +72,30 @@ def strong_matches(task: str) -> list[dict[str, str]]:
     ]
 
 
+def user_prompt_extension(path: Path | None = None) -> str:
+    """Operator instructions appended to the system prompt, read from
+    ~/.grimoire/system.md. Absent or unreadable -> "" (external input:
+    degrade, never crash). Stripped, so an empty/whitespace-only file renders
+    nothing under system_template's truthiness guard."""
+    prompt_path = path if path is not None else SYSTEM_PROMPT_PATH
+    assert prompt_path is not None, "system-prompt path resolves to a value"
+    if not prompt_path.is_file():
+        return ""
+    try:
+        text = prompt_path.read_text()
+    except OSError:
+        return ""
+    result = text.strip()
+    assert isinstance(result, str), "extension is always a string"
+    return result
+
+
 class GrimAgent(InteractiveAgent):
     """Same contract as InteractiveAgent; only run() is extended so
-    system_template can reference {{ grim_strong_matches }}."""
+    system_template can reference {{ grim_strong_matches }} and the operator's
+    {{ grim_user_prompt }} extension."""
 
     def run(self, task: str = "", **kwargs: object) -> dict[str, object]:
         self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
+        self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
         return super().run(task, **kwargs)

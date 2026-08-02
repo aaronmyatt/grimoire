@@ -44,7 +44,11 @@ D6 revised → native tool-calling).
   `grim_strong_matches`, which `system_template` renders conditionally.
   Mitigates build plan §8's "optional find misses/duplicates existing
   scripts" risk by surfacing a high-confidence hit before the agent
-  decides whether to search at all.
+  decides whether to search at all. `run()` also stashes
+  `user_prompt_extension()` (the operator's `~/.grimoire/system.md`, read
+  fresh each run) as `grim_user_prompt`, which `system_template` renders as
+  an `<operator_instructions>` block when non-empty — the agent-harness
+  analogue of a global `~/.claude`/`~/.pi` instruction file.
 - `run.sh` — the recommended launcher: `./run.sh -m <model> -y -t
   "<task>"`. A pre-launch wrapper only (runs *before* the agent loop
   starts, to pick a fresh `/tmp` trajectory path per invocation) — not
