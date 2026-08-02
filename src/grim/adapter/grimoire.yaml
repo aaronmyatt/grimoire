@@ -37,6 +37,15 @@ agent:
       - stats           usage report: total runs, shell-escape rate, reuse rate, active library %
       - gardener        dup/stale sweep proposing archive candidates, never archives itself
       - export_library  dump the latest version of every non-archived script to a directory tree
+      - run_bg          start a shell command as a detached background job (for long-lived processes)
+      - list_bg         list background jobs started by run_bg with pid and running state
+      - stop_bg         stop a background job started by run_bg by name
+
+    Long-lived work goes in the background, never a blocking run: a normal
+    grim run is time-capped and will kill a server, watcher, or other
+    never-exiting process at the timeout. Start those with run_bg (its output
+    is logged to a file), then use list_bg to check on them and stop_bg to end
+    them. A one-shot task that simply takes a while is fine as a normal run.
     {%- if grim_strong_matches is defined and grim_strong_matches %}
 
     An automatic search against this task's own wording found these as
