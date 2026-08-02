@@ -6,7 +6,7 @@ Grimoire replaces mini-swe-agent's raw-bash action space with six verbs over a S
 
 The thesis being tested: bash is great, the entire corpus of programming languages is better — and a persistent, searchable corpus of the agent's own scripts compounds, saving tokens on repeat work and leaving the human a usable library behind.
 
-> Status: Phases 0–3 and 2b are done (see git history: `cce0859`..`e5a8b3d`). Phases 4–8 below are the remaining work, in order.
+> Status: Phases 0–3 and 2b are done, plus a post-Phase-3 protocol refinement round (language scope, composition, optional `find`, seed list). Since then: adapter hardening (argparse `SystemExit` no longer kills the agent; `run.sh --stream`), `grim run` now shows full output by default with opt-in `--head`/`--tail` limits, the composition recursion cap landed (§9 → `GRIM_CALL_DEPTH`), and **Phase 5a** (Datasette canned queries + fzf/export docs) shipped. **Phase 4 is deliberately deferred** — validating with `python`/`bash` only before extending the runner table. Remaining, in order: Phase 4 (when un-deferred), Phase 5b (TUI), 6, 7, 8.
 
 ---
 
@@ -23,7 +23,7 @@ Locked for v1; all revisitable, but changing them mid-build should require a wri
 | D5 | Relationship graphs | Derived views over the execution log — never imperatively maintained edges | Nothing to keep consistent; richer queries (affinity, pipelines) fall out of joins. |
 | D6 | Action grammar | One fenced code block = one `grim` command; script bodies pass via heredoc | Keeps mini's "model emits a code block" contract untouched. |
 | D7 | Control-plane enforcement | The mini adapter parses the action and calls grim **in-process** — no shell in the control plane | Hard enforcement of the six-verb constraint; bash exists only *inside* scripts. |
-| D8 | Execution model | Stateless by default (script = f(argv, stdin)); per-run timeout; truncated envelope back to context, full output in DB | Matches mini's `subprocess.run` philosophy; executions stay comparable and cacheable. |
+| D8 | Execution model | Stateless by default (script = f(argv, stdin)); per-run timeout; full output in DB and, since the full-output change, in the observation too — `--head`/`--tail` opt into a truncated envelope | Matches mini's `subprocess.run` philosophy; executions stay comparable and cacheable. |
 | D9 | Executor dispatch | `python → uv run` (PEP 723 inline deps), `bash → bash`, `js/ts → bun`, everything else → `run --json` (Esubaalew/run) | Self-contained Python scripts; `run`'s `--json` envelope maps 1:1 onto the execution row. |
 | D10 | Scope model | `global` \| `repo:<fingerprint>`. Repo-scoped by default when cwd is a git repo; promotion to global is human-gated | Contains blast radius of injected/stale scripts; makes the TUI the review queue. |
 | D11 | Meta-tooling | Stats, gardener, export ship as *library scripts*, not CLI verbs | The six agent-facing verbs stay closed forever; capability grows in the data plane. |
@@ -193,14 +193,17 @@ Human-only extras: `grim init [--check]` (create DB, verify FTS5 availability, `
 
 Semantics that matter:
 
-- `write` validates the slug, requires a description, syntax-lints where cheap (`python -m py_compile`, `bash -n`, `bun build --no-bundle` / `node --check`), records `body_hash`, and — crucially — runs a similarity check first. If FTS scores an existing script above threshold, the response leads with: `similar: extract_failing_tests (0.91) — consider 'grim update' or '--parent'`. The anti-duplication nudge lands at the exact moment of temptation.
-- `run` stamps `(session_id, seq)` from `GRIM_SESSION` (set by the adapter; defaults to `human-adhoc` for people), stores the full envelope, and returns a truncated observation:
+- `write` validates the slug, requires a description, rejects any `--lang` outside `exec/dispatch.py`'s `SUPPORTED_LANGUAGES` (currently just `python`/`bash` — Phase 4 extends the runner table, and `SUPPORTED_LANGUAGES` is derived from it, so this check widens for free with no separate edit), syntax-lints where cheap (`python -m py_compile`, `bash -n` — the `bun build --no-bundle` / `node --check` lints land with Phase 4's `js/ts` runner, not yet wired), records `body_hash`, and — crucially — runs a similarity check first. If FTS scores an existing script above threshold, the response leads with: `similar: extract_failing_tests (0.91) — consider 'grim update' or '--parent'`. The anti-duplication nudge lands at the exact moment of temptation.
+- `run` stamps `(session_id, seq)` from `GRIM_SESSION` (set by the adapter; defaults to `human-adhoc` for people), stores the full output on the execution row, and by default returns it in full. `--head N`/`--tail M` opt into a first-N/last-M envelope for the occasional huge-output script (the full text is still stored and pageable via `grim read --exec ID`):
 
   ```
   [grim] exec #4812 · extract_failing_tests@3 · exit 0 · 1.4s
-  --- stdout: first 40 + last 10 of 212 lines · full: grim read --exec 4812 ---
+  --- stdout: 212 lines ---          # or, with --head 40 --tail 10:
+  --- stdout: first 40 + last 10 of 212 lines ---
   ...
   ```
+
+  Composition is bounded: `run` reads `GRIM_CALL_DEPTH` and rejects past `MAX_CALL_DEPTH` (=8), exposing `depth+1` to the dispatched subprocess so nested `grim run` chains can't recurse without limit (§9).
 
 - Exit codes: for humans, `grim run` propagates the script's exit code so it composes in shell logic. The adapter reads it from the envelope regardless.
 
@@ -225,9 +228,9 @@ Subclass the environment; mini's agent loop, linear history, cost limits, and tr
 ```python
 class GrimEnvironment(LocalEnvironment):
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict:
-        cmd = parse_grim(action["command"])   # shlex on line 1 + heredoc extraction
+        cmd = parse_grim(action["command"])  # shlex on line 1 + heredoc extraction
         if cmd is None:
-            return {"output": PROTOCOL_REMINDER, "returncode": 1}   # no execution
+            return {"output": PROTOCOL_REMINDER, "returncode": 1}  # no execution
         text, exit_code = _invoke(cmd.argv, cmd.stdin, self.session_id)  # cli.main() in-process
         return {"output": text, "returncode": exit_code}
 ```
@@ -265,11 +268,11 @@ Bash is thereby demoted to just another script in the corpus on day one. Then tu
 
 ### Phase 4 — Executor hardening (2–4d)
 
-Full dispatch table: `python → uv run` (PEP 723 inline metadata makes dependency-bearing scripts self-contained and portable), `js/ts → bun`, fallback → `run --json` for the remaining ~20 languages, with `grim init --check` invoking `run doctor` to report available toolchains. Record `env_fingerprint` per execution. Concurrency: WAL + busy_timeout is sufficient for one agent + one human; a single-writer queue is a later problem. **Done when:** the same Go and Ruby scripts execute via the fallback with correct envelopes, and a Python script declaring a PEP 723 dependency runs cold on a clean machine.
+Full dispatch table: `python → uv run` (PEP 723 inline metadata makes dependency-bearing scripts self-contained and portable), `js/ts → bun`, fallback → `run --json` for the remaining ~20 languages, with `grim init --check` invoking `run doctor` to report available toolchains. `env_fingerprint` recording itself already landed in Phase 1a for the two existing runners (every `execution` row has it); this phase is about extending the *runner table*, not adding the column. Implementation note: `exec/dispatch.py` exports `SUPPORTED_LANGUAGES = frozenset(_RUNNERS)`, and `verbs/write.py`'s `--lang` gate (§4) reads that constant directly — so adding an entry to `_RUNNERS` is sufficient; no follow-up edit to `write.py` is needed to unlock a new language for `write`. Concurrency: WAL + busy_timeout is sufficient for one agent + one human; a single-writer queue is a later problem. **Done when:** the same Go and Ruby scripts execute via the fallback with correct envelopes, and a Python script declaring a PEP 723 dependency runs cold on a clean machine.
 
 ### Phase 5 — Human surfaces (0.5–1d, then 3–5d)
 
-**5a (immediate):** Datasette `metadata.json` with canned queries — recent executions, top scripts by use, failure feed, the affinity view; a README fzf one-liner (`grim list | fzf --preview 'grim read {1}'`); export via the `export_library` seed. **5b (TUI):** Textual app with list/search, preview, run-with-args, execution history, lineage tree — and the **promotion review queue**: repo-scoped scripts become global only on human approval here, with provenance (origin session, task, first run) displayed. The TUI is both benefit #2 and the security gate. **Done when:** a script written by the agent in a repo can be found, reviewed, promoted, and re-run by a human without touching sqlite directly.
+**5a (immediate) — done:** Datasette `metadata.json` with canned queries — recent executions, top scripts by use, failure feed, the affinity view (shipped in `surfaces/datasette/metadata.json`); a README fzf one-liner (`grim list | fzf --preview 'grim read {1}'`); export via the `export_library` seed. All three documented under the README's "Human surfaces" section. **5b (TUI):** Textual app with list/search, preview, run-with-args, execution history, lineage tree — and the **promotion review queue**: repo-scoped scripts become global only on human approval here, with provenance (origin session, task, first run) displayed. The TUI is both benefit #2 and the security gate. **Done when:** a script written by the agent in a repo can be found, reviewed, promoted, and re-run by a human without touching sqlite directly.
 
 ### Phase 6 — Retrieval v2 (3–5d)
 
@@ -281,29 +284,68 @@ Full dispatch table: `python → uv run` (PEP 723 inline metadata makes dependen
 
 ### Phase 8 — Evaluation (4–7d + dogfood weeks)
 
-Two tracks. **Benchmark:** SWE-bench Verified, instances grouped per repo and ordered chronologically, one shared DB per repo; baseline is vanilla mini with the identical model. The compounding thesis makes a falsifiable prediction: *tokens-per-instance and steps-per-instance decline with instance index under Grimoire; the baseline stays flat.* Also report solve rate, reuse rate, escape rate, and ablations (cold vs warm DB; find disabled; `shell` seed removed). Cross-instance state violates standard SWE-bench isolation, so report this as its own track, not a leaderboard number. **Daily driver:** a 2–4 week dogfood diary — library growth, reuse trend, escape-rate trend, and the qualitative question that actually matters: do you reach for the library unprompted?
+Two tracks. **Benchmark:** SWE-bench Verified, instances grouped per repo and ordered chronologically, one shared DB per repo; baseline is vanilla mini with the identical model. The compounding thesis makes a falsifiable prediction: *tokens-per-instance and steps-per-instance decline with instance index under Grimoire; the baseline stays flat.* Also report solve rate, reuse rate, escape rate, and ablations (cold vs warm DB; find disabled entirely; `shell` seed removed; mandatory- vs optional-`find` prompting — the post-Phase-3 protocol switched `find` from a required first step to a conditional one (§6), which trades find-hit-rate/dup-pressure against saved turns and is itself worth measuring, not just asserting). Cross-instance state violates standard SWE-bench isolation, so report this as its own track, not a leaderboard number. **Daily driver:** a 2–4 week dogfood diary — library growth, reuse trend, escape-rate trend, and the qualitative question that actually matters: do you reach for the library unprompted?
 
 ---
 
 ## 6. The prompt protocol (system template core)
 
-The ladder the agent must walk, encoded in `grimoire.yaml`:
+Superseded once already (Phase 2's original draft assumed a mandatory,
+unconditional `find` step) and revised again in a post-Phase-3 tuning
+round after live dogfooding. The real ladder, encoded in
+`adapter/grimoire.yaml`'s `system_template`:
 
-```
-Before writing any code: grim find "<what you need>".
-1. Strong hit → grim read it, then grim run it.
-2. Near miss  → fork: grim write --parent <name> with your adaptation.
-3. No hit    → grim write a new script. Name it verb_noun. The description
-   is a search index entry, not documentation — write it for your future
-   self's queries.
-Prefer named scripts over `shell` for anything you might do twice.
-Before finishing: if you wrote throwaway logic twice this session,
-consolidate it into one named script.
-```
+- **Language scope, stated up front:** scripts may only be written
+  `--lang python` or `--lang bash` for now (matches `exec/dispatch.py`'s
+  `_RUNNERS`, and is enforced at write time — §4). Other tools/languages
+  stay reachable *through* those two — a bash script can invoke anything
+  on `PATH`; a python script can `subprocess.run(...)` any CLI tool.
+- **Seed list, named:** the system prompt lists all 9 seeded scripts
+  (`shell`, `read_file`, `write_file`, `apply_patch`, `grep_tree`,
+  `list_dir`, `stats`, `gardener`, `export_library`) with their real
+  descriptions from `seeds/bodies.py`, so the agent knows the starter
+  library's shape without spending a turn on `grim find`/`grim list`
+  first. Flagged as a live test, not a final design — see §9's note on a
+  possible human-flaggable "preferred scripts" mechanism.
+- **`find` is conditional, not mandatory:** only search first when not
+  already sure a suitable script exists — from the seed list above, from
+  having just written/run it this session, or because the task is
+  clearly novel. Skipping `find` when the agent already knows what it
+  needs avoids a wasted turn. On a hit: strong match → `grim read` it,
+  then `grim run` it (`grim read` also previews the script's last 3 runs
+  — exit code, duration, stdout snippet — so past results can be reused
+  via `grim read --exec ID [--page N]` instead of regenerated); near
+  miss → fork with `grim write --parent <name>`; no hit → `grim write` a
+  new script, named `verb_noun`, with a description written as a search
+  index entry for future queries, not documentation.
+- **Composition, not duplication:** a script can call another by
+  shelling out to `grim run OTHER_NAME` (bash: `grim run other_name --
+  args`; python: `subprocess.run(["grim", "run", "other_name", ...],
+  capture_output=True, text=True)`), reusing its logic instead of
+  re-deriving it. A nested call's captured output always leads with a
+  `[grim] exec #id ...` header and a `--- stdout: N lines ---` envelope
+  — the prompt tells the agent to treat it as opaque text (check
+  `returncode`, log/forward stdout) rather than something to parse line
+  by line. This depended on a concurrency fix in `verbs/run.py`
+  (`ensure_session`'s write transaction was previously held open across
+  the entire blocking dispatch call, so a nested `grim run` would
+  deadlock on the SQLite write lock) — composition wasn't actually
+  usable in the agent's hands until that landed.
+- **Fix-on-error:** after every `grim run`, check `<returncode>` in the
+  observation. Nonzero means the script has a bug — `grim update` it and
+  rerun before moving on to anything else. Never leave a broken script
+  behind.
+- **Prefer named scripts** over throwaway one-offs for anything the
+  agent might do twice.
+- **Submission:** write a tiny script whose only output is
+  `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, then run it in a later turn —
+  the same sentinel convention as vanilla mini-swe-agent, never combined
+  with any other command. Nothing is special-cased; finishing a task is
+  just another `write` + `run`.
 
-Naming and description quality are load-bearing (they *are* the retrieval surface), so the write-time similarity nudge and slug lint from Phase 1 back this up mechanically rather than by exhortation alone.
-
-Submission (Phase 2, `adapter/grimoire.yaml`'s real `system_template`): write a tiny script whose only output is `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, then run it in a later turn — the same sentinel convention as vanilla mini-swe-agent, but never combined with any other command. Nothing is special-cased; finishing a task is just another `write` + `run`.
+Naming and description quality are load-bearing (they *are* the
+retrieval surface), so the write-time similarity nudge and slug lint
+from Phase 1 back this up mechanically rather than by exhortation alone.
 
 ---
 
@@ -343,6 +385,8 @@ Find hit rate stays gated on Phase 6 as originally scoped.
 | Naming drift kills retrieval | Slug lint + mandatory descriptions at write; gardener proposes renames; Phase 6 embeddings reduce dependence on exact wording. |
 | FTS alone underperforms | Phase 6 is measurement-gated; hybrid ranking only ships if it beats BM25 on the harvested query set. |
 | Context pollution from listings | `list` is paginated and ruthlessly terse; full bodies only via explicit `read`. |
+| Optional `find` misses/duplicates existing scripts | `find` is no longer a mandatory first step (§6) — mitigated today only by the hardcoded seed list in the prompt and the write-time similarity nudge; no dup-pressure metric exists yet to detect regression (§7), and this tradeoff is explicitly a live test, not a settled design. |
+| Composition enables unbounded/recursive script chains | A dispatched script can shell out to `grim run` on another script (§6), including transitively. **Mitigated:** `run_script` bounds the chain via `GRIM_CALL_DEPTH` — rejected past `MAX_CALL_DEPTH` (=8), incremented per nested call through the inherited env (§9). No true cycle *detection* (a short A↔B loop still runs until it hits the depth cap), but the chain can no longer recurse without limit. |
 
 ---
 
@@ -353,3 +397,13 @@ Deliberately deferred, with a current lean noted. Default target is daily-driver
 CI (`.github/workflows/**`, a frozen path) was deferred by explicit human choice at `/setup` time — no git remote existed yet. Generate it once one does; see `.claude/setup-state.json`'s `openItems`.
 
 `grimoire.yaml`'s `system_template` now hardcodes the 9 seeded scripts by name and description (a deliberate live test, not a final design — see its own commit). Being weighed as a follow-up: human-flaggable "preferred" scripts — closer to a general "skills" mechanism (a script or set of scripts a human pins for the agent to always know about) than a fixed seed list. Would need a schema change (something like `script.pinned`) and a prompt-assembly step that queries pinned scripts instead of a static string. Not built — captured here so the idea isn't lost.
+
+Composition (§6, §8 Risks) recursion-depth cap — **done.** `run_script`
+now reads `GRIM_CALL_DEPTH`, rejects past `MAX_CALL_DEPTH` (=8) with a
+`CallDepthExceeded` error, and exposes `depth+1` to the dispatched
+subprocess so every nested `grim run` inherits a higher count (the same
+`os.environ`-inheritance path `GRIM_SESSION` uses); the env is restored
+after dispatch so the in-process adapter doesn't accumulate depth across
+turns. Still open: there is no *cycle detection* — a short A↔B loop runs
+until it trips the depth cap rather than being caught as a cycle — and the
+cap is a fixed constant, not configurable. Both are acceptable for now.
