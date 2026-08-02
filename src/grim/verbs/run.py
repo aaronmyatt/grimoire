@@ -7,9 +7,12 @@ first-N/last-M limiting for huge output. Exit code propagates for humans
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sqlite3
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +20,67 @@ from grim.exec import dispatch, envelope
 from grim.verbs import _shared
 
 DEFAULT_TIMEOUT_S = 120.0
+
+# Composition (build plan §6) lets a script shell out to `grim run` on
+# another script, transitively — with no bound, a cyclic or runaway chain
+# recurses forever (each call has its own --timeout, but the chain has
+# none). Every run exposes GRIM_CALL_DEPTH+1 to the subprocess it dispatches
+# (see _child_call_depth), so each nested `grim run` inherits a higher
+# count; at this cap the chain is rejected instead of run (build plan §9).
+# An explicit max on an otherwise-unbounded recursion, per CLAUDE.md §1.
+MAX_CALL_DEPTH = 8
+_CALL_DEPTH_ENV = "GRIM_CALL_DEPTH"
+
+
+class CallDepthExceeded(RuntimeError):
+    """A `grim run` composition chain hit MAX_CALL_DEPTH — almost always a
+    cycle (A runs B runs A …) rather than a legitimately deep pipeline."""
+
+
+def _current_call_depth() -> int:
+    """How many enclosing `grim run` calls this one is nested inside, read
+    from the env the parent's dispatch injected. Absent (a top-level human
+    or agent call) or malformed -> 0; this is external input, so it is
+    parsed defensively rather than asserted."""
+    raw = os.environ.get(_CALL_DEPTH_ENV, "")
+    try:
+        depth = int(raw)
+    except ValueError:
+        return 0
+    return depth if depth > 0 else 0
+
+
+def _check_call_depth(script_name: str) -> int:
+    """Reject the run if the composition chain is already too deep, else
+    return the current depth for the caller to pass to _child_call_depth."""
+    depth = _current_call_depth()
+    if depth >= MAX_CALL_DEPTH:
+        raise CallDepthExceeded(
+            f"composition depth limit reached ({depth} >= {MAX_CALL_DEPTH}) running "
+            f"'{script_name}': a script chain is calling `grim run` too deeply, "
+            "likely a cycle"
+        )
+    assert 0 <= depth < MAX_CALL_DEPTH, "depth is within bounds past the guard"
+    return depth
+
+
+@contextlib.contextmanager
+def _child_call_depth(depth: int) -> Iterator[None]:
+    """Expose depth+1 in GRIM_CALL_DEPTH for the duration of a dispatch call
+    so the subprocess — and any `grim run` it shells out to — inherits the
+    incremented count, then restore the prior value. Mirrors
+    adapter/environment.py's _session_env so the in-process adapter path is
+    not left with a polluted env between turns."""
+    assert depth >= 0, "call depth is non-negative"
+    previous = os.environ.get(_CALL_DEPTH_ENV)
+    os.environ[_CALL_DEPTH_ENV] = str(depth + 1)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(_CALL_DEPTH_ENV, None)
+        else:
+            os.environ[_CALL_DEPTH_ENV] = previous
 
 
 @dataclass(frozen=True)
@@ -51,6 +115,7 @@ def _next_seq(conn: sqlite3.Connection, session_id: str) -> int:
 
 
 def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
+    depth = _check_call_depth(request.name)
     row = _shared.resolve_script_version(conn, request.name, request.version)
     _shared.ensure_session(conn, request.session_id)
     # Commit now, before the blocking dispatch call below: ensure_session's
@@ -61,12 +126,15 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
     # write lock and fail with "database is locked".
     conn.commit()
 
-    result = dispatch.dispatch(
-        dispatch.ScriptVersion(language=row["language"], body=row["body"]),
-        dispatch.ExecutionRequest(
-            argv=request.argv, stdin=request.stdin, cwd=request.cwd, timeout=request.timeout
-        ),
-    )
+    # depth+1 is exposed to the subprocess so a nested `grim run` inherits
+    # it and the chain is bounded by MAX_CALL_DEPTH (build plan §9).
+    with _child_call_depth(depth):
+        result = dispatch.dispatch(
+            dispatch.ScriptVersion(language=row["language"], body=row["body"]),
+            dispatch.ExecutionRequest(
+                argv=request.argv, stdin=request.stdin, cwd=request.cwd, timeout=request.timeout
+            ),
+        )
 
     # Computed after dispatch, not before: a nested `grim run` inside the
     # dispatched script may have already inserted execution rows for this
@@ -127,7 +195,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     try:
         result = run_script(conn, request)
-    except LookupError as exc:
+    except (LookupError, CallDepthExceeded) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(result.observation)

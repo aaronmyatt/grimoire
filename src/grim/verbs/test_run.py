@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 
 from grim import db
 from grim.verbs import _shared
-from grim.verbs.run import RunRequest, run_script
+from grim.verbs.run import MAX_CALL_DEPTH, CallDepthExceeded, RunRequest, run_script
 from grim.verbs.write import WriteRequest, write_script
 
 
@@ -126,6 +127,47 @@ def test_run_script_limits_output_when_head_tail_requested(
     assert "first 40 + last 10 of 59 lines" in result.observation
     assert "line41" not in result.observation
     assert "... (9 skipped) ..." in result.observation
+
+
+def test_run_script_rejects_when_call_depth_at_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Simulate being MAX_CALL_DEPTH `grim run`s deep: the guard must reject
+    # before dispatch rather than let an unbounded/cyclic chain recurse.
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn)
+    monkeypatch.setenv("GRIM_CALL_DEPTH", str(MAX_CALL_DEPTH))
+
+    with pytest.raises(CallDepthExceeded):
+        run_script(conn, _request())
+
+
+def test_run_script_allows_call_just_below_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn)
+    monkeypatch.setenv("GRIM_CALL_DEPTH", str(MAX_CALL_DEPTH - 1))
+
+    result = run_script(conn, _request())  # last permitted level still runs
+
+    assert result.exit_code == 0
+
+
+def test_run_script_exposes_incremented_depth_to_dispatched_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A top-level run (no GRIM_CALL_DEPTH set) must hand the dispatched
+    # script depth 1, and restore the env to unset afterwards so the
+    # in-process adapter path doesn't accumulate depth across turns.
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    monkeypatch.delenv("GRIM_CALL_DEPTH", raising=False)
+    _seed_script(conn, body="import os; print(os.environ['GRIM_CALL_DEPTH'])")
+
+    result = run_script(conn, _request())
+
+    assert "--- stdout: 1 lines ---\n1" in result.observation
+    assert "GRIM_CALL_DEPTH" not in os.environ
 
 
 def test_run_script_supports_nested_grim_run_without_deadlocking(
