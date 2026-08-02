@@ -207,3 +207,25 @@ def test_main_reports_missing_agent_extra(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(sys, "meta_path", [_Block(), *sys.meta_path])
 
     assert launcher.main(["anything"]) == launcher.MISSING_EXTRA_EXIT_CODE
+
+
+def test_build_mini_args_injects_cost_and_step_defaults() -> None:
+    spec = launcher.LaunchSpec(
+        config="/c.yaml", trajectory="/t.traj.json", cost_default="5", step_default="10"
+    )
+    args = launcher.build_mini_args(["do X"], spec)
+    assert args[args.index("-l") + 1] == "5"
+    assert "agent.step_limit=10" in args
+
+
+def test_build_mini_args_explicit_cost_beats_default() -> None:
+    spec = launcher.LaunchSpec(config="/c.yaml", trajectory="/t.traj.json", cost_default="9")
+    args = launcher.build_mini_args(["-t", "q", "-l", "2"], spec)
+    assert args.count("-l") == 1 and "9" not in args  # user's -l wins
+
+
+def test_build_mini_args_omits_cost_and_step_when_unset() -> None:
+    spec = launcher.LaunchSpec(config="/c.yaml", trajectory="/t.traj.json")
+    args = launcher.build_mini_args(["do X"], spec)
+    assert "-l" not in args
+    assert not any(a.startswith("agent.step_limit=") for a in args)

@@ -160,6 +160,8 @@ class LaunchSpec(NamedTuple):
     trajectory: str
     model_default: str | None = None
     interactive: bool = False
+    cost_default: str | None = None  # $GRIM_COST_LIMIT -> mini's -l/--cost-limit
+    step_default: str | None = None  # $GRIM_STEP_LIMIT -> mini's -c agent.step_limit
 
 
 def build_mini_args(user_argv: list[str], spec: LaunchSpec) -> list[str]:
@@ -184,6 +186,10 @@ def build_mini_args(user_argv: list[str], spec: LaunchSpec) -> list[str]:
         # Unattended: skip mini's finish prompt so containers/cron never block
         # on stdin. Maps to confirm_exit=False in minisweagent/run/mini.py.
         args += ["--exit-immediately"]
+    if spec.step_default:
+        # step_limit has no CLI flag; inject it via mini's -c config merge,
+        # before the user's argv so a user-supplied -c still layers on top.
+        args += ["-c", f"agent.step_limit={spec.step_default}"]
     rest = list(user_argv)
     if rest and not rest[0].startswith("-"):
         args += ["-t", rest[0]]  # ergonomic positional task -> mini's -t/--task
@@ -194,6 +200,9 @@ def build_mini_args(user_argv: list[str], spec: LaunchSpec) -> list[str]:
     # $GRIM_MODEL is a default, not an override: skip it if the user passed -m.
     if spec.model_default and not _has_flag(args, "-m", "--model"):
         args += ["-m", spec.model_default]
+    # $GRIM_COST_LIMIT is a default too: skip it if the user passed their own -l.
+    if spec.cost_default and not _has_flag(args, "-l", "--cost-limit"):
+        args += ["-l", spec.cost_default]
     assert "-y" in args, "harness runs are always yolo"
     assert spec.interactive or "--exit-immediately" in args, "unattended runs must exit immediately"
     return args
@@ -251,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
             trajectory=_trajectory_path(),
             model_default=os.environ.get("GRIM_MODEL"),
             interactive=sys.stdin.isatty(),
+            cost_default=os.environ.get("GRIM_COST_LIMIT"),
+            step_default=os.environ.get("GRIM_STEP_LIMIT"),
         ),
     )
     try:
