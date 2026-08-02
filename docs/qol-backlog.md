@@ -1,29 +1,39 @@
 # Grimoire — QoL backlog
 
-Quality-of-life enhancements imagined but not yet built. These are distinct
-from the numbered build-plan phases (`docs/build-plan.md` §5) — those are big
+Quality-of-life enhancements — the "Config & environment" group is shipped
+(see below); the rest are imagined but not yet built. These are distinct from
+the numbered build-plan phases (`docs/build-plan.md` §5) — those are big
 features (TUI review queue, embeddings, draft bench, evals, the js/ts runner).
 The items here are ergonomics, safety, and observability that mostly land as
-**seeds or config keys**, not core changes.
+**seeds or config keys** (a few, like diagnostics, as in-process kernel
+commands), not core changes.
 
 Architectural note that shapes all of these: new *agent* capability grows as
 seed scripts, never new verbs (D11); new *human* surface can be seeds too, so
 the six-verb contract and the frozen kernel (`db.py`/`cli.py`/`config.py`) stay
 untouched. Each item notes its likely home and rough effort.
 
-## Config & environment (extends the shipped `config.toml`/env work)
+## Config & environment — ✅ DONE
 
-- **More config keys** — add `GRIM_RUN_DIR` (already honored by the bg seeds)
-  plus mini's `cost_limit`/`step_limit` (currently hardcoded in
-  `grimoire.yaml`) to `config.py`'s `_CONFIG_ENV_KEYS`, so they're tunable
-  without editing YAML. *Tiny; same pattern as the config bootstrap.*
-- **Repo-local config layering** — `.grimoire/config.toml` in the repo, merged
-  over the global one (like `.git`), for per-project model/timeout. Matches the
-  D10 repo-scope model. *`config.py` gains one merge step (frozen — confirm).*
-- **`grim config`** — print effective settings and each value's source (env vs
-  file vs default), like `git config --list`. *Ships as a seed.*
-- **`grim doctor`** (the planned Phase 4 `--check`) — verify uv/bash/rg/git
-  present, FTS5 available, DB migrated, config parses. *Seed.*
+Shipped as a group. Correction applied during the build: `grim doctor` and
+`grim config` are **in-process kernel subcommands (`cli.py`), not seeds** — a
+seed runs via `grim run`, which needs a migrated DB and working dispatch (`uv`),
+i.e. exactly what those diagnostics exist to check. A seed can't diagnose the
+substrate it runs on, so both are exempt from the database-ready gate.
+
+- ✅ **More config keys** — `run_dir`/`cost`/`step` → `GRIM_RUN_DIR`/
+  `GRIM_COST_LIMIT`/`GRIM_STEP_LIMIT` in `config.py`. Cost/step also needed
+  launcher wiring (`-l`, `-c agent.step_limit=N`) — mini only sees them via the
+  launcher, not `config.py` alone.
+- ✅ **Repo-local config layering** — nearest `./.grimoire/config.toml`
+  (bounded git-style walk-up, excluding the global) layered over the global:
+  precedence **shell env > repo > global > default**, all via `setdefault`.
+- ✅ **`grim config`** — `config.effective_config()` + `cmd_config` print each
+  key, value, and source (env/repo/global/default); works before `grim init`.
+- ✅ **`grim doctor`** — in-process checks (uv/bash required; rg/git optional;
+  FTS5 probe; DB state; config parse); exits nonzero only on a critical
+  failure. (Distinct from build-plan §5 Phase 4's `init --check`, which shells
+  out to the `run` tool's toolchain doctor once the substrate is healthy.)
 
 ## Observability (surface the execution log without Datasette)
 
