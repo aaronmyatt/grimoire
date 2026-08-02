@@ -26,7 +26,7 @@ import sys
 import tempfile
 import time
 from importlib import resources
-from typing import Any
+from typing import Any, NamedTuple
 
 from grim import cli
 
@@ -59,7 +59,9 @@ Usage:
   grim-agent "<task>" -m <model>
   grim-agent -t "<task>" -m anthropic/claude-sonnet-4-5
 
-The harness always runs unattended (yolo + exit-immediately are forced on).
+Runs yolo (no per-action confirmation). At a terminal it's attended — on
+finish it prompts for a follow-up task so you can keep steering; a
+piped/redirected run (containers, cron, CI) exits immediately instead.
 
 Common options:
   -m, --model MODEL    Model to use (falls back to $GRIM_MODEL).
@@ -144,34 +146,56 @@ def _has_flag(args: list[str], short: str, long: str) -> bool:
     return present
 
 
-def build_mini_args(
-    user_argv: list[str], config: str, trajectory: str, model_default: str | None = None
-) -> list[str]:
+class LaunchSpec(NamedTuple):
+    """The non-argv inputs to `build_mini_args`, bundled into one struct so the
+    builder stays within the 4-parameter budget (CLAUDE.md §1).
+
+    `interactive` selects the run's finish behavior: False (the default,
+    unattended) forces `--exit-immediately`; True (an attended terminal) keeps
+    mini's post-submit prompt so the human can add a follow-up task.
+    Ref (NamedTuple): https://docs.python.org/3/library/typing.html#typing.NamedTuple
+    """
+
+    config: str
+    trajectory: str
+    model_default: str | None = None
+    interactive: bool = False
+
+
+def build_mini_args(user_argv: list[str], spec: LaunchSpec) -> list[str]:
     """Assemble the argv handed to mini's Typer app. Pure (no I/O) so it is
     unit-testable without launching the loop.
 
     Contract, mirroring run.sh: a bare leading token is the task (so
     `grim-agent "do X"` works); everything else forwards to mini verbatim.
-    The harness is always unattended — `-y` (yolo) and `--exit-immediately`
-    are forced on, and our config is prepended (mini merges multiple `-c`,
-    so a user's own `-c extra.yaml` still layers on top). `-o` and `-m` are
-    injected only when the user did not supply their own, so an explicit
-    flag always wins over the `$GRIM_MODEL` / trajectory defaults.
+    The run is always yolo (`-y`), and our config is prepended (mini merges
+    multiple `-c`, so a user's own `-c extra.yaml` still layers on top).
+    `--exit-immediately` is forced on only for UNATTENDED runs
+    (`spec.interactive` False); an attended terminal keeps mini's post-submit
+    "type a new task or Enter to quit" prompt (confirm_exit defaults True), so
+    the human can steer without losing the session. `-o` and `-m` are injected
+    only when the user did not supply their own, so an explicit flag always
+    wins over the `$GRIM_MODEL` / trajectory defaults.
     """
-    assert config, "config path required"
-    assert trajectory, "trajectory path required"
-    args: list[str] = ["-c", config, "-y", "--exit-immediately"]
+    assert spec.config, "config path required"
+    assert spec.trajectory, "trajectory path required"
+    args: list[str] = ["-c", spec.config, "-y"]
+    if not spec.interactive:
+        # Unattended: skip mini's finish prompt so containers/cron never block
+        # on stdin. Maps to confirm_exit=False in minisweagent/run/mini.py.
+        args += ["--exit-immediately"]
     rest = list(user_argv)
     if rest and not rest[0].startswith("-"):
         args += ["-t", rest[0]]  # ergonomic positional task -> mini's -t/--task
         rest = rest[1:]
     args += rest
     if not _has_flag(args, "-o", "--output"):
-        args += ["-o", trajectory]
+        args += ["-o", spec.trajectory]
     # $GRIM_MODEL is a default, not an override: skip it if the user passed -m.
-    if model_default and not _has_flag(args, "-m", "--model"):
-        args += ["-m", model_default]
-    assert "-y" in args and "--exit-immediately" in args, "harness runs must be unattended"
+    if spec.model_default and not _has_flag(args, "-m", "--model"):
+        args += ["-m", spec.model_default]
+    assert "-y" in args, "harness runs are always yolo"
+    assert spec.interactive or "--exit-immediately" in args, "unattended runs must exit immediately"
     return args
 
 
@@ -217,8 +241,17 @@ def main(argv: list[str] | None = None) -> int:
 
     # $GRIM_MODEL supplies the model when the user didn't pass -m, matching the
     # container entrypoint and giving `export GRIM_MODEL=…; grim-agent "task"`.
+    # Attended at a terminal; unattended when stdin is piped/redirected
+    # (containers, cron, CI). Ref:
+    # https://docs.python.org/3/library/io.html#io.IOBase.isatty
     mini_args = build_mini_args(
-        raw, _config_path(), _trajectory_path(), model_default=os.environ.get("GRIM_MODEL")
+        raw,
+        LaunchSpec(
+            config=_config_path(),
+            trajectory=_trajectory_path(),
+            model_default=os.environ.get("GRIM_MODEL"),
+            interactive=sys.stdin.isatty(),
+        ),
     )
     try:
         # Typer app.__call__ -> click main(args=..., standalone_mode=False):

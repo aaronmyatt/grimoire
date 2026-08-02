@@ -4,6 +4,7 @@ queried and the agent loop never runs."""
 
 from __future__ import annotations
 
+import io
 import sys
 from pathlib import Path
 
@@ -27,36 +28,49 @@ def test_trajectory_path_honors_env_and_is_unique_suffix(monkeypatch: pytest.Mon
     assert path.endswith(".traj.json")
 
 
-def test_build_mini_args_forces_unattended_config_and_trajectory() -> None:
-    args = launcher.build_mini_args([], "/cfg/grimoire.yaml", "/tmp/x.traj.json")
-    # our config is prepended, the run is always yolo + non-interactive, and
-    # the injected trajectory lands because the user gave no -o.
+def test_build_mini_args_unattended_forces_yolo_and_exit_immediately() -> None:
+    # interactive defaults False -> the unattended path
+    spec = launcher.LaunchSpec("/cfg/grimoire.yaml", "/tmp/x.traj.json")
+    args = launcher.build_mini_args([], spec)
+    # our config is prepended, an unattended run is always yolo + exit-immediately,
+    # and the injected trajectory lands because the user gave no -o.
     assert args[:4] == ["-c", "/cfg/grimoire.yaml", "-y", "--exit-immediately"]
     assert args[-2:] == ["-o", "/tmp/x.traj.json"]
 
 
+def test_build_mini_args_attended_keeps_the_finish_prompt() -> None:
+    spec = launcher.LaunchSpec("/cfg.yaml", "/t.traj.json", interactive=True)
+    args = launcher.build_mini_args([], spec)
+    # attended terminal: still yolo, but --exit-immediately is withheld so mini's
+    # post-submit "type a new task" prompt survives (the session can continue).
+    assert "-y" in args
+    assert "--exit-immediately" not in args
+
+
 def test_build_mini_args_promotes_a_bare_positional_to_task() -> None:
-    args = launcher.build_mini_args(["do the thing", "-m", "x"], "/cfg.yaml", "/t.traj.json")
+    spec = launcher.LaunchSpec("/cfg.yaml", "/t.traj.json")
+    args = launcher.build_mini_args(["do the thing", "-m", "x"], spec)
     assert "-t" in args and "do the thing" in args
     assert args[args.index("-t") + 1] == "do the thing"
 
 
 def test_build_mini_args_forwards_flags_and_respects_user_output() -> None:
-    args = launcher.build_mini_args(["-t", "q", "-o", "/mine.json"], "/c.yaml", "/auto.traj.json")
+    spec = launcher.LaunchSpec("/c.yaml", "/auto.traj.json")
+    args = launcher.build_mini_args(["-t", "q", "-o", "/mine.json"], spec)
     # user's own -o wins: the auto trajectory is not appended.
     assert "/auto.traj.json" not in args
     assert args.count("-o") == 1 and "/mine.json" in args
 
 
 def test_build_mini_args_injects_model_default_when_absent() -> None:
-    args = launcher.build_mini_args(["do X"], "/c.yaml", "/t.traj.json", model_default="prov/model")
+    spec = launcher.LaunchSpec("/c.yaml", "/t.traj.json", model_default="prov/model")
+    args = launcher.build_mini_args(["do X"], spec)
     assert args[args.index("-m") + 1] == "prov/model"
 
 
 def test_build_mini_args_explicit_model_beats_the_default() -> None:
-    args = launcher.build_mini_args(
-        ["-t", "q", "-m", "chosen/one"], "/c.yaml", "/t.traj.json", model_default="prov/default"
-    )
+    spec = launcher.LaunchSpec("/c.yaml", "/t.traj.json", model_default="prov/default")
+    args = launcher.build_mini_args(["-t", "q", "-m", "chosen/one"], spec)
     # user's -m wins: the env default is not appended a second time.
     assert args.count("-m") == 1 and "prov/default" not in args
 
@@ -79,6 +93,9 @@ def test_main_inits_the_library_then_invokes_mini_in_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    # Force a non-tty stdin so the unattended path is deterministic under
+    # `pytest -s` or a CI terminal, not dependent on ambient isatty().
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
     captured: dict[str, object] = {}
 
     # Stub mini's app so the loop never runs; main imports it lazily by name,
@@ -101,6 +118,29 @@ def test_main_inits_the_library_then_invokes_mini_in_process(
     assert forwarded[forwarded.index("-t") + 1] == "hello task"
     # init ran: the DB now exists and holds the seeded library.
     assert (tmp_path / "grimoire.db").exists()
+
+
+def test_main_attended_terminal_keeps_the_finish_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+
+    # A tty stdin makes main() choose the attended path; --exit-immediately is
+    # then withheld so mini keeps its post-submit "type a new task" prompt.
+    class _Tty(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr(sys, "stdin", _Tty())
+    captured: dict[str, object] = {}
+    import minisweagent.run.mini as minirun
+
+    monkeypatch.setattr(minirun, "app", lambda args, standalone_mode: captured.update(args=args))
+
+    assert launcher.main(["a task", "-m", "x/y"]) == 0
+    forwarded = captured["args"]
+    assert isinstance(forwarded, list)
+    assert "-y" in forwarded and "--exit-immediately" not in forwarded
 
 
 def test_main_help_prints_grim_screen_without_init_or_mini(
