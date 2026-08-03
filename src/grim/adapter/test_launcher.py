@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from grim import db
+
 pytest.importorskip("minisweagent")  # launcher.main imports it lazily; skip if extra absent
 
 from grim.adapter import launcher  # noqa: E402
@@ -366,3 +368,89 @@ def test_main_print_mode_emits_only_the_answer_to_stdout(
     assert rc == 0
     assert out.strip() == "6765"  # ONLY the answer — mini's UI went to stderr
     assert "noisy mini UI" not in out
+
+
+# --- --continue: recall + session lineage -----------------------------------
+
+
+def test_take_flag_strips_and_reports_presence() -> None:
+    present, rest = launcher._take_flag(["--continue", "-t", "q"], "--continue")
+    assert present is True
+    assert rest == ["-t", "q"]  # flag removed, never forwarded to mini
+    absent, rest2 = launcher._take_flag(["-t", "q"], "--continue")
+    assert absent is False
+    assert rest2 == ["-t", "q"]
+
+
+def test_build_mini_args_injects_session_id_when_set() -> None:
+    spec = launcher.LaunchSpec("/c.yaml", "/t.traj.json", session_id="sess-123")
+    args = launcher.build_mini_args(["do X"], spec)
+    assert "environment.session_id=sess-123" in args
+
+
+def test_build_mini_args_omits_session_id_when_absent() -> None:
+    spec = launcher.LaunchSpec("/c.yaml", "/t.traj.json")
+    args = launcher.build_mini_args(["do X"], spec)
+    assert not any(a.startswith("environment.session_id=") for a in args)
+
+
+def test_last_agent_session_id_returns_most_recent_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    conn = db.connect()
+    db.migrate(conn)
+    conn.executemany(
+        "INSERT INTO session (id, kind, started_at) VALUES (?, ?, ?)",
+        [
+            ("old", "agent", "2026-08-01 00:00:00"),
+            ("new", "agent", "2026-08-03 00:00:00"),
+            ("human_newer", "human", "2026-08-05 00:00:00"),  # newer, but not an agent
+        ],
+    )
+    conn.commit()
+    conn.close()
+    assert launcher.last_agent_session_id() == "new"
+
+
+def test_last_agent_session_id_none_on_fresh_library(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    conn = db.connect()
+    db.migrate(conn)
+    conn.close()
+    assert launcher.last_agent_session_id() is None
+
+
+def test_main_continue_enables_recall_and_reuses_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    monkeypatch.setattr(sys, "stdin", io.StringIO())  # non-tty -> deterministic path
+    monkeypatch.delenv("GRIM_RECALL", raising=False)  # registered -> cleaned up on teardown
+    # A prior agent session for --continue to reuse. Far-future timestamp so it
+    # is unambiguously the most-recent agent session, whatever init records.
+    conn = db.connect()
+    db.migrate(conn)
+    conn.execute(
+        "INSERT INTO session (id, kind, started_at) VALUES ('prev', 'agent', '2099-01-01 00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    captured: dict[str, object] = {}
+    import minisweagent.run.mini as minirun
+
+    monkeypatch.setattr(minirun, "app", lambda args, standalone_mode: captured.update(args=args))
+
+    rc = launcher.main(["--continue", "a task", "-m", "x/y"])
+
+    assert rc == 0
+    import os
+
+    assert os.environ.get("GRIM_RECALL") == "1"  # recall turned on
+    forwarded = captured["args"]
+    assert isinstance(forwarded, list)
+    assert "--continue" not in forwarded  # grim-only flag, never sent to mini
+    assert "environment.session_id=prev" in forwarded  # lineage reused
