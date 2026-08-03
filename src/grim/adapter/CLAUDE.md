@@ -48,7 +48,13 @@ D6 revised → native tool-calling).
   `user_prompt_extension()` (the operator's `~/.grimoire/system.md`, read
   fresh each run) as `grim_user_prompt`, which `system_template` renders as
   an `<operator_instructions>` block when non-empty — the agent-harness
-  analogue of a global `~/.claude`/`~/.pi` instruction file.
+  analogue of a global `~/.claude`/`~/.pi` instruction file. On `--continue`
+  (`recall_enabled()` reads `GRIM_RECALL`), `run()` also stashes
+  `recent_library(recall_limit())` as `grim_recent_library` — the agent's own
+  recently-valuable scripts (non-seeded, run, not mostly-failing), value-ranked
+  then ordered most-recent-**last**, rendered by `instance_template` beside the
+  task (not the system prompt) so recency bias weighs it. Off by default: no
+  `GRIM_RECALL` means the prompt is byte-for-byte unchanged.
 - `run.sh` — the recommended launcher: `./run.sh -m <model> -y -t
   "<task>"`. A pre-launch wrapper only (runs *before* the agent loop
   starts, to pick a fresh `/tmp` trajectory path per invocation) — not
@@ -68,7 +74,10 @@ D6 revised → native tool-calling).
   stderr, only the final `submit` result to stdout, `--exit-immediately`
   forced) — then hands the remaining argv to mini's Typer app in-process.
   `parse_result`/`summarize_run`/`format_output` are pure helpers over mini's
-  trajectory `info` block, unit-tested without a model.
+  trajectory `info` block, unit-tested without a model. `--continue` turns on
+  library recall (sets `GRIM_RECALL`) and reuses the last agent session's id
+  (`last_agent_session_id` -> `-c environment.session_id=…`) so executions
+  extend that lineage; the flag is stripped before dispatch (`_take_flag`).
 
 ## Invariants
 - The model may only call the tools in `GRIM_TOOLS`; `GrimToolcallModel`
@@ -82,6 +91,6 @@ D6 revised → native tool-calling).
   through here.
 - No new shell/subprocess call is ever added to this slice — that would
   reopen exactly the bypass D7 exists to close.
-- `-p`/`--output-format` are the human launcher's flags only:
-  `parse_print_options` strips them from argv before dispatch, so the model's
-  argv (and the six-verb contract, D12) is never touched.
+- `-p`/`--output-format`/`--continue` are the human launcher's flags only:
+  `parse_print_options`/`_take_flag` strip them from argv before dispatch, so
+  the model's argv (and the six-verb contract, D12) is never touched.

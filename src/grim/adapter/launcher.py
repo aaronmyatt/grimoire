@@ -30,7 +30,7 @@ import time
 from importlib import resources
 from typing import Any, NamedTuple
 
-from grim import cli
+from grim import cli, db
 
 # grimoire.yaml ships inside this package (see pyproject hatchling config);
 # resources.files locates it whether grim runs from source or an installed
@@ -75,6 +75,9 @@ Common options:
                        With -p, pick the stdout shape — `text` (bare answer,
                        default) or `json` ({result, exit_status, cost,
                        api_calls, trajectory}). Implies -p.
+      --continue       Warm-start from your library: frontload recently
+                       valuable scripts into the task (GRIM_RECALL_LIMIT, ~10)
+                       and reuse the last session's lineage. Off by default.
   -l, --cost-limit N   Cost limit in USD; 0 disables.
   -o, --output PATH    Trajectory JSON (default: a fresh per-run file under
                        $GRIM_TRAJ_DIR or the system temp dir).
@@ -155,6 +158,17 @@ def _has_flag(args: list[str], short: str, long: str) -> bool:
     return present
 
 
+def _take_flag(argv: list[str], flag: str) -> tuple[bool, list[str]]:
+    """Remove a bare boolean flag from argv, reporting whether it was present.
+    Used for grim-only flags mini's Typer app doesn't accept (e.g. --continue),
+    so they never reach dispatch."""
+    assert flag.startswith("--"), "flag must be long-form"
+    present = flag in argv
+    rest = [a for a in argv if a != flag]
+    assert len(rest) <= len(argv), "stripping never grows argv"
+    return present, rest
+
+
 class LaunchSpec(NamedTuple):
     """The non-argv inputs to `build_mini_args`, bundled into one struct so the
     builder stays within the 4-parameter budget (CLAUDE.md §1).
@@ -171,6 +185,7 @@ class LaunchSpec(NamedTuple):
     interactive: bool = False
     cost_default: str | None = None  # $GRIM_COST_LIMIT -> mini's -l/--cost-limit
     step_default: str | None = None  # $GRIM_STEP_LIMIT -> mini's -c agent.step_limit
+    session_id: str | None = None  # --continue -> mini's -c environment.session_id
 
 
 def build_mini_args(user_argv: list[str], spec: LaunchSpec) -> list[str]:
@@ -199,6 +214,11 @@ def build_mini_args(user_argv: list[str], spec: LaunchSpec) -> list[str]:
         # step_limit has no CLI flag; inject it via mini's -c config merge,
         # before the user's argv so a user-supplied -c still layers on top.
         args += ["-c", f"agent.step_limit={spec.step_default}"]
+    if spec.session_id:
+        # --continue: reuse the last agent session so this run's executions
+        # extend its lineage (seq + affinity). GrimEnvironmentConfig.session_id
+        # honors it; before the user's argv so a user's own -c can override.
+        args += ["-c", f"environment.session_id={spec.session_id}"]
     rest = list(user_argv)
     if rest and not rest[0].startswith("-"):
         args += ["-t", rest[0]]  # ergonomic positional task -> mini's -t/--task
@@ -390,12 +410,33 @@ def run_print(
     return 0 if summary.exit_status == _SUBMITTED_STATUS else (code or 1)
 
 
-def _launch(app: Any, raw: list[str], print_opts: PrintOptions) -> int:
+def last_agent_session_id() -> str | None:
+    """The most recent agent session's id, or None on a fresh library.
+    `--continue` reuses it as environment.session_id so this run's executions
+    extend that session's lineage (seq + affinity) instead of starting fresh.
+    Read-only; the library is already migrated by the time this runs."""
+    conn = db.connect()
+    try:
+        row = conn.execute(
+            "SELECT id FROM session WHERE kind = 'agent' "
+            "ORDER BY started_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return str(row[0]) if row else None
+
+
+def _launch(app: Any, raw: list[str], print_opts: PrintOptions, continue_on: bool) -> int:
     """Build mini's argv and run the agent — in print mode (clean stdout) or
     mini's normal interactive path. Split from main() so each stays within the
-    function-length budget."""
+    function-length budget. `continue_on` (--continue) turns on library recall
+    and reuses the last agent session's lineage."""
     assert app is not None, "mini app required"
     assert isinstance(raw, list), "argv must be a list"
+    session_id: str | None = None
+    if continue_on:
+        os.environ["GRIM_RECALL"] = "1"  # read by GrimAgent.run to frontload recall
+        session_id = last_agent_session_id()
     # Attended at a terminal; unattended when stdin is piped/redirected OR the
     # human asked for print mode (which must never block on a prompt). Ref:
     # https://docs.python.org/3/library/io.html#io.IOBase.isatty
@@ -407,6 +448,7 @@ def _launch(app: Any, raw: list[str], print_opts: PrintOptions) -> int:
         interactive=interactive,
         cost_default=os.environ.get("GRIM_COST_LIMIT"),
         step_default=os.environ.get("GRIM_STEP_LIMIT"),
+        session_id=session_id,
     )
     mini_args = build_mini_args(raw, spec)
     if print_opts.enabled:
@@ -432,9 +474,11 @@ def main(argv: list[str] | None = None) -> int:
         print(_GRIM_HELP)
         return 0
 
-    # Split grim-only print flags (-p / --output-format) out up front; the
-    # remainder forwards to mini, and a bad --output-format value fails here.
+    # Split grim-only flags out up front; the remainder forwards to mini. A bad
+    # --output-format value fails here; --continue turns on recall + session
+    # lineage reuse (both applied in _launch).
     print_opts, raw = parse_print_options(raw)
+    continue_on, raw = _take_flag(raw, "--continue")
 
     # Silence mini's import-time version/migration/config banner (guarded by
     # this env var in minisweagent/__init__.py); we print our own instead.
@@ -469,4 +513,4 @@ def main(argv: list[str] | None = None) -> int:
 
     # $GRIM_MODEL supplies the model when the user didn't pass -m, matching the
     # container entrypoint and giving `export GRIM_MODEL=…; grim-agent "task"`.
-    return _launch(app, raw, print_opts)
+    return _launch(app, raw, print_opts, continue_on)

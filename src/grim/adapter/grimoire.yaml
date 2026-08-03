@@ -117,6 +117,17 @@ agent:
     read, list, find, run) plus submit to finish — and scripts may only be
     python or bash. Call find first when you're not already sure a suitable
     script exists.
+    {%- if grim_recent_library is defined and grim_recent_library %}
+
+    <recent_library>
+    Scripts you built and used recently, ordered least- to most-recently used
+    (the last is the most recent). Prefer reading and reusing one of these over
+    writing something new:
+    {%- for m in grim_recent_library %}
+      - {{ m.name }}: {{ m.description }}
+    {%- endfor %}
+    </recent_library>
+    {%- endif %}
   step_limit: 0
   cost_limit: 3.
   # yolo: no per-action confirmation prompts. Submission still hands

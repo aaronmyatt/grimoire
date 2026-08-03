@@ -11,9 +11,11 @@ already is, instead of depending on the agent choosing to search.
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from minisweagent.agents.interactive import InteractiveAgent
 
@@ -91,14 +93,90 @@ def user_prompt_extension(path: Path | None = None) -> str:
     return result
 
 
+# --- library recall (--continue) --------------------------------------------
+# On --continue the agent is warm-started with its own recently-valuable
+# scripts (name + description, never bodies), so it reuses accumulated tools
+# instead of rewriting them. Sibling of strong_matches(): a direct, terse
+# library read stashed into extra_template_vars for instance_template to render
+# — placed by the task (not the system prompt) so recency bias weighs it.
+
+RECALL_LIMIT_DEFAULT = 10  # scripts to recall; GRIM_RECALL_LIMIT overrides
+RECALL_LIMIT_MAX = 50  # hard ceiling — a bounded collection, never unbounded (§1)
+RECALL_MIN_SUCCESS = 0.5  # skip mostly-failing scripts; a recalled tool should work
+RECALL_POOL_FACTOR = 3  # recency-bounded candidate pool = limit * this, then value-ranked
+
+
+def recall_enabled() -> bool:
+    """True when --continue set GRIM_RECALL (or it was exported directly). Off
+    by default, so a normal run's prompt is byte-for-byte unchanged."""
+    return bool(os.environ.get("GRIM_RECALL"))
+
+
+def recall_limit() -> int:
+    """How many scripts to recall: GRIM_RECALL_LIMIT clamped to [1, MAX], else
+    the default. External input -> validate, never trust (constitution §3)."""
+    raw = os.environ.get("GRIM_RECALL_LIMIT")
+    if raw is None:
+        return RECALL_LIMIT_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        return RECALL_LIMIT_DEFAULT
+    return max(1, min(value, RECALL_LIMIT_MAX))
+
+
+def rank_recall(candidates: list[dict[str, Any]], k: int) -> list[dict[str, str]]:
+    """Pure: pick the k most-valuable scripts (most runs, then most iterated),
+    then order them by last_used ASCENDING so the most-recently-used lands LAST
+    — nearest the task, where recency bias weighs heaviest. Terse (name +
+    description only); no DB, no clock, deterministic for a given input."""
+    assert k >= 1, "recall limit must be positive"
+    by_value = sorted(candidates, key=lambda c: (c["runs"], c["iterations"]), reverse=True)
+    chosen = by_value[:k]
+    chosen.sort(key=lambda c: c["last_used"])  # ISO-ish text sorts chronologically
+    result = [{"name": str(c["name"]), "description": str(c["description"])} for c in chosen]
+    assert len(result) <= k, "recall never exceeds its limit"
+    return result
+
+
+# Ranked so the SQL LIMIT bounds a recency pool; rank_recall re-ranks by value.
+_RECALL_SQL = (
+    "SELECT s.name, s.description, h.runs, "
+    "(SELECT MAX(version) FROM script_version WHERE script_id = s.id) AS iterations, "
+    "h.last_used "
+    "FROM script s JOIN script_health h ON h.id = s.id "
+    "WHERE s.archived = 0 AND s.seeded = 0 AND h.runs > 0 AND h.success_rate >= ? "
+    "ORDER BY h.last_used DESC LIMIT ?"
+)
+
+
+def recent_library(limit: int) -> list[dict[str, str]]:
+    """The agent's own recently-valuable scripts, ranked for recall: a
+    recency-bounded pool from the library (non-seeded, non-archived, run at
+    least once, not mostly-failing), value-ranked via rank_recall."""
+    assert limit >= 1, "recall limit must be positive"
+    conn = db.connect()
+    conn.row_factory = sqlite3.Row
+    try:
+        pool = conn.execute(
+            _RECALL_SQL, (RECALL_MIN_SUCCESS, limit * RECALL_POOL_FACTOR)
+        ).fetchall()
+    finally:
+        conn.close()
+    return rank_recall([dict(row) for row in pool], limit)
+
+
 class GrimAgent(InteractiveAgent):
     """Same contract as InteractiveAgent; only run() is extended so
-    system_template can reference {{ grim_strong_matches }} and the operator's
-    {{ grim_user_prompt }} extension."""
+    system_template can reference {{ grim_strong_matches }} / the operator's
+    {{ grim_user_prompt }}, and (on --continue) instance_template can render
+    {{ grim_recent_library }}."""
 
     def run(self, task: str = "", **kwargs: object) -> dict[str, object]:
         self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
         self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
+        if recall_enabled():
+            self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
         # Enable @/: completion on mini's prompt sessions (no-op without a TTY).
         install_grim_completer()
         return super().run(task, **kwargs)
