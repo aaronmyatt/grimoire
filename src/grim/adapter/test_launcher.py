@@ -229,3 +229,140 @@ def test_build_mini_args_omits_cost_and_step_when_unset() -> None:
     args = launcher.build_mini_args(["do X"], spec)
     assert "-l" not in args
     assert not any(a.startswith("agent.step_limit=") for a in args)
+
+
+# --- print mode (-p / --output-format) --------------------------------------
+
+
+def test_parse_print_options_absent_leaves_argv_untouched() -> None:
+    opts, rest = launcher.parse_print_options(["-t", "task", "-m", "x"])
+    assert opts.enabled is False
+    assert opts.output_format is launcher.OutputFormat.TEXT
+    assert rest == ["-t", "task", "-m", "x"]  # nothing stripped for mini
+
+
+def test_parse_print_options_strips_p_and_keeps_the_rest() -> None:
+    for flag in ("-p", "--print"):
+        opts, rest = launcher.parse_print_options([flag, "-t", "task"])
+        assert opts.enabled is True
+        assert rest == ["-t", "task"]  # the print flag never forwards to mini
+
+
+def test_parse_print_options_output_format_implies_print_and_is_stripped() -> None:
+    opts, rest = launcher.parse_print_options(["-t", "q", "--output-format", "json"])
+    assert opts.enabled is True  # --output-format implies -p
+    assert opts.output_format is launcher.OutputFormat.JSON
+    assert rest == ["-t", "q"]  # both the flag and its value are consumed
+
+
+def test_parse_print_options_accepts_joined_output_format() -> None:
+    opts, rest = launcher.parse_print_options(["--output-format=text", "-t", "q"])
+    assert opts.output_format is launcher.OutputFormat.TEXT
+    assert rest == ["-t", "q"]
+
+
+def test_parse_print_options_rejects_a_bad_format_value() -> None:
+    with pytest.raises(SystemExit) as exc:
+        launcher.parse_print_options(["--output-format", "yaml"])
+    assert exc.value.code == _USAGE_EXIT  # usage error, not a crash
+
+
+def test_parse_print_options_rejects_a_missing_format_value() -> None:
+    with pytest.raises(SystemExit) as exc:
+        launcher.parse_print_options(["-t", "q", "--output-format"])
+    assert exc.value.code == _USAGE_EXIT
+
+
+_USAGE_EXIT = 2  # SystemExit code the launcher uses for usage errors
+_STUB_COST = 0.01
+_STUB_CALLS = 3
+
+
+def _submitted_traj(result: str) -> dict[str, object]:
+    return {
+        "info": {
+            "exit_status": "Submitted",
+            "submission": result,
+            "model_stats": {"instance_cost": _STUB_COST, "api_calls": _STUB_CALLS},
+        }
+    }
+
+
+def test_parse_result_returns_the_submission_on_a_clean_finish() -> None:
+    assert launcher.parse_result(_submitted_traj("6765")) == "6765"
+
+
+def test_parse_result_is_none_when_the_agent_never_submitted() -> None:
+    limited = {"info": {"exit_status": "LimitsExceeded", "submission": ""}}
+    assert launcher.parse_result(limited) is None
+    assert launcher.parse_result({}) is None  # no info block at all
+
+
+def test_summarize_run_pulls_result_cost_and_calls() -> None:
+    summary = launcher.summarize_run(_submitted_traj("42"), "/tmp/x.traj.json")
+    assert summary.result == "42"
+    assert summary.exit_status == "Submitted"
+    assert summary.cost == _STUB_COST
+    assert summary.api_calls == _STUB_CALLS
+    assert summary.trajectory == "/tmp/x.traj.json"
+
+
+def test_format_output_text_is_the_bare_answer() -> None:
+    summary = launcher.summarize_run(_submitted_traj("6765"), "/t.json")
+    assert launcher.format_output(summary, launcher.OutputFormat.TEXT) == "6765"
+
+
+def test_format_output_text_is_empty_when_no_answer() -> None:
+    summary = launcher.summarize_run({}, "/t.json")
+    assert launcher.format_output(summary, launcher.OutputFormat.TEXT) == ""
+
+
+def test_format_output_json_round_trips_with_expected_keys() -> None:
+    import json
+
+    summary = launcher.summarize_run(_submitted_traj("6765"), "/t.json")
+    payload = json.loads(launcher.format_output(summary, launcher.OutputFormat.JSON))
+    assert payload["result"] == "6765"
+    assert payload["exit_status"] == "Submitted"
+    assert payload == {
+        "result": "6765",
+        "exit_status": "Submitted",
+        "cost": _STUB_COST,
+        "api_calls": _STUB_CALLS,
+        "trajectory": "/t.json",
+    }
+
+
+def test_format_output_json_result_is_null_on_no_answer() -> None:
+    import json
+
+    summary = launcher.summarize_run({}, "/t.json")
+    payload = json.loads(launcher.format_output(summary, launcher.OutputFormat.JSON))
+    assert payload["result"] is None
+
+
+def test_main_print_mode_emits_only_the_answer_to_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    monkeypatch.setenv("GRIM_TRAJ_DIR", str(tmp_path))
+    import minisweagent.run.mini as minirun
+
+    # A stub mini that "runs" by printing UI to stdout and writing a trajectory
+    # with a clean submission — exactly the shape run_print must handle.
+    def fake_app(args: list[str], standalone_mode: bool) -> None:
+        print("=== noisy mini UI that must NOT reach real stdout ===")
+        traj = args[args.index("-o") + 1]
+        Path(traj).write_text(
+            '{"info": {"exit_status": "Submitted", "submission": "6765",'
+            ' "model_stats": {"instance_cost": 0.0, "api_calls": 2}}}'
+        )
+
+    monkeypatch.setattr(minirun, "app", fake_app)
+
+    rc = launcher.main(["-p", "compute fib(20)", "-m", "test/model"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert out.strip() == "6765"  # ONLY the answer — mini's UI went to stderr
+    assert "noisy mini UI" not in out
