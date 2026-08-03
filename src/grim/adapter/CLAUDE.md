@@ -62,6 +62,13 @@ D6 revised → native tool-calling).
   TTY. Completion-only — the `!`-execute affordance is a deferred Phase 2. The
   completed text is a plain mention; `grimoire.yaml` tells the agent what
   `@slug`/`:slug` (a script) vs `@path` (a file) mean.
+- `launcher.py` — `main()`, the `grim-agent` console-script entry (the
+  installable yolo harness). Parses grim's own flags — `-p`/`--print` and
+  `--output-format text|json` for a clean, pipeable one-shot (mini's UI to
+  stderr, only the final `submit` result to stdout, `--exit-immediately`
+  forced) — then hands the remaining argv to mini's Typer app in-process.
+  `parse_result`/`summarize_run`/`format_output` are pure helpers over mini's
+  trajectory `info` block, unit-tested without a model.
 
 ## Invariants
 - The model may only call the tools in `GRIM_TOOLS`; `GrimToolcallModel`
@@ -75,3 +82,6 @@ D6 revised → native tool-calling).
   through here.
 - No new shell/subprocess call is ever added to this slice — that would
   reopen exactly the bypass D7 exists to close.
+- `-p`/`--output-format` are the human launcher's flags only:
+  `parse_print_options` strips them from argv before dispatch, so the model's
+  argv (and the six-verb contract, D12) is never touched.

@@ -21,6 +21,8 @@ Design constraints honored here:
 from __future__ import annotations
 
 import contextlib
+import enum
+import json
 import os
 import sys
 import tempfile
@@ -66,6 +68,13 @@ piped/redirected run (containers, cron, CI) exits immediately instead.
 Common options:
   -m, --model MODEL    Model to use (falls back to $GRIM_MODEL).
   -t, --task TEXT      Task/problem statement (or pass it as the first arg).
+  -p, --print          One-shot programmatic mode: print only the agent's
+                       final answer to stdout (all UI to stderr), then exit
+                       without prompting. Ideal for pipes, scripts, and evals.
+      --output-format text|json
+                       With -p, pick the stdout shape — `text` (bare answer,
+                       default) or `json` ({result, exit_status, cost,
+                       api_calls, trajectory}). Implies -p.
   -l, --cost-limit N   Cost limit in USD; 0 disables.
   -o, --output PATH    Trajectory JSON (default: a fresh per-run file under
                        $GRIM_TRAJ_DIR or the system temp dir).
@@ -208,9 +217,212 @@ def build_mini_args(user_argv: list[str], spec: LaunchSpec) -> list[str]:
     return args
 
 
+# ---------------------------------------------------------------------------
+# Programmatic print mode (-p / --output-format). Gives a clean, pipeable
+# stdout — only the agent's final answer — by sending mini's interactive UI to
+# stderr and reading the result back out of the saved trajectory. This is what
+# makes grim-agent usable from a script, a pipe, or an eval Runner.
+# ---------------------------------------------------------------------------
+
+# mini stamps this into the trajectory's info.exit_status on a clean finish
+# (minisweagent/environments/local.py); anything else means "no answer."
+_SUBMITTED_STATUS = "Submitted"
+_PRINT_FLAGS = ("-p", "--print")
+_FORMAT_FLAG = "--output-format"
+
+
+class OutputFormat(enum.Enum):
+    """How `-p` renders the answer on stdout. An enum (not a bare string) so an
+    invalid value is rejected at the flag boundary rather than flowing inward
+    (CLAUDE.md §3, parse-don't-validate). Ref:
+    https://docs.python.org/3/library/enum.html#enum.Enum"""
+
+    TEXT = "text"
+    JSON = "json"
+
+
+class PrintOptions(NamedTuple):
+    """The print flags after they've been split out of argv."""
+
+    enabled: bool
+    output_format: OutputFormat
+
+
+class RunSummary(NamedTuple):
+    """A run's gradeable outcome, read from mini's trajectory `info` block
+    (minisweagent/agents/default.py:serialize)."""
+
+    result: str | None  # None when the agent never submitted (limit/error)
+    exit_status: str
+    cost: float
+    api_calls: int
+    trajectory: str
+
+
+def _output_format(value: str) -> OutputFormat:
+    """Parse a `--output-format` value into the enum, failing loud (SystemExit
+    2, the launcher's usage-error convention) on anything unrecognised."""
+    assert isinstance(value, str), "format value must be a string"
+    try:
+        return OutputFormat(value)
+    except ValueError:
+        choices = "|".join(fmt.value for fmt in OutputFormat)
+        print(f"grim-agent: invalid {_FORMAT_FLAG} '{value}' (want {choices})", file=sys.stderr)
+        raise SystemExit(2) from None
+
+
+def _consume_format(argv: list[str], i: int) -> tuple[OutputFormat, int]:
+    """Resolve the format value at index `i`, joined (`--output-format=json`)
+    or spaced (`--output-format json`). Returns the format and the index of the
+    last token consumed."""
+    assert 0 <= i < len(argv), "index must point at the format flag"
+    token = argv[i]
+    if "=" in token:
+        return _output_format(token.split("=", 1)[1]), i
+    if i + 1 >= len(argv):
+        print(f"grim-agent: {_FORMAT_FLAG} needs a value (text|json)", file=sys.stderr)
+        raise SystemExit(2)
+    return _output_format(argv[i + 1]), i + 1
+
+
+def parse_print_options(argv: list[str]) -> tuple[PrintOptions, list[str]]:
+    """Split grim-only print flags out of `argv`, returning the parsed options
+    plus the argv that should still forward to mini. `--output-format` implies
+    `-p`. The six-verb agent contract is untouched: these flags are the human
+    launcher's, never forwarded to (or seen by) the model."""
+    assert isinstance(argv, list), "argv must be a list"
+    enabled = False
+    fmt = OutputFormat.TEXT
+    rest: list[str] = []
+    i = 0
+    while i < len(argv):  # bounded: fixed-length argv, i strictly increases
+        token = argv[i]
+        if token in _PRINT_FLAGS:
+            enabled = True
+        elif token == _FORMAT_FLAG or token.startswith(_FORMAT_FLAG + "="):
+            enabled = True
+            fmt, i = _consume_format(argv, i)
+        else:
+            rest.append(token)
+        i += 1
+    assert isinstance(fmt, OutputFormat), "format resolves to the enum"
+    return PrintOptions(enabled=enabled, output_format=fmt), rest
+
+
+def parse_result(trajectory: dict[str, Any]) -> str | None:
+    """The agent's submitted answer, or None if it never finished cleanly.
+    Gated on info.exit_status so a limit/error run reports *no* answer rather
+    than an empty string that would look like a real (blank) response."""
+    assert isinstance(trajectory, dict), "trajectory must be a dict"
+    info = trajectory.get("info", {})
+    if info.get("exit_status") == _SUBMITTED_STATUS:
+        submission = info.get("submission")
+        if isinstance(submission, str):
+            return submission
+    return None
+
+
+def summarize_run(trajectory: dict[str, Any], trajectory_path: str) -> RunSummary:
+    """Fold a mini trajectory dict into the RunSummary the print modes emit."""
+    assert isinstance(trajectory, dict), "trajectory must be a dict"
+    assert trajectory_path, "a trajectory path is required"
+    info = trajectory.get("info", {})
+    stats = info.get("model_stats", {})
+    return RunSummary(
+        result=parse_result(trajectory),
+        exit_status=str(info.get("exit_status", "")),
+        cost=float(stats.get("instance_cost", 0.0) or 0.0),
+        api_calls=int(stats.get("api_calls", 0) or 0),
+        trajectory=trajectory_path,
+    )
+
+
+def format_output(summary: RunSummary, output_format: OutputFormat) -> str:
+    """Render the answer for stdout. `text` is the bare result (empty when the
+    agent gave none); `json` is a one-line envelope safe to pipe into `jq`."""
+    assert isinstance(summary, RunSummary), "summary must be a RunSummary"
+    assert isinstance(output_format, OutputFormat), "output_format must be the enum"
+    if output_format is OutputFormat.TEXT:
+        return summary.result or ""
+    return json.dumps(
+        {
+            "result": summary.result,
+            "exit_status": summary.exit_status,
+            "cost": summary.cost,
+            "api_calls": summary.api_calls,
+            "trajectory": summary.trajectory,
+        }
+    )
+
+
+def _read_trajectory(path: str) -> dict[str, Any]:
+    """Load a mini trajectory JSON, or an empty dict when it is missing or
+    unreadable — a run that died before writing one still yields a (no-answer)
+    summary instead of a traceback (VALIDATE external input, §3)."""
+    assert path, "trajectory path required"
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def run_print(
+    app: Any, mini_args: list[str], trajectory_path: str, output_format: OutputFormat
+) -> int:
+    """Drive mini with its whole UI redirected to stderr, then write ONLY the
+    final answer to real stdout in `output_format`. Returns a shell exit code:
+    0 on a clean submission, nonzero otherwise, so a batch caller (the eval
+    Runner) treats a no-answer run as a failure."""
+    assert app is not None, "mini app required"
+    assert "--exit-immediately" in mini_args, "print mode must run unattended"
+    code = 0
+    # rich resolves sys.stdout live, so this redirect captures mini's console UI
+    # too. Ref: https://docs.python.org/3/library/contextlib.html#contextlib.redirect_stdout
+    with contextlib.redirect_stdout(sys.stderr):
+        try:
+            app(args=mini_args, standalone_mode=False)
+        except SystemExit as exc:  # usage errors still raise SystemExit
+            code = _exit_code(exc)
+    summary = summarize_run(_read_trajectory(trajectory_path), trajectory_path)
+    sys.stdout.write(format_output(summary, output_format) + "\n")
+    return 0 if summary.exit_status == _SUBMITTED_STATUS else (code or 1)
+
+
+def _launch(app: Any, raw: list[str], print_opts: PrintOptions) -> int:
+    """Build mini's argv and run the agent — in print mode (clean stdout) or
+    mini's normal interactive path. Split from main() so each stays within the
+    function-length budget."""
+    assert app is not None, "mini app required"
+    assert isinstance(raw, list), "argv must be a list"
+    # Attended at a terminal; unattended when stdin is piped/redirected OR the
+    # human asked for print mode (which must never block on a prompt). Ref:
+    # https://docs.python.org/3/library/io.html#io.IOBase.isatty
+    interactive = sys.stdin.isatty() and not print_opts.enabled
+    spec = LaunchSpec(
+        config=_config_path(),
+        trajectory=_trajectory_path(),
+        model_default=os.environ.get("GRIM_MODEL"),
+        interactive=interactive,
+        cost_default=os.environ.get("GRIM_COST_LIMIT"),
+        step_default=os.environ.get("GRIM_STEP_LIMIT"),
+    )
+    mini_args = build_mini_args(raw, spec)
+    if print_opts.enabled:
+        return run_print(app, mini_args, spec.trajectory, print_opts.output_format)
+    try:
+        # Typer app.__call__ -> click main(args=..., standalone_mode=False):
+        # returns instead of sys.exit, so real errors propagate (fail loud).
+        app(args=mini_args, standalone_mode=False)
+    except SystemExit as exc:  # usage errors still raise SystemExit
+        return _exit_code(exc)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Console-script entry (pyproject `grim-agent`). Init the library, then
-    hand off to mini's loop in-process."""
+    """Console-script entry (pyproject `grim-agent`). Parse grim's own flags,
+    init the library, then hand off to mini's loop in-process."""
     raw = list(sys.argv[1:] if argv is None else argv)
     assert isinstance(raw, list), "argv must resolve to a list"
 
@@ -219,6 +431,10 @@ def main(argv: list[str] | None = None) -> int:
     if _has_token(raw, "-h", "--help"):
         print(_GRIM_HELP)
         return 0
+
+    # Split grim-only print flags (-p / --output-format) out up front; the
+    # remainder forwards to mini, and a bad --output-format value fails here.
+    print_opts, raw = parse_print_options(raw)
 
     # Silence mini's import-time version/migration/config banner (guarded by
     # this env var in minisweagent/__init__.py); we print our own instead.
@@ -238,7 +454,10 @@ def main(argv: list[str] | None = None) -> int:
     if _has_token(raw, "--mini-help"):
         return _run_help_app(app)
 
-    print(_GRIM_BANNER, file=sys.stderr)  # concise, stdout stays clean for the answer
+    # Print mode keeps stdout clean for the answer, so the banner is withheld;
+    # an interactive run still gets it (on stderr, so stdout stays clean too).
+    if not print_opts.enabled:
+        print(_GRIM_BANNER, file=sys.stderr)
 
     # Idempotent migrate + seed via the kernel CLI. Its progress lines go to
     # stderr so stdout stays clean for the agent's final answer.
@@ -250,24 +469,4 @@ def main(argv: list[str] | None = None) -> int:
 
     # $GRIM_MODEL supplies the model when the user didn't pass -m, matching the
     # container entrypoint and giving `export GRIM_MODEL=…; grim-agent "task"`.
-    # Attended at a terminal; unattended when stdin is piped/redirected
-    # (containers, cron, CI). Ref:
-    # https://docs.python.org/3/library/io.html#io.IOBase.isatty
-    mini_args = build_mini_args(
-        raw,
-        LaunchSpec(
-            config=_config_path(),
-            trajectory=_trajectory_path(),
-            model_default=os.environ.get("GRIM_MODEL"),
-            interactive=sys.stdin.isatty(),
-            cost_default=os.environ.get("GRIM_COST_LIMIT"),
-            step_default=os.environ.get("GRIM_STEP_LIMIT"),
-        ),
-    )
-    try:
-        # Typer app.__call__ -> click main(args=..., standalone_mode=False):
-        # returns instead of sys.exit, so real errors propagate (fail loud).
-        app(args=mini_args, standalone_mode=False)
-    except SystemExit as exc:  # usage errors still raise SystemExit
-        return _exit_code(exc)
-    return 0
+    return _launch(app, raw, print_opts)
