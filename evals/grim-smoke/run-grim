@@ -27,15 +27,14 @@ export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run ar
 # Left unquoted on purpose so a multi-word command word-splits; this is a
 # launcher, not grim's control plane (so the no-shell invariant does not apply).
 #
-# `--exit-immediately` is load-bearing, not optional: grim-agent's launcher
-# otherwise picks attended vs unattended from `sys.stdin.isatty()`, and under
-# smevals the Runner inherits the terminal's stdin (a TTY) — so without this it
-# runs ATTENDED and blocks forever on mini's post-`submit` "enter a follow-up
-# task" prompt. Passing the flag explicitly forces mini's confirm_exit=False
-# (the launcher forwards it through), so a batch run always exits cleanly
-# regardless of whether stdin happens to be a TTY.
+# `-p` (print mode) is load-bearing, not optional. It does two things a batch
+# run needs: (1) emits ONLY the agent's final answer on stdout — mini's whole
+# UI transcript goes to stderr (captured as the Run's stderr.txt) — so
+# output.txt is the answer the Grader checks, not KBs of transcript; and (2)
+# runs unattended (it implies --exit-immediately), so it never blocks on mini's
+# post-`submit` follow-up prompt even though smevals leaves stdin a TTY.
 # shellcheck disable=SC2086
-out="$(${GRIM_AGENT_CMD:-grim-agent} -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT" --exit-immediately)"
+out="$(${GRIM_AGENT_CMD:-grim-agent} -p -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT")"
 ec=$?
 
 printf '%s\n' "$out"
