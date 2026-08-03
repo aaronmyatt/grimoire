@@ -1,0 +1,5 @@
+name: reverse-string
+prompt: >-
+  Reverse the string "grimoire" and reply with only the reversed string —
+  no quotes, no spaces, nothing else.
+expected: eriomirg

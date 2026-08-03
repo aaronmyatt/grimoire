@@ -1,0 +1,5 @@
+name: fib-large
+prompt: >-
+  Compute the 20th Fibonacci number, counting from F(1)=1, F(2)=1.
+  Reply with only that integer and nothing else.
+expected: "6765"

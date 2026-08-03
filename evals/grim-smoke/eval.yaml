@@ -1,0 +1,7 @@
+name: grim-smoke
+description: >-
+  Smoke eval for the grim-agent harness: deterministic, judge-free tasks that
+  prove the smevals Runner drives grim-agent end-to-end (Phase 8 scaffolding).
+  The two Fibonacci tasks double as a compounding probe — in warm mode
+  (GRIM_EVAL_DB set) the agent can write a script on fib-small and then
+  find+reuse it on fib-large, so reuse shows up in the shared library.

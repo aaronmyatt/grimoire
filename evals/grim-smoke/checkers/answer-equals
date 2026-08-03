@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""smevals Checker: pass iff the Run's trimmed output.txt equals the task's
+`expected` value (exact match after stripping surrounding whitespace).
+
+This is also the template the SWE-bench eval (Phase 8, next task) will follow —
+a custom Checker that inspects a Run and emits a Grade. Contract: env in, one
+JSON object on stdout, exit 0 = pass / 1 = fail (2 here = config error).
+Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+  - SMEVALS_RUN_DIR        absolute Run dir; the model's response is output.txt
+  - SMEVALS_TASK_EXPECTED  the task's `expected:` key, uppercased per contract
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import sys
+
+
+def main() -> int:
+    run_dir = os.environ.get("SMEVALS_RUN_DIR")
+    expected = os.environ.get("SMEVALS_TASK_EXPECTED")
+    # VALIDATE external/config input (constitution §3): a missing Run dir or
+    # `expected` is a harness/config bug, not a model miss — exit 2 so it is
+    # distinguishable from an honest wrong answer (exit 1).
+    if not run_dir or expected is None:
+        print("answer-equals: SMEVALS_RUN_DIR and task `expected` are required", file=sys.stderr)
+        return 2
+
+    output_path = pathlib.Path(run_dir) / "output.txt"
+    actual = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
+    want = expected.strip()
+    assert isinstance(actual, str), "output.txt read must yield a string"
+
+    passed = actual == want
+    assert isinstance(passed, bool), "match result must be a bool"
+
+    # smevals reads `score` for the Grade; metrics/notes are recorded alongside.
+    print(
+        json.dumps(
+            {
+                "score": 1.0 if passed else 0.0,
+                "metrics": {"output_chars": len(actual)},
+                "notes": "exact match" if passed else f"expected {want!r}, got {actual!r}",
+            }
+        )
+    )
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

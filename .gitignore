@@ -9,3 +9,9 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# smevals writes Run records here; eval-scoped grimoire libraries are throwaway
+evals/**/runs/
+evals/**/*.db
+evals/**/*.db-wal
+evals/**/*.db-shm

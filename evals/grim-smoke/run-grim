@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# smevals Runner for the grim-agent harness. Contract: all inputs arrive as
+# environment variables, the model's final answer goes to stdout, and a
+# non-zero exit marks the Run failed (reserve that for infra faults only).
+# Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+#
+# DB isolation is both this experiment's core variable AND a hard safety rule:
+# GRIM_DB is ALWAYS set explicitly, so an eval never reads or writes the
+# operator's real ~/.grimoire library. Precedence:
+#   1. SMEVALS_TASK_GRIM_DB  per-task path   → group tasks (e.g. one DB per repo)
+#   2. GRIM_EVAL_DB          operator export → WARM: one shared DB accumulates
+#                            across tasks — the compounding condition
+#   3. (neither set)         COLD: a fresh DB under the Run dir — the control
+set -uo pipefail
+
+: "${SMEVALS_MODEL:?run-grim: SMEVALS_MODEL is required}"
+: "${SMEVALS_PROMPT:?run-grim: SMEVALS_PROMPT is required (the task needs a prompt)}"
+: "${SMEVALS_RUN_DIR:?run-grim: SMEVALS_RUN_DIR is required}"
+
+export GRIM_DB="${SMEVALS_TASK_GRIM_DB:-${GRIM_EVAL_DB:-$SMEVALS_RUN_DIR/grimoire.db}}"
+export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run artifact
+
+# grim-agent prints its final answer to stdout and its banner/log to stderr
+# (src/grim/adapter/launcher.py), so capturing stdout yields the clean answer.
+# Override the launch command via GRIM_AGENT_CMD when grim isn't on PATH, e.g.
+#   export GRIM_AGENT_CMD="uv run --project /path/to/grimoire grim-agent"
+# Left unquoted on purpose so a multi-word command word-splits; this is a
+# launcher, not grim's control plane (so the no-shell invariant does not apply).
+#
+# `--exit-immediately` is load-bearing, not optional: grim-agent's launcher
+# otherwise picks attended vs unattended from `sys.stdin.isatty()`, and under
+# smevals the Runner inherits the terminal's stdin (a TTY) — so without this it
+# runs ATTENDED and blocks forever on mini's post-`submit` "enter a follow-up
+# task" prompt. Passing the flag explicitly forces mini's confirm_exit=False
+# (the launcher forwards it through), so a batch run always exits cleanly
+# regardless of whether stdin happens to be a TTY.
+# shellcheck disable=SC2086
+out="$(${GRIM_AGENT_CMD:-grim-agent} -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT" --exit-immediately)"
+ec=$?
+
+printf '%s\n' "$out"
+
+# smevals: exit non-zero ONLY for infrastructure failure; exit 0 for any real
+# (even wrong) model response so the Grader decides pass/fail. exit 2 is grim's
+# missing 'agent' extra (launcher.MISSING_EXTRA_EXIT_CODE); empty output means
+# the harness produced no answer at all. Both are infra faults.
+if [ "$ec" -eq 2 ] || [ -z "${out//[[:space:]]/}" ]; then
+  echo "run-grim: grim-agent produced no answer (exit $ec) — infra failure" >&2
+  exit 1
+fi
+exit 0

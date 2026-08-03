@@ -1,0 +1,8 @@
+name: default
+# One required check: the trimmed answer must equal the task's `expected`.
+# Grader schema: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+checks:
+  - checker: ../checkers/answer-equals
+    required: true
+scoring:
+  pass_threshold: 1.0
