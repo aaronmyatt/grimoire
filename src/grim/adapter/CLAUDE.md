@@ -55,6 +55,13 @@ D6 revised → native tool-calling).
   part of the `execute()` control plane the invariants below govern.
   Bypass it and call `uv run mini -c grimoire.yaml ...` directly for
   mini's stock single-fixed-file output behavior instead.
+- `completer.py` — `GrimCompleter` + `install_grim_completer()`. Attaches a
+  prompt_toolkit completer to mini's own prompt sessions (no fork) so a human
+  gets `@name` (library scripts + files) and `:name` (scripts only) completion
+  while composing input. `GrimAgent.run` installs it; it's a no-op without a
+  TTY. Completion-only — the `!`-execute affordance is a deferred Phase 2. The
+  completed text is a plain mention; `grimoire.yaml` tells the agent what
+  `@slug`/`:slug` (a script) vs `@path` (a file) mean.
 
 ## Invariants
 - The model may only call the tools in `GRIM_TOOLS`; `GrimToolcallModel`

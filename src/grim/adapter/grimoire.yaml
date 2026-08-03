@@ -46,6 +46,10 @@ agent:
     never-exiting process at the timeout. Start those with run_bg (its output
     is logged to a file), then use list_bg to check on them and stop_bg to end
     them. A one-shot task that simply takes a while is fine as a normal run.
+
+    When the human's message contains @name or :name, that names a script in
+    your library — read it, then run or reuse it. @path (a token with a slash
+    or a file extension) names a file — read it with read_file.
     {%- if grim_strong_matches is defined and grim_strong_matches %}
 
     An automatic search against this task's own wording found these as

@@ -18,6 +18,7 @@ from pathlib import Path
 from minisweagent.agents.interactive import InteractiveAgent
 
 from grim import db
+from grim.adapter.completer import install_grim_completer
 
 # Operator-authored system-prompt extension, the agent-harness analogue of a
 # global ~/.claude or ~/.pi instruction file. Lives under grim's home dir (the
@@ -98,4 +99,6 @@ class GrimAgent(InteractiveAgent):
     def run(self, task: str = "", **kwargs: object) -> dict[str, object]:
         self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
         self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
+        # Enable @/: completion on mini's prompt sessions (no-op without a TTY).
+        install_grim_completer()
         return super().run(task, **kwargs)
