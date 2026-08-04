@@ -1,0 +1,5 @@
+name: default
+runner: ../run-grim
+# The model comes from `smevals run -m <model>`. Add a `model:` line here only
+# if you want a fixed default when -m is omitted.
+# Runner contract: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)

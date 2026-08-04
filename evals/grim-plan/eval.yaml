@@ -1,0 +1,12 @@
+name: grim-plan
+description: >-
+  Planning eval for the grim-agent harness: cherry-picked NaturalPlan trip and
+  calendar tasks (Google DeepMind, data CC-BY-4.0) and PlanBench Blocksworld +
+  Mystery Blocksworld plan-generation instances (MIT) — see VENDORED.md. Trip
+  and calendar grade by the suites' own deterministic parsers; blocksworld and
+  mystery grade by STRIPS plan VALIDATION, so any valid plan passes. Difficulty
+  runs from a 3-city trip and a 2-step stack (most models pass) to a 10-city
+  trip and Mystery Blocksworld (frontier models mostly fail) — this is the
+  model-separation suite. It is also the compounding probe: in warm mode the
+  agent can bank a blocksworld solver on the easy instance and reuse it on the
+  16-step and Mystery ones.

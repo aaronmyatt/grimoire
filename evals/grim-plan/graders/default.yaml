@@ -1,0 +1,9 @@
+name: default
+# One required check: plan-grade dispatches on the task's `kind:` key
+# (trip | calendar | blocksworld | mystery).
+# Grader schema: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+checks:
+  - checker: ../checkers/plan-grade
+    required: true
+scoring:
+  pass_threshold: 1.0

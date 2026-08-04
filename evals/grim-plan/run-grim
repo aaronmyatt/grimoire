@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# smevals Runner for grim-agent PLANNING tasks (NaturalPlan + PlanBench picks).
+# Same contract as grim-smoke/run-grim: inputs via env, final answer on
+# stdout, non-zero exit reserved for infra faults. No workspace here — every
+# prompt is self-contained text; the agent may still write scratch scripts in
+# its cwd (the Run dir), and in warm mode may bank a solver in the library —
+# the blocksworld tasks are ordered easy → hard to reward exactly that.
+# Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+#
+# GRIM_DB is ALWAYS set explicitly so an eval never touches ~/.grimoire:
+#   1. SMEVALS_TASK_GRIM_DB  per-task path   → grouped tasks
+#   2. GRIM_EVAL_DB          operator export → WARM shared library
+#   3. (neither set)         COLD: fresh DB under the Run dir
+set -uo pipefail
+
+: "${SMEVALS_MODEL:?run-grim: SMEVALS_MODEL is required}"
+: "${SMEVALS_PROMPT:?run-grim: SMEVALS_PROMPT is required (the task needs a prompt)}"
+: "${SMEVALS_RUN_DIR:?run-grim: SMEVALS_RUN_DIR is required}"
+
+export GRIM_DB="${SMEVALS_TASK_GRIM_DB:-${GRIM_EVAL_DB:-$SMEVALS_RUN_DIR/grimoire.db}}"
+export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run artifact
+
+# Breadcrumbs go to stderr (captured as stderr.txt, tail -f-able) — stdout is
+# EXCLUSIVELY the answer channel: it becomes output.txt, which the Grader reads.
+if [ -n "${SMEVALS_TASK_GRIM_DB:-}" ]; then DB_MODE="grouped"
+elif [ -n "${GRIM_EVAL_DB:-}" ]; then DB_MODE="warm"
+else DB_MODE="cold"; fi
+echo "run-grim: task=$SMEVALS_TASK model=$SMEVALS_MODEL db=$DB_MODE ($GRIM_DB)" >&2
+
+# `-p` (print mode) is load-bearing: only the final answer reaches stdout and
+# the run never blocks on interactive follow-ups. See grim-smoke/run-grim.
+# GRIM_AGENT_CMD left unquoted on purpose so a multi-word command word-splits.
+# shellcheck disable=SC2086
+out="$(${GRIM_AGENT_CMD:-grim-agent} -p -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT")"
+ec=$?
+echo "run-grim: agent done exit=$ec answer_chars=${#out}" >&2
+
+printf '%s\n' "$out"
+
+# Exit non-zero ONLY for infrastructure failure; a wrong answer still exits 0
+# so the Grader decides. exit 2 is grim's missing 'agent' extra.
+if [ "$ec" -eq 2 ] || [ -z "${out//[[:space:]]/}" ]; then
+  echo "run-grim: grim-agent produced no answer (exit $ec) — infra failure" >&2
+  exit 1
+fi
+exit 0
