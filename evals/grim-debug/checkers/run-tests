@@ -40,6 +40,22 @@ def restore_pristine(files_dir: pathlib.Path, workspace: pathlib.Path, names: li
     return ""
 
 
+def count_traj_items(run_dir: pathlib.Path) -> int | None:
+    """Best-effort agent-step count from the Run's trajectory artifact
+    (grim-agent writes *.traj.json via GRIM_TRAJ_DIR; mini-swe-agent format,
+    steps under "messages"). None -> the metric is simply omitted."""
+    assert run_dir.is_dir(), "caller validates run_dir"
+    trajs = sorted(run_dir.glob("*.traj.json"))
+    if not trajs:
+        return None
+    try:
+        data = json.loads(trajs[-1].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    items = data if isinstance(data, list) else data.get("messages")
+    return len(items) if isinstance(items, list) else None
+
+
 def run_driver(workspace: pathlib.Path, timeout_s: int) -> tuple[int, str]:
     """Run run_tests.py in the workspace; return (exit_code, notes). -1 = timeout."""
     assert workspace.is_dir(), "caller validates workspace"
@@ -89,15 +105,11 @@ def main() -> int:
 
     exit_code, notes = run_driver(workspace, timeout_s)
     passed = exit_code == 0
-    print(
-        json.dumps(
-            {
-                "score": 1.0 if passed else 0.0,
-                "metrics": {"driver_exit": exit_code, "timed_out": exit_code == -1},
-                "notes": notes,
-            }
-        )
-    )
+    metrics: dict[str, int | bool] = {"driver_exit": exit_code, "timed_out": exit_code == -1}
+    traj_items = count_traj_items(pathlib.Path(run_dir))
+    if traj_items is not None:
+        metrics["traj_items"] = traj_items
+    print(json.dumps({"score": 1.0 if passed else 0.0, "metrics": metrics, "notes": notes}))
     return 0 if passed else 1
 
 
