@@ -24,9 +24,11 @@ def connect() -> sqlite3.Connection:
 
 def resolve_script_version(conn: sqlite3.Connection, name: str, version: int | None) -> sqlite3.Row:
     """Fetch script_version joined with script; latest when version is
-    None. Raises LookupError if missing — external input, not an assert."""
+    None. Raises LookupError if missing — external input, not an assert.
+    Includes sv.changelog (verbs/_shared.py's copy doesn't need it; edit.py
+    and its tests read the changelog back after persisting)."""
     query = (
-        "SELECT sv.id, sv.script_id, sv.version, sv.body, sv.body_hash, "
+        "SELECT sv.id, sv.script_id, sv.version, sv.body, sv.body_hash, sv.changelog, "
         "s.name, s.language, s.description "
         "FROM script_version sv JOIN script s ON s.id = sv.script_id WHERE s.name = ?"
     )

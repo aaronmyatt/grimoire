@@ -15,18 +15,31 @@ by `src/grim/cli.py`:
   NAME, read from the emergent `script_affinity` view (both directions).
 - `recent.py` — `grim recent`: the library by last-run time, from
   `script_health`.
+- `edit.py` — `grim edit NAME`: round-trips the script's body through
+  `$EDITOR` (a real subprocess with inherited stdio, not `_invoke`'s
+  captured dispatch — a genuine interactive session whether launched from
+  a real shell or from `grim-agent`'s `/edit` slash command). On change,
+  resolves a changelog (`--changelog` override -> AI one-liner, lazily
+  calling `litellm` only if the optional `agent` extra is installed and a
+  model is configured -> one manual prompt -> a generic fallback — never
+  blocking or crashing) and persists a new `script_version`, duplicating
+  `verbs/update.py`'s lint-then-insert logic rather than importing it.
 
-`_shared.py` (a `connect()` with `row_factory` set) is internal, not
-public surface.
+`_shared.py` (`connect()`, `resolve_script_version()`, `lint()`,
+`body_hash()`) is internal, not public surface — deliberate copies of
+`verbs/_shared.py`'s equivalents.
 
 ## Invariants
 - **Never wired into `adapter/tools.py::GRIM_TOOLS`.** That omission is
   what keeps this slice human-only — the agent cannot call anything here.
   Adding a curate command to `GRIM_TOOLS` would silently widen the
-  load-bearing six-verb fence and is out of bounds.
+  load-bearing six-verb fence and is out of bounds. This is why `edit.py`
+  can safely call an LLM directly (unlike the six agent verbs) — no
+  autonomous loop can ever trigger it, only a human explicitly running
+  `grim edit` or typing `/edit` themselves.
 - Slices never import each other (root CLAUDE.md §2): curate does not
-  import `verbs/`. `_shared.connect()` is a deliberate copy of
-  `verbs/_shared.connect()`, not a shared-kernel promotion.
+  import `verbs/`. `_shared.py`'s helpers are deliberate copies of
+  `verbs/_shared.py`'s, not a shared-kernel promotion.
 - All DB access goes through `src/grim/db.py`; no module here opens its
   own SQLite connection directly.
 - External input (a script NAME) is validated, not asserted — an unknown
