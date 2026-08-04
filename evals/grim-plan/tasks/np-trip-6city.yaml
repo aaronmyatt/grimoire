@@ -1,0 +1,34 @@
+name: np-trip-6city
+kind: trip
+source_id: trip_planning_example_600
+cities: Stockholm**Riga**Istanbul**Lyon**Rome**Seville
+durations: 3**5**4**3**5**3
+prompt: 'You plan to visit 6 European cities for 18 days in total. You only take direct flights to commute
+  between cities. You would like to visit Lyon for 3 days. You want to spend 3 days in Stockholm. You
+  would like to visit Seville for 3 days. You want to meet a friend in Seville between day 16 and day
+  18. You would like to visit Riga for 5 days. You are going to attend a wedding in Riga between day 3
+  and day 7. You would like to visit Rome for 5 days. You plan to stay in Istanbul for 4 days.
+
+
+  Here are the cities that have direct flights:
+
+  Stockholm and Riga, Rome and Seville, Stockholm and Rome, from Rome to Riga, Riga and Istanbul, Istanbul
+  and Lyon, Lyon and Rome, Stockholm and Istanbul, Istanbul and Rome.
+
+
+  Find a trip plan of visiting the cities for 18 days by taking direct flights to commute between them.
+
+
+  Format your final answer exactly like this example, one line per stay and one per flight:
+
+  Here is the trip plan for visiting the 3 European cities for 12 days:
+
+  **Day 1-5:** Arriving in Venice and visit Venice for 5 days.
+
+  **Day 5:** Fly from Venice to Vienna.
+
+  **Day 5-9:** Visit Vienna for 5 days.
+
+  **Day 9:** Fly from Vienna to Prague.
+
+  **Day 9-12:** Visit Prague for 4 days.'

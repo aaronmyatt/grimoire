@@ -1,0 +1,32 @@
+name: np-trip-3city
+kind: trip
+source_id: trip_planning_example_0
+cities: Helsinki**Barcelona**Florence
+durations: 5**5**6
+prompt: 'You plan to visit 3 European cities for 14 days in total. You only take direct flights to commute
+  between cities. You would like to visit Florence for 6 days. You want to meet a friend in Florence between
+  day 9 and day 14. You would like to visit Barcelona for 5 days. You would like to visit Helsinki for
+  5 days.
+
+
+  Here are the cities that have direct flights:
+
+  Barcelona and Florence, Helsinki and Barcelona.
+
+
+  Find a trip plan of visiting the cities for 14 days by taking direct flights to commute between them.
+
+
+  Format your final answer exactly like this example, one line per stay and one per flight:
+
+  Here is the trip plan for visiting the 3 European cities for 12 days:
+
+  **Day 1-5:** Arriving in Venice and visit Venice for 5 days.
+
+  **Day 5:** Fly from Venice to Vienna.
+
+  **Day 5-9:** Visit Vienna for 5 days.
+
+  **Day 9:** Fly from Vienna to Prague.
+
+  **Day 9-12:** Visit Prague for 4 days.'

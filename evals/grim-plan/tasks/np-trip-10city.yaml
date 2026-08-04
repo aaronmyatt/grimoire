@@ -1,0 +1,40 @@
+name: np-trip-10city
+kind: trip
+source_id: trip_planning_example_1400
+cities: Dubrovnik**Manchester**Nice**Reykjavik**Stuttgart**Berlin**Vilnius**Oslo**Prague**Florence
+durations: 4**3**2**2**5**4**5**4**2**3
+prompt: 'You plan to visit 10 European cities for 25 days in total. You only take direct flights to commute
+  between cities. You plan to stay in Berlin for 4 days. You have to attend a workshop in Berlin between
+  day 12 and day 15. You would like to visit Prague for 2 days. You plan to stay in Stuttgart for 5 days.
+  You would like to visit Manchester for 3 days. You want to spend 2 days in Nice. You would like to visit
+  Reykjavik for 2 days. You would like to visit Florence for 3 days. You plan to stay in Vilnius for 5
+  days. You would like to meet your friends at Vilnius between day 15 and day 19 to tour together. You
+  plan to stay in Oslo for 4 days. You would like to visit Dubrovnik for 4 days. You plan to visit relatives
+  in Dubrovnik between day 1 and day 4.
+
+
+  Here are the cities that have direct flights:
+
+  from Reykjavik to Stuttgart, Manchester and Stuttgart, Nice and Berlin, Oslo and Prague, Stuttgart and
+  Berlin, Manchester and Nice, Reykjavik and Oslo, Reykjavik and Prague, Manchester and Prague, Reykjavik
+  and Berlin, Dubrovnik and Manchester, Manchester and Oslo, Manchester and Berlin, Prague and Florence,
+  Berlin and Vilnius, Dubrovnik and Oslo, Nice and Oslo, Berlin and Oslo, Nice and Reykjavik, Vilnius
+  and Oslo.
+
+
+  Find a trip plan of visiting the cities for 25 days by taking direct flights to commute between them.
+
+
+  Format your final answer exactly like this example, one line per stay and one per flight:
+
+  Here is the trip plan for visiting the 3 European cities for 12 days:
+
+  **Day 1-5:** Arriving in Venice and visit Venice for 5 days.
+
+  **Day 5:** Fly from Venice to Vienna.
+
+  **Day 5-9:** Visit Vienna for 5 days.
+
+  **Day 9:** Fly from Vienna to Prague.
+
+  **Day 9-12:** Visit Prague for 4 days.'
