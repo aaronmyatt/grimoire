@@ -370,3 +370,52 @@ def test_run_new_session_clears_history_and_rotates_session_id(
     assert result["submission"] == "second done"
     assert env.session_id != "before-new"  # a fresh session_id was minted
     assert agent.messages[1]["content"] == "second task"  # history cleared, not appended
+
+
+# --- add_messages rich rendering (display.py) --------------------------------
+
+
+def test_add_messages_renders_submit_as_markdown(capsys: pytest.CaptureFixture[str]) -> None:
+    agent = _grim_agent([], "sess-render-submit")
+    message = {
+        "role": "assistant",
+        "content": "Everything is in place.",
+        "tool_calls": [{"function": {"name": "submit", "arguments": '{"result": "# Done"}'}}],
+        "extra": {"actions": [_act("submit", {"result": "# Done\n\n- item one"})]},
+    }
+
+    agent.add_messages(message)
+
+    out = capsys.readouterr().out
+    assert "Everything is in place." in out
+    assert "Done" in out
+    assert "item one" in out
+    assert '{"result"' not in out
+    assert agent.messages[-1] is message, "history holds the verbatim dict, tool_calls intact"
+
+
+def test_add_messages_renders_verb_command_line(capsys: pytest.CaptureFixture[str]) -> None:
+    agent = _grim_agent([], "sess-render-verb")
+    message = {
+        "role": "assistant",
+        "content": None,
+        "extra": {"actions": [_act("find", {"query": "dad jokes"})]},
+    }
+
+    agent.add_messages(message)
+
+    out = capsys.readouterr().out
+    assert "grim find 'dad jokes'" in out
+    assert '{"query"' not in out
+
+
+def test_add_messages_default_path_for_other_roles(capsys: pytest.CaptureFixture[str]) -> None:
+    agent = _grim_agent([], "sess-render-tool")
+    message = {"role": "tool", "content": "observation text"}
+
+    agent.add_messages(message)
+
+    out = capsys.readouterr().out
+    assert "Tool" in out, "mini's default header still renders non-assistant roles"
+    assert "observation text" in out
+    assert agent.messages[-1] is message

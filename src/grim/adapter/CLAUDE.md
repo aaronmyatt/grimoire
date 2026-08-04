@@ -61,7 +61,18 @@ D6 revised → native tool-calling).
   over `InteractiveAgent.run()` (rather than looping inside it) so `/new` can
   break all the way out via an exit-flavored `UserInterruption` and restart
   cleanly with a rotated `env.session_id`, instead of resetting state
-  mid-flow.
+  mid-flow. `GrimAgent` also overrides `add_messages` to render grim tool
+  calls via `display.py` (submit → Markdown, verbs → their `render_command`
+  line) instead of mini's raw-JSON fence; history is appended verbatim
+  through `DefaultAgent.add_messages` — only the console rendering changes.
+- `display.py` — pure renderable helpers for `add_messages`:
+  `grim_actions(message)` (validated `{tool, args, command}` actions or
+  None → mini's default rendering), `submit_result`, `reasoning_text`
+  (content minus `tool_calls`, so the raw-JSON fallback is never reached),
+  `body_lexer`, and `action_renderables` (submit → `Rule` + `Markdown`;
+  data verbs → escaped `$ grim …` line + a `BODY_PREVIEW_LINES`-capped
+  `Syntax` body preview for write/update). Display only — actions,
+  confirm-mode matching, and the trajectory are untouched.
 - `slash.py` — `GRIM_CLI_VERBS` (a small, intentional duplicate of
   `cli.py`'s subcommand names — `init`/`config`/`doctor`/`near`/`recent`/
   `edit`/`tag`/`untag`/`tags`/`tagged`/`favourite`/`unfavourite`/

@@ -24,6 +24,7 @@ from minisweagent.exceptions import UserInterruption
 from grim import db
 from grim.adapter.bang import install_bang_expansion
 from grim.adapter.completer import install_grim_completer
+from grim.adapter.display import action_renderables, grim_actions, reasoning_text
 from grim.adapter.environment import GrimEnvironment
 from grim.adapter.slash import GRIM_CLI_VERBS, run_slash_command
 
@@ -218,6 +219,44 @@ class GrimAgent(InteractiveAgent):
         env = self.env
         assert isinstance(env, GrimEnvironment), "GrimAgent always runs with GrimEnvironment"
         return env
+
+    def add_messages(self, *messages: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extend InteractiveAgent.add_messages: assistant turns carrying grim
+        actions render via display.py (submit -> Markdown, verbs -> their
+        render_command line) instead of mini's raw-JSON tool-call fence.
+        History is untouched: grim-rendered messages are appended verbatim via
+        DefaultAgent.add_messages, skipping ONLY InteractiveAgent's printing —
+        its add_messages does nothing but print, then delegate (interactive.py)."""
+        added: list[dict[str, Any]] = []
+        for message in messages:
+            actions = grim_actions(message)
+            if actions is None:
+                added += super().add_messages(message)
+            else:
+                self._print_grim_turn(message, actions)
+                added += super(InteractiveAgent, self).add_messages(message)
+        assert len(added) == len(messages), "every message is recorded exactly once"
+        assert self.messages[len(self.messages) - len(messages) :] == list(messages), (
+            "history holds the verbatim messages"
+        )
+        return added
+
+    def _print_grim_turn(self, message: dict[str, Any], actions: list[dict[str, Any]]) -> None:
+        """Header + reasoning exactly as InteractiveAgent prints them
+        (interactive.py's add_messages), then each action's rich rendering."""
+        assert message.get("role") == "assistant", "only assistant turns render here"
+        assert actions, "a grim turn carries at least one action"
+        console.print(
+            f"\n[red][bold]mini-swe-agent[/bold] (step [bold]{self.n_calls}[/bold], "
+            f"[bold]${self.cost:.2f}[/bold]):[/red]\n",
+            end="",
+            highlight=False,
+        )
+        if text := reasoning_text(message):
+            console.print(text, highlight=False, markup=False)
+        for action in actions:
+            for renderable in action_renderables(action):
+                console.print(renderable)
 
     def _prompt_and_handle_slash_commands(self, prompt: str, *, _multiline: bool = False) -> str:
         """Extend InteractiveAgent's own /h /m /y /c /u handling with two
