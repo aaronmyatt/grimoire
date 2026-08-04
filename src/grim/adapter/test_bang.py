@@ -67,11 +67,11 @@ def test_install_wraps_both_sessions_idempotently(monkeypatch: pytest.MonkeyPatc
     pytest.importorskip("minisweagent")
     from minisweagent.agents.utils import prompt_user
 
-    install_bang_expansion("session-1")
+    install_bang_expansion(lambda: "session-1")
     first_prompt_wrapper = prompt_user.prompt_session.prompt
     first_multiline_wrapper = prompt_user._multiline_prompt_session.prompt
 
-    install_bang_expansion("session-1")  # repeat call must not double-wrap
+    install_bang_expansion(lambda: "session-1")  # repeat call must not double-wrap
 
     assert prompt_user.prompt_session.prompt is first_prompt_wrapper
     assert prompt_user._multiline_prompt_session.prompt is first_multiline_wrapper

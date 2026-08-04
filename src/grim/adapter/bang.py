@@ -64,13 +64,16 @@ def _run_slug(slug: str, session_id: str) -> str:
 _WRAPPED: set[int] = set()
 
 
-def install_bang_expansion(session_id: str) -> None:
+def install_bang_expansion(session_id_fn: Callable[[], str]) -> None:
     """Wrap `.prompt` on mini's two shared prompt sessions so every human
     input is passed through expand_bangs before it becomes a message.
-    Idempotent per session object, mirroring install_grim_completer."""
+    `session_id_fn` is called fresh on every prompt (never captured once),
+    so a session_id that changes later in the same process (GrimAgent's
+    /new) is always honored. Idempotent per session object, mirroring
+    install_grim_completer."""
     from minisweagent.agents.utils import prompt_user  # noqa: PLC0415 -- extra may be absent
 
-    assert isinstance(session_id, str) and session_id, "session_id is a non-empty string"
+    assert callable(session_id_fn), "session_id_fn must be callable"
     sessions = (prompt_user.prompt_session, prompt_user._multiline_prompt_session)
     for session in sessions:
         if id(session) in _WRAPPED:
@@ -81,7 +84,7 @@ def install_bang_expansion(session_id: str) -> None:
             *args: object, __original: Callable[..., str] = original_prompt, **kwargs: object
         ) -> str:
             return expand_bangs(
-                __original(*args, **kwargs), lambda slug: _run_slug(slug, session_id)
+                __original(*args, **kwargs), lambda slug: _run_slug(slug, session_id_fn())
             )
 
         # Deliberate monkeypatch of a third-party session's bound method, the

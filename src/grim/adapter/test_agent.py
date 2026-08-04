@@ -6,16 +6,21 @@ raw SQL against the kernel schema, not by importing verbs/write.py.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
+from minisweagent.agents.interactive import InteractiveAgent
+from minisweagent.exceptions import UserInterruption
+from minisweagent.models.test_models import DeterministicModel, make_output
 
 from grim import db
 from grim.adapter.agent import (
     RECALL_LIMIT_DEFAULT,
     RECALL_LIMIT_MAX,
     STRONG_MATCH_LIMIT,
+    GrimAgent,
     rank_recall,
     recall_enabled,
     recall_limit,
@@ -23,6 +28,8 @@ from grim.adapter.agent import (
     strong_matches,
     user_prompt_extension,
 )
+from grim.adapter.environment import GrimEnvironment
+from grim.adapter.tools import render_command
 
 
 def _migrated_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
@@ -248,3 +255,118 @@ def test_recall_enabled_reflects_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert recall_enabled() is False
     monkeypatch.setenv("GRIM_RECALL", "1")
     assert recall_enabled() is True
+
+
+# --- /new and grim CLI-verb slash commands -----------------------------------
+
+
+def _act(tool: str, args: dict[str, object]) -> dict[str, object]:
+    """Shape an action exactly as GrimToolcallModel produces it, incl. the
+    `command` display field InteractiveAgent requires (test_grimoire_e2e.py's
+    identical helper)."""
+    return {"tool": tool, "args": args, "tool_call_id": "c", "command": render_command(tool, args)}
+
+
+def _grim_agent(outputs: list[dict[str, object]], session_id: str) -> GrimAgent:
+    return GrimAgent(
+        DeterministicModel(outputs=outputs),  # type: ignore[no-untyped-call]
+        GrimEnvironment(session_id=session_id),
+        system_template="You are a test agent.",
+        instance_template="{{task}}",
+        mode="yolo",
+        cost_limit=0,
+    )
+
+
+def _scripted_prompt(responses: list[str]) -> Callable[..., str]:
+    """Stand-in for InteractiveAgent._prompt_and_handle_slash_commands that
+    returns each response in turn instead of reading real stdin."""
+    queue: Iterator[str] = iter(responses)
+
+    def _prompt(self: object, prompt: str, *, _multiline: bool = False) -> str:
+        return next(queue)
+
+    return _prompt
+
+
+def test_prompt_dispatches_grim_verb_and_reprompts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    conn = db.connect()
+    db.migrate(conn)
+    _seed(conn, "read_file", "python", "print a file")
+    agent = _grim_agent([], "sess-verb")
+    monkeypatch.setattr(
+        InteractiveAgent, "_prompt_and_handle_slash_commands", _scripted_prompt(["/list", "hello"])
+    )
+
+    result = agent._prompt_and_handle_slash_commands("> ")
+
+    assert result == "hello"
+    assert "read_file" in capsys.readouterr().out
+
+
+def test_prompt_new_without_task_reprompts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    agent = _grim_agent([], "sess-new-empty")
+    monkeypatch.setattr(
+        InteractiveAgent, "_prompt_and_handle_slash_commands", _scripted_prompt(["/new", "hi"])
+    )
+
+    result = agent._prompt_and_handle_slash_commands("> ")
+
+    assert result == "hi"
+    assert "usage: /new" in capsys.readouterr().out
+
+
+def test_prompt_new_with_task_raises_new_session_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = _grim_agent([], "sess-new")
+    monkeypatch.setattr(
+        InteractiveAgent,
+        "_prompt_and_handle_slash_commands",
+        _scripted_prompt(["/new do the thing"]),
+    )
+
+    with pytest.raises(UserInterruption) as exc_info:
+        agent._prompt_and_handle_slash_commands("> ")
+
+    message = exc_info.value.messages[0]
+    assert message["role"] == "exit"
+    assert message["extra"]["exit_status"] == "GrimNewSession"
+    assert message["extra"]["submission"] == "do the thing"
+
+
+def test_run_new_session_clears_history_and_rotates_session_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    db.migrate(db.connect())
+    outputs = [
+        make_output("finish 1", [_act("submit", {"result": "first done"})]),
+        make_output("finish 2", [_act("submit", {"result": "second done"})]),
+    ]
+    env = GrimEnvironment(session_id="before-new")
+    agent = GrimAgent(
+        DeterministicModel(outputs=outputs),  # type: ignore[no-untyped-call]
+        env,
+        system_template="You are a test agent.",
+        instance_template="{{task}}",
+        mode="yolo",
+        cost_limit=0,
+    )
+    # First "new task?" prompt (after submit #1) triggers /new; the second
+    # (after submit #2, in the fresh sub-run) just presses Enter to finish.
+    monkeypatch.setattr(
+        InteractiveAgent,
+        "_prompt_and_handle_slash_commands",
+        _scripted_prompt(["/new second task", ""]),
+    )
+
+    result = agent.run("first task")
+
+    assert result["exit_status"] == "Submitted"
+    assert result["submission"] == "second done"
+    assert env.session_id != "before-new"  # a fresh session_id was minted
+    assert agent.messages[1]["content"] == "second task"  # history cleared, not appended

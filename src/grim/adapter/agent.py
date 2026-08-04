@@ -14,15 +14,18 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
-from minisweagent.agents.interactive import InteractiveAgent
+from minisweagent.agents.interactive import InteractiveAgent, console
+from minisweagent.exceptions import UserInterruption
 
 from grim import db
 from grim.adapter.bang import install_bang_expansion
 from grim.adapter.completer import install_grim_completer
 from grim.adapter.environment import GrimEnvironment
+from grim.adapter.slash import GRIM_CLI_VERBS, run_slash_command
 
 # Operator-authored system-prompt extension, the agent-harness analogue of a
 # global ~/.claude or ~/.pi instruction file. Lives under grim's home dir (the
@@ -168,21 +171,75 @@ def recent_library(limit: int) -> list[dict[str, str]]:
     return rank_recall([dict(row) for row in pool], limit)
 
 
+# /new's exit_status sentinel: distinguishes "the human wants a fresh
+# session" from a real Submitted/LimitsExceeded/TimeExceeded exit, so
+# GrimAgent.run()'s wrapper loop knows to restart super().run() with a new
+# task instead of returning to its own caller.
+_NEW_SESSION_EXIT_STATUS = "GrimNewSession"
+_NEW_SESSION_COMMAND = "/new"
+
+_SLASH_HINT = (
+    "[dim]grim verbs available as /commands: "
+    + " ".join(f"/{verb}" for verb in GRIM_CLI_VERBS)
+    + f" · {_NEW_SESSION_COMMAND} <task> starts a fresh session[/dim]"
+)
+
+
 class GrimAgent(InteractiveAgent):
-    """Same contract as InteractiveAgent; only run() is extended so
-    system_template can reference {{ grim_strong_matches }} / the operator's
-    {{ grim_user_prompt }}, and (on --continue) instance_template can render
-    {{ grim_recent_library }}."""
+    """Same contract as InteractiveAgent; run() loops over InteractiveAgent's
+    own run() (rather than looping inside it) so /new can break all the way
+    out to a fresh top-level call — system_template can reference
+    {{ grim_strong_matches }} / the operator's {{ grim_user_prompt }}, and
+    (on --continue) instance_template can render {{ grim_recent_library }},
+    exactly as on a normal first run."""
 
     def run(self, task: str = "", **kwargs: object) -> dict[str, object]:
-        self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
-        self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
-        if recall_enabled():
-            self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
+        assert isinstance(task, str), "task is a string"
+        env = self._grim_env()
         # Enable @/: completion and !slug execute-and-substitute on mini's
-        # prompt sessions (no-op without a TTY).
+        # prompt sessions (no-op without a TTY); installed once, but
+        # session_id is re-read live so /new's fresh session is honored.
         install_grim_completer()
+        install_bang_expansion(lambda: env.session_id)
+        console.print(_SLASH_HINT)
+        while True:
+            self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
+            self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
+            if recall_enabled():
+                self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
+            result = super().run(task, **kwargs)
+            assert isinstance(result, dict), "InteractiveAgent.run always returns a dict"
+            if result.get("exit_status") != _NEW_SESSION_EXIT_STATUS:
+                return result
+            env.session_id = str(uuid.uuid4())
+            task = str(result.get("submission", ""))
+
+    def _grim_env(self) -> GrimEnvironment:
         env = self.env
         assert isinstance(env, GrimEnvironment), "GrimAgent always runs with GrimEnvironment"
-        install_bang_expansion(env.session_id)
-        return super().run(task, **kwargs)
+        return env
+
+    def _prompt_and_handle_slash_commands(self, prompt: str, *, _multiline: bool = False) -> str:
+        """Extend InteractiveAgent's own /h /m /y /c /u handling with two
+        grim-only commands: /new <task> (below) and grim's CLI verbs as
+        /verb ... (slash.py) — both dispatched here, never sent to the
+        model."""
+        user_input = super()._prompt_and_handle_slash_commands(prompt, _multiline=_multiline)
+        assert isinstance(user_input, str), "prompt input is always a string"
+        if user_input == _NEW_SESSION_COMMAND or user_input.startswith(_NEW_SESSION_COMMAND + " "):
+            new_task = user_input[len(_NEW_SESSION_COMMAND) :].strip()
+            if not new_task:
+                console.print(f"[yellow]usage: {_NEW_SESSION_COMMAND} <task>[/yellow]")
+                return self._prompt_and_handle_slash_commands(prompt, _multiline=_multiline)
+            raise UserInterruption(
+                {
+                    "role": "exit",
+                    "content": "",
+                    "extra": {"exit_status": _NEW_SESSION_EXIT_STATUS, "submission": new_task},
+                }
+            )
+        output = run_slash_command(user_input, self._grim_env().session_id)
+        if output is not None:
+            console.print(output)
+            return self._prompt_and_handle_slash_commands(prompt, _multiline=_multiline)
+        return user_input
