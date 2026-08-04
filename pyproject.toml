@@ -46,6 +46,11 @@ packages = ["src/grim"]
 [tool.ruff]
 line-length = 100  # budgets.json .budgets.lineWidth
 target-version = "py312"
+# Vendored third-party eval fixtures (QuixBugs, HumanEvalFix, ARC-AGI) are
+# committed verbatim — their bugs and formatting ARE the task data, so they
+# are excluded from format/lint rather than "fixed."
+# Ref: https://docs.astral.sh/ruff/settings/#extend-exclude
+extend-exclude = ["evals/*/tasks/files"]
 
 [tool.ruff.lint]
 # E/F: pycodestyle + pyflakes (correctness, includes E501 line-too-long).
