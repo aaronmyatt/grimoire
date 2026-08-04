@@ -1,0 +1,14 @@
+name: arc-1e0a9b12
+files: arc-1e0a9b12
+prompt: >-
+  Your current working directory contains task.json, an ARC (Abstraction and
+  Reasoning Corpus) puzzle. "train" is a list of {"input", "output"} grid
+  pairs -- each grid is a list of rows of integers 0-9 -- and every pair
+  demonstrates one and the same transformation. Infer the transformation and
+  apply it to the "test_input" grid. Write and run scripts to test your
+  hypothesis against every training pair before answering. Reply with ONLY
+  the resulting output grid as JSON (a list of lists of integers).
+# Expected answer grid (ARC test output) -- lives ONLY here, never in
+# the workspace the agent sees. JSON tolerates the fold's whitespace.
+expected: >-
+  [[0,0,0,0,0],[0,0,0,0,0],[5,0,0,0,0],[5,2,0,4,0],[5,2,6,4,3]]

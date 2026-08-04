@@ -1,0 +1,8 @@
+name: default
+# One required check: the answer must parse to exactly the expected grid.
+# Grader schema: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+checks:
+  - checker: ../checkers/json-grid-equals
+    required: true
+scoring:
+  pass_threshold: 1.0

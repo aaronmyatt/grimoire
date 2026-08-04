@@ -1,0 +1,9 @@
+name: grim-solve
+description: >-
+  Problem-solving eval for the grim-agent harness: cherry-picked ARC-AGI-1
+  training puzzles (Apache-2.0), vendored under tasks/files/ — see
+  VENDORED.md. The agent gets task.json (training input/output grid pairs
+  plus the test input, never the answer) in its workspace and must infer the
+  transformation — ideally by writing and testing hypothesis scripts against
+  the training pairs — then print the output grid as JSON. Difficulty ranges
+  from a color bijection (easy) to 30x30 symmetry repair (hard).

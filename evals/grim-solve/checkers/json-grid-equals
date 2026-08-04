@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""smevals Checker: pass iff the Run's output parses to the expected JSON grid.
+
+The model is asked to reply with ONLY a grid (list of lists of ints), but
+answers arrive wrapped in prose or code fences often enough that exact string
+comparison would grade formatting, not reasoning. So: extract the outermost
+[...] span from output.txt, json.loads both sides, and compare structurally.
+
+Contract (env in, one JSON object on stdout, exit 0 pass / 1 fail / 2 config
+error). Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+  - SMEVALS_RUN_DIR        absolute Run dir; the model's answer is output.txt
+  - SMEVALS_TASK_EXPECTED  the task's `expected:` key — the answer grid JSON
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import sys
+
+Grid = list[list[int]]
+
+
+def extract_grid(text: str) -> Grid | None:
+    """Parse the outermost [...] span of `text` as a grid; None if invalid."""
+    assert isinstance(text, str), "caller passes the decoded output text"
+    start, end = text.find("["), text.rfind("]")
+    if start == -1 or end <= start:
+        return None
+    try:
+        candidate = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    is_grid = isinstance(candidate, list) and all(
+        isinstance(row, list) and all(isinstance(c, int) for c in row) for row in candidate
+    )
+    return candidate if is_grid else None
+
+
+def main() -> int:
+    run_dir = os.environ.get("SMEVALS_RUN_DIR")
+    expected_raw = os.environ.get("SMEVALS_TASK_EXPECTED")
+    # VALIDATE config input: missing env is a harness bug, not a model miss.
+    if not run_dir or not expected_raw:
+        print("json-grid-equals: SMEVALS_RUN_DIR and task `expected` are required", file=sys.stderr)
+        return 2
+    expected = extract_grid(expected_raw)
+    if expected is None:
+        print("json-grid-equals: task `expected` is not a valid JSON grid", file=sys.stderr)
+        return 2
+
+    output_path = pathlib.Path(run_dir) / "output.txt"
+    text = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+    actual = extract_grid(text)
+
+    passed = actual == expected
+    assert isinstance(passed, bool), "comparison must yield a bool"
+    if actual is None:
+        notes = "no parseable JSON grid in output"
+    elif passed:
+        notes = "grid matches"
+    else:
+        notes = (
+            f"grid mismatch: got {len(actual)}x{len(actual[0]) if actual else 0}, "
+            f"expected {len(expected)}x{len(expected[0])}"
+        )
+    print(
+        json.dumps(
+            {
+                "score": 1.0 if passed else 0.0,
+                "metrics": {"parsed": actual is not None},
+                "notes": notes,
+            }
+        )
+    )
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
