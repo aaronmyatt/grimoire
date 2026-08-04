@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# smevals Runner for grim-agent DEBUGGING tasks. Same contract as
+# grim-smoke/run-grim (inputs via env, final answer on stdout, non-zero exit
+# reserved for infra faults), with one addition: every task here declares
+# `files: <dir>`, and this runner materializes tasks/files/<dir> into
+# $SMEVALS_RUN_DIR/workspace and launches the agent THERE, so the agent
+# debugs a scratch copy of real files and the Run keeps the workspace as an
+# artifact for the grader to test.
+# Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+#
+# DB isolation is both this experiment's core variable AND a hard safety rule:
+# GRIM_DB is ALWAYS set explicitly, so an eval never reads or writes the
+# operator's real ~/.grimoire library. Precedence:
+#   1. SMEVALS_TASK_GRIM_DB  per-task path   → group tasks (e.g. one DB per repo)
+#   2. GRIM_EVAL_DB          operator export → WARM: one shared DB accumulates
+#                            across tasks — the compounding condition
+#   3. (neither set)         COLD: a fresh DB under the Run dir — the control
+set -uo pipefail
+
+: "${SMEVALS_MODEL:?run-grim: SMEVALS_MODEL is required}"
+: "${SMEVALS_PROMPT:?run-grim: SMEVALS_PROMPT is required (the task needs a prompt)}"
+: "${SMEVALS_RUN_DIR:?run-grim: SMEVALS_RUN_DIR is required}"
+: "${SMEVALS_TASK_FILES:?run-grim: task must declare files: <dir> (under tasks/files/)}"
+
+# BASH_SOURCE locates this eval dir regardless of smevals' working directory.
+# Ref: https://www.gnu.org/software/bash/manual/bash.html#index-BASH_005fSOURCE
+EVAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FILES_DIR="$EVAL_DIR/tasks/files/$SMEVALS_TASK_FILES"
+if [ ! -d "$FILES_DIR" ]; then
+  echo "run-grim: $FILES_DIR does not exist — infra failure" >&2
+  exit 1
+fi
+
+# The workspace lives inside the Run dir, so smevals keeps it as an artifact
+# and the grader's checker can re-run the tests against exactly what the
+# agent left behind.
+WORKSPACE="$SMEVALS_RUN_DIR/workspace"
+mkdir -p "$WORKSPACE"
+cp -R "$FILES_DIR/." "$WORKSPACE/"
+cd "$WORKSPACE" || exit 1
+
+export GRIM_DB="${SMEVALS_TASK_GRIM_DB:-${GRIM_EVAL_DB:-$SMEVALS_RUN_DIR/grimoire.db}}"
+export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run artifact
+
+# `-p` (print mode) is load-bearing: only the agent's final answer reaches
+# stdout (the UI transcript goes to stderr → stderr.txt), and it runs
+# unattended. See grim-smoke/run-grim for the full rationale.
+# GRIM_AGENT_CMD is left unquoted on purpose so a multi-word command
+# word-splits; this is a launcher, not grim's control plane.
+# shellcheck disable=SC2086
+out="$(${GRIM_AGENT_CMD:-grim-agent} -p -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT")"
+ec=$?
+
+printf '%s\n' "$out"
+
+# Exit non-zero ONLY for infrastructure failure; a wrong (or unhelpful) answer
+# still exits 0 so the Grader decides pass/fail by re-running the tests.
+# exit 2 is grim's missing 'agent' extra (launcher.MISSING_EXTRA_EXIT_CODE);
+# empty output means the harness produced no answer at all.
+if [ "$ec" -eq 2 ] || [ -z "${out//[[:space:]]/}" ]; then
+  echo "run-grim: grim-agent produced no answer (exit $ec) — infra failure" >&2
+  exit 1
+fi
+exit 0

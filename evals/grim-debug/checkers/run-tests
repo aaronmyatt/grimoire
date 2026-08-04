@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""smevals Checker: re-run the task's test driver in the Run's workspace.
+
+Pristine copies of the task's test files (task key `pristine:`) are restored
+from tasks/files/ first, so a run that "fixed" the tests instead of the code
+still fails. A driver that exceeds the timeout fails too — several vendored
+bugs manifest as infinite loops, so the timeout is part of the grading
+contract, not a convenience.
+
+Contract (env in, one JSON object on stdout, exit 0 pass / 1 fail / 2 config
+error). Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+  - SMEVALS_RUN_DIR          absolute Run dir; workspace/ is the agent's copy
+  - SMEVALS_TASK_FILES       the task's dir name under tasks/files/
+  - SMEVALS_TASK_PRISTINE    whitespace-separated filenames to restore
+  - SMEVALS_CHECK_TIMEOUT_S  driver timeout in seconds (default 60)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+
+DEFAULT_TIMEOUT_S = 60
+NOTES_TAIL_CHARS = 700
+
+
+def restore_pristine(files_dir: pathlib.Path, workspace: pathlib.Path, names: list[str]) -> str:
+    """Copy each pristine file over the workspace; return an error string or ''."""
+    assert files_dir.is_dir(), "caller validates files_dir"
+    assert names, "caller validates the pristine list is non-empty"
+    for name in names:
+        src = files_dir / name
+        if not src.is_file():
+            return f"pristine file {name!r} missing from {files_dir}"
+        shutil.copy2(src, workspace / name)
+    return ""
+
+
+def run_driver(workspace: pathlib.Path, timeout_s: int) -> tuple[int, str]:
+    """Run run_tests.py in the workspace; return (exit_code, notes). -1 = timeout."""
+    assert workspace.is_dir(), "caller validates workspace"
+    assert timeout_s > 0, "timeout must be positive"
+    try:
+        proc = subprocess.run(
+            [sys.executable, "run_tests.py"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        return -1, f"run_tests.py exceeded {timeout_s}s — failure (infinite loop?)"
+    notes = (proc.stdout + proc.stderr)[-NOTES_TAIL_CHARS:].strip()
+    return proc.returncode, notes
+
+
+def main() -> int:
+    run_dir = os.environ.get("SMEVALS_RUN_DIR")
+    files = os.environ.get("SMEVALS_TASK_FILES")
+    pristine = os.environ.get("SMEVALS_TASK_PRISTINE", "").split()
+    # VALIDATE config input: a missing env var or task key is a harness bug,
+    # not a model miss — exit 2 so it never masquerades as a failed Grade.
+    if not run_dir or not files or not pristine:
+        print(
+            "run-tests: SMEVALS_RUN_DIR, SMEVALS_TASK_FILES and task `pristine` are required",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        timeout_s = int(os.environ.get("SMEVALS_CHECK_TIMEOUT_S", DEFAULT_TIMEOUT_S))
+    except ValueError:
+        print("run-tests: SMEVALS_CHECK_TIMEOUT_S must be an integer", file=sys.stderr)
+        return 2
+
+    files_dir = pathlib.Path(__file__).resolve().parent.parent / "tasks" / "files" / files
+    workspace = pathlib.Path(run_dir) / "workspace"
+    if not files_dir.is_dir() or not workspace.is_dir():
+        print(f"run-tests: missing {files_dir} or {workspace}", file=sys.stderr)
+        return 2
+
+    err = restore_pristine(files_dir, workspace, pristine)
+    if err:
+        print(f"run-tests: {err}", file=sys.stderr)
+        return 2
+
+    exit_code, notes = run_driver(workspace, timeout_s)
+    passed = exit_code == 0
+    print(
+        json.dumps(
+            {
+                "score": 1.0 if passed else 0.0,
+                "metrics": {"driver_exit": exit_code, "timed_out": exit_code == -1},
+                "notes": notes,
+            }
+        )
+    )
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

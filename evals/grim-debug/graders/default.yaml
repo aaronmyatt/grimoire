@@ -1,0 +1,10 @@
+name: default
+# One required check: restore pristine test files, re-run the task's test
+# driver in the Run's workspace, pass iff it exits 0 within the timeout.
+# Grader schema: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+checks:
+  - checker: ../checkers/run-tests
+    timeout_s: 60
+    required: true
+scoring:
+  pass_threshold: 1.0

@@ -1,0 +1,9 @@
+name: grim-debug
+description: >-
+  Debugging eval for the grim-agent harness: cherry-picked single-bug programs
+  from QuixBugs (MIT) and HumanEvalFix / bigcode-humanevalpack (MIT), vendored
+  under tasks/files/ — see VENDORED.md. The agent gets a workspace copy of the
+  buggy file plus a runnable test driver; the grader restores pristine test
+  files and re-runs the driver, so only a real fix passes. Difficulty ranges
+  from quicksort (most models pass) to lis and infinite-loop symptoms (weak
+  models reliably fail), so model deltas are visible.
