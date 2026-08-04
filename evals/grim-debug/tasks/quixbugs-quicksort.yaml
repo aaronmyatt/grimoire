@@ -1,0 +1,11 @@
+name: quixbugs-quicksort
+files: quixbugs-quicksort
+pristine: run_tests.py quicksort.testcases.json
+prompt: >-
+  Your current working directory contains quicksort.py, a QuickSort
+  implementation with a single-line bug, and run_tests.py, a test driver you
+  can run with `python3 run_tests.py`. Find the bug and fix quicksort.py with
+  the smallest change that makes every test pass. Do not modify run_tests.py
+  or quicksort.testcases.json — the grader restores pristine copies before
+  re-running the tests. When the tests pass, reply with a single line
+  describing the bug you fixed.

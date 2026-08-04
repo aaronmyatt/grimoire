@@ -1,0 +1,11 @@
+name: hef-py0
+files: hef-py0
+pristine: run_tests.py
+prompt: >-
+  Your current working directory contains has_close_elements.py, a function
+  whose docstring states its intended behavior but whose implementation has a
+  bug, and run_tests.py, a test driver you can run with
+  `python3 run_tests.py`. Find the bug and fix has_close_elements.py with the
+  smallest change that makes every assert pass. Do not modify run_tests.py —
+  the grader restores a pristine copy before re-running the tests. When the
+  tests pass, reply with a single line describing the bug you fixed.

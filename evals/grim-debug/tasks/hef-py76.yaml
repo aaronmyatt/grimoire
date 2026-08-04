@@ -1,0 +1,12 @@
+name: hef-py76
+files: hef-py76
+pristine: run_tests.py
+prompt: >-
+  Your current working directory contains is_simple_power.py, a function whose
+  docstring states its intended behavior but whose implementation has a bug,
+  and run_tests.py, a test driver you can run with `python3 run_tests.py`.
+  Caution: the buggy code can loop forever on some inputs, so read it before
+  you run it. Find the bug and fix is_simple_power.py with the smallest change
+  that makes every assert pass. Do not modify run_tests.py — the grader
+  restores a pristine copy before re-running the tests. When the tests pass,
+  reply with a single line describing the bug you fixed.

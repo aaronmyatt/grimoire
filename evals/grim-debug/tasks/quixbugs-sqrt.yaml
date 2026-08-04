@@ -1,0 +1,12 @@
+name: quixbugs-sqrt
+files: quixbugs-sqrt
+pristine: run_tests.py sqrt.testcases.json
+prompt: >-
+  Your current working directory contains sqrt.py, a Newton-Raphson square
+  root implementation with a single-line bug, and run_tests.py, a test driver
+  you can run with `python3 run_tests.py`. Caution: the buggy code can loop
+  forever on some inputs, so read it before you run it. Find the bug and fix
+  sqrt.py with the smallest change that satisfies the contract in its
+  docstring. Do not modify run_tests.py or sqrt.testcases.json — the grader
+  restores pristine copies before re-running the tests. When the tests pass,
+  reply with a single line describing the bug you fixed.

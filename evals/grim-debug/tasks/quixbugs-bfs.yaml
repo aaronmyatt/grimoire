@@ -1,0 +1,12 @@
+name: quixbugs-bfs
+files: quixbugs-bfs
+pristine: run_tests.py node.py
+prompt: >-
+  Your current working directory contains breadth_first_search.py, a BFS
+  reachability check with a single-line bug (it crashes on some inputs),
+  node.py, the graph node class it operates on, and run_tests.py, a test
+  driver you can run with `python3 run_tests.py`. Find the bug and fix
+  breadth_first_search.py with the smallest change that makes every test
+  pass. Do not modify run_tests.py or node.py — the grader restores pristine
+  copies before re-running the tests. When the tests pass, reply with a
+  single line describing the bug you fixed.

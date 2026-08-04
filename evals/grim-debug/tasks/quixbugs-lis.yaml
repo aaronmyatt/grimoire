@@ -1,0 +1,11 @@
+name: quixbugs-lis
+files: quixbugs-lis
+pristine: run_tests.py lis.testcases.json
+prompt: >-
+  Your current working directory contains lis.py, a longest-increasing-
+  subsequence implementation with a single-line bug, and run_tests.py, a test
+  driver you can run with `python3 run_tests.py`. Find the bug and fix lis.py
+  with the smallest change that makes every test pass. Do not modify
+  run_tests.py or lis.testcases.json — the grader restores pristine copies
+  before re-running the tests. When the tests pass, reply with a single line
+  describing the bug you fixed.

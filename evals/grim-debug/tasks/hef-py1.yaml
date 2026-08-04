@@ -1,0 +1,12 @@
+name: hef-py1
+files: hef-py1
+pristine: run_tests.py
+prompt: >-
+  Your current working directory contains separate_paren_groups.py, a function
+  whose docstring states its intended behavior but whose implementation has a
+  bug, and run_tests.py, a test driver you can run with
+  `python3 run_tests.py`. Find the bug and fix separate_paren_groups.py with
+  the smallest change that makes every assert pass. Do not modify
+  run_tests.py — the grader restores a pristine copy before re-running the
+  tests. When the tests pass, reply with a single line describing the bug you
+  fixed.
