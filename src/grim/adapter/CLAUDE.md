@@ -64,8 +64,9 @@ D6 revised → native tool-calling).
   mid-flow.
 - `slash.py` — `GRIM_CLI_VERBS` (a small, intentional duplicate of
   `cli.py`'s subcommand names — `init`/`config`/`doctor`/`near`/`recent`/
-  `edit`/the six data verbs) and `run_slash_command(text, session_id) ->
-  str | None`. `/verb args...` dispatches straight to `cli.main` in-process
+  `edit`/`tag`/`untag`/`tags`/`tagged`/`favourite`/`unfavourite`/
+  `favourites`/the six data verbs) and `run_slash_command(text, session_id)
+  -> str | None`. `/verb args...` dispatches straight to `cli.main` in-process
   via the same `environment._invoke` bang.py uses — a human side-channel,
   never sent to the model or billed as tokens, the same category as mini's
   own `/h`. Recognizes `/edit NAME` too: since `_invoke` only swaps the
