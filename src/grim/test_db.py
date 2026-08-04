@@ -14,22 +14,22 @@ from grim import db
 def test_fresh_migrate_applies_initial_schema(tmp_path: Path) -> None:
     conn = db.connect(tmp_path / "grimoire.db")
     applied = db.migrate(conn)
-    assert applied == ["0001_initial.sql"]
+    assert applied == ["0001_initial.sql", "0002_tags.sql"]
     row = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()
-    assert row[0] == 1
+    assert row[0] == len(applied)
 
 
 def test_migrate_is_idempotent(tmp_path: Path) -> None:
     db_path = tmp_path / "grimoire.db"
     conn = db.connect(db_path)
-    db.migrate(conn)
+    first_applied = db.migrate(conn)
     conn.close()
 
     conn2 = db.connect(db_path)
     applied_again = db.migrate(conn2)
     assert applied_again == []
     row = conn2.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()
-    assert row[0] == 1
+    assert row[0] == len(first_applied)
 
 
 def test_connect_sets_expected_pragmas(tmp_path: Path) -> None:
