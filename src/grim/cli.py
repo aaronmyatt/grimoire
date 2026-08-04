@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from grim import config, db
-from grim.curate import near, recent
+from grim.curate import edit, near, recent
 from grim.seeds.bodies import SEEDS
 from grim.seeds.loader import load_seeds
 from grim.verbs import find, read, run, update, write
@@ -221,6 +221,10 @@ def build_parser() -> argparse.ArgumentParser:
     recent_parser = subparsers.add_parser("recent", help="library by last-run time, newest first")
     recent_parser.add_argument("--limit", type=int)
     recent_parser.set_defaults(func=recent.cmd_recent)
+    edit_parser = subparsers.add_parser("edit", help="round-trip a script through $EDITOR")
+    edit_parser.add_argument("name")
+    edit_parser.add_argument("--changelog", help="skip AI/manual changelog prompts")
+    edit_parser.set_defaults(func=edit.cmd_edit)
     for add_parser in (
         _add_write_parser,
         _add_update_parser,

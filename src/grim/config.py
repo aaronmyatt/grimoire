@@ -31,6 +31,7 @@ _CONFIG_ENV_KEYS: dict[str, str] = {
     "run_dir": "GRIM_RUN_DIR",  # background-job dir (run_bg/list_bg/stop_bg seeds)
     "cost": "GRIM_COST_LIMIT",  # mini agent limits — consumed by the launcher, not verbs
     "step": "GRIM_STEP_LIMIT",
+    "changelog_model": "GRIM_CHANGELOG_MODEL",  # `grim edit`'s AI changelog; falls back to model
 }
 
 # Bound the upward search for a repo-local config (CLAUDE.md §3: every loop has
