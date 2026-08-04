@@ -42,6 +42,13 @@ cd "$WORKSPACE" || exit 1
 export GRIM_DB="${SMEVALS_TASK_GRIM_DB:-${GRIM_EVAL_DB:-$SMEVALS_RUN_DIR/grimoire.db}}"
 export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run artifact
 
+# Breadcrumbs go to stderr (captured as stderr.txt, tail -f-able) — stdout is
+# EXCLUSIVELY the answer channel: it becomes output.txt, which the Grader reads.
+if [ -n "${SMEVALS_TASK_GRIM_DB:-}" ]; then DB_MODE="grouped"
+elif [ -n "${GRIM_EVAL_DB:-}" ]; then DB_MODE="warm"
+else DB_MODE="cold"; fi
+echo "run-grim: task=$SMEVALS_TASK model=$SMEVALS_MODEL db=$DB_MODE ($GRIM_DB) workspace=$WORKSPACE" >&2
+
 # `-p` (print mode) is load-bearing: only the agent's final answer reaches
 # stdout (the UI transcript goes to stderr → stderr.txt), and it runs
 # unattended. See grim-smoke/run-grim for the full rationale.
@@ -50,6 +57,7 @@ export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run ar
 # shellcheck disable=SC2086
 out="$(${GRIM_AGENT_CMD:-grim-agent} -p -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT")"
 ec=$?
+echo "run-grim: agent done exit=$ec answer_chars=${#out}" >&2
 
 printf '%s\n' "$out"
 
