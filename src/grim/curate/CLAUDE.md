@@ -32,6 +32,12 @@ by `src/grim/cli.py`:
   scripts still exists as a row (`scripts_for_tag` returns `[]`) —
   `LookupError` is reserved for a tag that was never created at all, so a
   typo in `grim tagged` is distinguishable from "nothing tagged this yet."
+  `favourite NAME` / `unfavourite NAME` / `favourites` (also in `tags.py`)
+  are sugar over the same functions with the well-known tag
+  `FAVOURITE_TAG = "favourite"` — not a separate schema column, so there is
+  one mechanism for "this script is special," not two. `favourites` on an
+  empty result is not an error (nobody has starred anything yet); `tagged`
+  on an unknown tag still is (a likely typo).
 
 `_shared.py` (`connect()`, `resolve_script_version()`, `lint()`,
 `body_hash()`) is internal, not public surface — deliberate copies of
