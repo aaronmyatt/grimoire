@@ -240,6 +240,17 @@ def build_parser() -> argparse.ArgumentParser:
     tagged_parser.add_argument("tag")
     tagged_parser.add_argument("--limit", type=int)
     tagged_parser.set_defaults(func=tags.cmd_tagged)
+    # Sugar over tag/untag/tagged with the well-known "favourite" tag — not
+    # a separate schema column (curate/CLAUDE.md).
+    favourite_parser = subparsers.add_parser("favourite", help="star a script")
+    favourite_parser.add_argument("name")
+    favourite_parser.set_defaults(func=tags.cmd_favourite)
+    unfavourite_parser = subparsers.add_parser("unfavourite", help="unstar a script")
+    unfavourite_parser.add_argument("name")
+    unfavourite_parser.set_defaults(func=tags.cmd_unfavourite)
+    favourites_parser = subparsers.add_parser("favourites", help="list starred scripts")
+    favourites_parser.add_argument("--limit", type=int)
+    favourites_parser.set_defaults(func=tags.cmd_favourites)
     for add_parser in (
         _add_write_parser,
         _add_update_parser,

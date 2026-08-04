@@ -12,9 +12,12 @@ from grim import db
 from grim.curate import _shared
 from grim.curate.tags import (
     add_tags,
+    cmd_favourite,
+    cmd_favourites,
     cmd_tag,
     cmd_tagged,
     cmd_tags,
+    cmd_unfavourite,
     cmd_untag,
     list_tags,
     normalize_tag,
@@ -224,6 +227,61 @@ def test_cmd_tag_unknown_script_errors_cleanly(
     _migrated_conn(tmp_path, monkeypatch)
 
     exit_code = cmd_tag(argparse.Namespace(name="ghost", tags=["ci"]))
+
+    assert exit_code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+# --- favourite/unfavourite/favourites -------------------------------------
+
+
+def test_cmd_favourite_and_favourites_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _migrated_conn(tmp_path, monkeypatch)
+    _write(_shared.connect(), "greet")
+
+    exit_code = cmd_favourite(argparse.Namespace(name="greet"))
+    assert exit_code == 0
+    assert "favourited greet" in capsys.readouterr().out
+
+    exit_code = cmd_favourites(argparse.Namespace(limit=None))
+    assert exit_code == 0
+    assert "greet" in capsys.readouterr().out
+
+
+def test_cmd_unfavourite_removes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "greet")
+    cmd_favourite(argparse.Namespace(name="greet"))
+
+    exit_code = cmd_unfavourite(argparse.Namespace(name="greet"))
+
+    assert exit_code == 0
+    assert "unfavourited greet" in capsys.readouterr().out
+    assert cmd_favourites(argparse.Namespace(limit=None)) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cmd_favourites_empty_is_not_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _migrated_conn(tmp_path, monkeypatch)  # nobody has favourited anything — no "favourite" tag row
+
+    exit_code = cmd_favourites(argparse.Namespace(limit=None))
+
+    assert exit_code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cmd_favourite_unknown_script_errors_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _migrated_conn(tmp_path, monkeypatch)
+
+    exit_code = cmd_favourite(argparse.Namespace(name="ghost"))
 
     assert exit_code == 1
     assert "not found" in capsys.readouterr().err

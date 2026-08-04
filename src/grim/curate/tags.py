@@ -135,3 +135,43 @@ def cmd_tagged(args: argparse.Namespace) -> int:
     for row in rows:
         print(f"{row['name']}\t{row['language']}\t{row['description']}")
     return 0
+
+
+# --- favourite: sugar over tagging with one well-known tag ------------------
+# Not a separate `favourite` column — starring a script is exactly tagging it
+# with FAVOURITE_TAG, so there is one mechanism for "this script is special."
+
+FAVOURITE_TAG = "favourite"
+
+
+def cmd_favourite(args: argparse.Namespace) -> int:
+    conn = _shared.connect()
+    try:
+        add_tags(conn, args.name, [FAVOURITE_TAG])
+    except LookupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"favourited {args.name}")
+    return 0
+
+
+def cmd_unfavourite(args: argparse.Namespace) -> int:
+    conn = _shared.connect()
+    try:
+        remove_tags(conn, args.name, [FAVOURITE_TAG])
+    except LookupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"unfavourited {args.name}")
+    return 0
+
+
+def cmd_favourites(args: argparse.Namespace) -> int:
+    conn = _shared.connect()
+    try:
+        rows = scripts_for_tag(conn, FAVOURITE_TAG, args.limit or DEFAULT_TAG_LIMIT)
+    except LookupError:
+        rows = []  # nobody has favourited anything yet — not an error
+    for row in rows:
+        print(f"{row['name']}\t{row['language']}\t{row['description']}")
+    return 0
