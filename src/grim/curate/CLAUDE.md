@@ -24,6 +24,14 @@ by `src/grim/cli.py`:
   model is configured -> one manual prompt -> a generic fallback — never
   blocking or crashing) and persists a new `script_version`, duplicating
   `verbs/update.py`'s lint-then-insert logic rather than importing it.
+- `tags.py` — `grim tag NAME TAG...` / `untag` / `tags` (list all tags +
+  usage counts) / `tagged TAG` (scripts carrying it), read/written through
+  the `tag`/`script_tag` junction (migration 0002). Tag names are
+  normalized lowercase and validated against `TAG_RE`. Idempotent:
+  re-tagging or untagging is a no-op, never an error. A tag with zero
+  scripts still exists as a row (`scripts_for_tag` returns `[]`) —
+  `LookupError` is reserved for a tag that was never created at all, so a
+  typo in `grim tagged` is distinguishable from "nothing tagged this yet."
 
 `_shared.py` (`connect()`, `resolve_script_version()`, `lint()`,
 `body_hash()`) is internal, not public surface — deliberate copies of
