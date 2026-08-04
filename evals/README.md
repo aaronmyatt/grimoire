@@ -9,6 +9,18 @@ Evaluation harnesses for the grim-agent, built on
 
 - `grim-smoke/` — a deterministic, judge-free smoke eval that proves the
   Runner drives `grim-agent` end-to-end (Phase 8 scaffolding).
+- `grim-debug/` — debugging: cherry-picked single-bug programs from QuixBugs
+  and HumanEvalFix (see its `VENDORED.md`). The agent gets a workspace copy
+  of the buggy file plus a runnable test driver; the grader restores pristine
+  test files and re-runs the driver, so only a real fix passes.
+- `grim-solve/` — problem-solving: cherry-picked ARC-AGI-1 training puzzles
+  (see its `VENDORED.md`). The agent explores `task.json` in its workspace
+  and answers with the output grid; graded by exact structural match.
+
+Tasks in each eval are ordered easy → hard on published pass-rate evidence,
+so cross-model deltas are visible without large run counts. Vendored fixture
+data under `tasks/files/` is committed verbatim and excluded from lint — the
+bugs ARE the tasks.
 
 ## Warm vs cold library — the compounding variable
 
@@ -38,6 +50,13 @@ touches your real `~/.grimoire`. Which DB it points at is the experiment's knob:
     smevals report evals/grim-smoke     # terminal report
     smevals serve  evals/grim-smoke     # live web UI
 
-## Checker self-test (no API cost)
+## Checker self-tests (no API cost)
 
     ./evals/grim-smoke/checkers/answer-equals.selftest.sh
+    ./evals/grim-debug/checkers/run-tests.selftest.sh
+    ./evals/grim-solve/checkers/json-grid-equals.selftest.sh
+
+Infra can also be exercised end-to-end without a model: point GRIM_AGENT_CMD
+at any executable that works in the Run workspace and prints an answer, e.g.
+
+    GRIM_AGENT_CMD=/path/to/stub smevals run evals/grim-debug -t quixbugs-quicksort -m fake -g
