@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from grim import config, db
-from grim.curate import edit, near, recent
+from grim.curate import edit, near, recent, tags
 from grim.seeds.bodies import SEEDS
 from grim.seeds.loader import load_seeds
 from grim.verbs import find, read, run, update, write
@@ -225,6 +225,21 @@ def build_parser() -> argparse.ArgumentParser:
     edit_parser.add_argument("name")
     edit_parser.add_argument("--changelog", help="skip AI/manual changelog prompts")
     edit_parser.set_defaults(func=edit.cmd_edit)
+    tag_parser = subparsers.add_parser("tag", help="attach tags to a script")
+    tag_parser.add_argument("name")
+    tag_parser.add_argument("tags", nargs="+")
+    tag_parser.set_defaults(func=tags.cmd_tag)
+    untag_parser = subparsers.add_parser("untag", help="remove tags from a script")
+    untag_parser.add_argument("name")
+    untag_parser.add_argument("tags", nargs="+")
+    untag_parser.set_defaults(func=tags.cmd_untag)
+    tags_parser = subparsers.add_parser("tags", help="list all tags with usage counts")
+    tags_parser.add_argument("--limit", type=int)
+    tags_parser.set_defaults(func=tags.cmd_tags)
+    tagged_parser = subparsers.add_parser("tagged", help="scripts carrying TAG")
+    tagged_parser.add_argument("tag")
+    tagged_parser.add_argument("--limit", type=int)
+    tagged_parser.set_defaults(func=tags.cmd_tagged)
     for add_parser in (
         _add_write_parser,
         _add_update_parser,
