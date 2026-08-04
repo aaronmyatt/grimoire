@@ -65,9 +65,21 @@ D6 revised → native tool-calling).
   prompt_toolkit completer to mini's own prompt sessions (no fork) so a human
   gets `@name` (library scripts + files) and `:name` (scripts only) completion
   while composing input. `GrimAgent.run` installs it; it's a no-op without a
-  TTY. Completion-only — the `!`-execute affordance is a deferred Phase 2. The
+  TTY. Completion-only — see `bang.py` for the `!`-execute affordance. The
   completed text is a plain mention; `grimoire.yaml` tells the agent what
   `@slug`/`:slug` (a script) vs `@path` (a file) mean.
+- `bang.py` — `expand_bangs(text, runner) -> str` (pure over an injected
+  runner) and `install_bang_expansion(session_id)`, Phase 2 of the
+  @-command plan: `!slug`, as a standalone whitespace-bounded token, is
+  replaced with `grim run slug`'s captured output before the text becomes a
+  message. Wraps `.prompt` on the same two mini prompt sessions
+  `install_grim_completer` reaches into, so every human-composed input is
+  covered — the initial task, human-mode commands, interrupt comments,
+  confirm/reject replies, and post-submit new tasks. Execution goes through
+  `environment._invoke` (in-process `cli.main`, no new subprocess); an
+  unknown slug isn't special-cased — whatever `grim run` prints, success or
+  its own error, is exactly what gets substituted. Bounded to
+  `MAX_BANGS_PER_MESSAGE` per message. `GrimAgent.run` installs it.
 - `launcher.py` — `main()`, the `grim-agent` console-script entry (the
   installable yolo harness). Parses grim's own flags — `-p`/`--print` and
   `--output-format text|json` for a clean, pipeable one-shot (mini's UI to

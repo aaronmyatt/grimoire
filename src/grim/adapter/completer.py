@@ -1,5 +1,5 @@
 """Interactive `@`/`:` completion for grim-agent's prompt (Phase 1 of the
-@-command plan; `!` execute-and-substitute is a deferred Phase 2).
+@-command plan; `!` execute-and-substitute is Phase 2, in bang.py).
 
 Attaches a prompt_toolkit completer to mini's own prompt sessions so a human
 composing a task/comment can fuzzy-find library scripts (and files) — no fork

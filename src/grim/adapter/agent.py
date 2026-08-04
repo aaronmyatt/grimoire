@@ -20,7 +20,9 @@ from typing import Any
 from minisweagent.agents.interactive import InteractiveAgent
 
 from grim import db
+from grim.adapter.bang import install_bang_expansion
 from grim.adapter.completer import install_grim_completer
+from grim.adapter.environment import GrimEnvironment
 
 # Operator-authored system-prompt extension, the agent-harness analogue of a
 # global ~/.claude or ~/.pi instruction file. Lives under grim's home dir (the
@@ -177,6 +179,10 @@ class GrimAgent(InteractiveAgent):
         self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
         if recall_enabled():
             self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
-        # Enable @/: completion on mini's prompt sessions (no-op without a TTY).
+        # Enable @/: completion and !slug execute-and-substitute on mini's
+        # prompt sessions (no-op without a TTY).
         install_grim_completer()
+        env = self.env
+        assert isinstance(env, GrimEnvironment), "GrimAgent always runs with GrimEnvironment"
+        install_bang_expansion(env.session_id)
         return super().run(task, **kwargs)
