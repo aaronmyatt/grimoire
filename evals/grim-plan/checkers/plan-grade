@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""smevals Checker for grim-plan: dispatches on the task's `kind:` key.
+
+Kinds and their grading:
+  trip        NaturalPlan trip planning — parse the answer into (city, days)
+              stays and exact-match against the golden `cities`/`durations`.
+              Parser + scorer adapted near-verbatim from Google DeepMind's
+              natural-plan evaluate_trip_planning.py (Apache-2.0):
+              https://github.com/google-deepmind/natural-plan
+  calendar    NaturalPlan calendar scheduling — first "Day, HH:MM - HH:MM"
+              span, numerically compared to the golden's, per
+              evaluate_calendar_scheduling.py (Apache-2.0, same repo).
+  blocksworld PlanBench plan VALIDATION, not string match: simulate the 4-op
+              STRIPS domain (verified against generated_domain.pddl of
+              https://github.com/karthikv792/LLMs-Planning, MIT) from the
+              task's `init` facts and pass iff `goal` holds afterwards. Any
+              valid plan passes. Accepts both s-expression lines
+              "(unstack a b)" and PlanBench's natural-language lines
+              "unstack the blue block from on top of the red block".
+  mystery     Same validator, obfuscated domain (attack/succumb/overcome/
+              feast over province/planet/harmony/pain/craves).
+
+Contract (env in, one JSON object on stdout, exit 0 pass / 1 fail / 2 config
+error). Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+  - SMEVALS_RUN_DIR                        the Run; answer is output.txt
+  - SMEVALS_TASK_KIND                      trip | calendar | blocksworld | mystery
+  - SMEVALS_TASK_CITIES / _DURATIONS       trip golden ("A**B**C" / "1**2**3")
+  - SMEVALS_TASK_GOLDEN                    calendar golden plan text
+  - SMEVALS_TASK_INIT / _GOAL              bw/mystery fact lists as JSON
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import re
+import sys
+
+MAX_PLAN_STEPS_COUNT = 100  # explicit loop bound; longest vendored golden is 16
+
+Fact = tuple[str, ...]
+
+# name -> (arity, preconditions, adds, deletes); facts are templates over
+# argument indices. Tables transcribed from the two verified domain PDDLs.
+STRIPS_OPS: dict[str, dict[str, tuple[int, list[Fact], list[Fact], list[Fact]]]] = {
+    "blocksworld": {
+        "pick-up": (1, [("clear", 0), ("ontable", 0), ("handempty",)],
+                    [("holding", 0)], [("clear", 0), ("ontable", 0), ("handempty",)]),
+        "put-down": (1, [("holding", 0)],
+                     [("clear", 0), ("handempty",), ("ontable", 0)], [("holding", 0)]),
+        "stack": (2, [("clear", 1), ("holding", 0)],
+                  [("handempty",), ("clear", 0), ("on", 0, 1)],
+                  [("clear", 1), ("holding", 0)]),
+        "unstack": (2, [("on", 0, 1), ("clear", 0), ("handempty",)],
+                    [("holding", 0), ("clear", 1)],
+                    [("on", 0, 1), ("clear", 0), ("handempty",)]),
+    },
+    "mystery": {
+        "attack": (1, [("province", 0), ("planet", 0), ("harmony",)],
+                   [("pain", 0)], [("province", 0), ("planet", 0), ("harmony",)]),
+        "succumb": (1, [("pain", 0)],
+                    [("province", 0), ("planet", 0), ("harmony",)], [("pain", 0)]),
+        "overcome": (2, [("province", 1), ("pain", 0)],
+                     [("harmony",), ("province", 0), ("craves", 0, 1)],
+                     [("province", 1), ("pain", 0)]),
+        "feast": (2, [("craves", 0, 1), ("province", 0), ("harmony",)],
+                  [("pain", 0), ("province", 1)],
+                  [("craves", 0, 1), ("province", 0), ("harmony",)]),
+    },
+}
+
+# PlanBench's natural-language action lines, one regex per op.
+NL_ACTION_PATTERNS: dict[str, list[tuple[re.Pattern[str], str]]] = {
+    "blocksworld": [
+        (re.compile(r"unstack the (\w+) block from on top of the (\w+) block"), "unstack"),
+        (re.compile(r"stack the (\w+) block on top of the (\w+) block"), "stack"),
+        (re.compile(r"pick up the (\w+) block"), "pick-up"),
+        (re.compile(r"put down the (\w+) block"), "put-down"),
+    ],
+    "mystery": [
+        (re.compile(r"overcome object (\w+) from object (\w+)"), "overcome"),
+        (re.compile(r"feast object (\w+) from object (\w+)"), "feast"),
+        (re.compile(r"attack object (\w+)"), "attack"),
+        (re.compile(r"succumb object (\w+)"), "succumb"),
+    ],
+}
+SEXPR_ACTION = re.compile(r"\((pick-up|put-down|stack|unstack|attack|succumb|overcome|feast)"
+                          r"\s+([\w-]+)(?:\s+([\w-]+))?\)")
+
+
+def count_traj_items(run_dir: pathlib.Path) -> int | None:
+    """Best-effort agent-step count from the Run's *.traj.json artifact
+    (mini-swe-agent format, steps under "messages"). None -> metric omitted."""
+    assert run_dir.is_dir(), "caller validates run_dir"
+    trajs = sorted(run_dir.glob("*.traj.json"))
+    if not trajs:
+        return None
+    try:
+        data = json.loads(trajs[-1].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    items = data if isinstance(data, list) else data.get("messages")
+    return len(items) if isinstance(items, list) else None
+
+
+def parse_trip_response(response: str) -> list[tuple[str, int]]:
+    """natural-plan parse_response, near-verbatim (Apache-2.0, see header)."""
+    assert isinstance(response, str), "caller passes decoded text"
+    pattern_visit = r"\d+-\d+"
+    pattern_flight = r".*Day (\d+).*from (\w+) to (\w+)"
+    pattern_days = r"European cities for (\d+) days"
+    days, flights, flight_days = [], [], []
+    total_days = None
+    for piece in response.split("\n"):
+        days_match = re.findall(pattern_days, piece)
+        if days_match:
+            total_days = int(days_match[0])
+        visit_match = re.findall(pattern_visit, piece)
+        if visit_match:
+            days.append(visit_match[0])
+            end_day = int(visit_match[0].split("-")[1])
+            if end_day == total_days:
+                break
+        flight_match = re.findall(pattern_flight, piece)
+        if flight_match:
+            flights.append(flight_match[0])
+    visit_cities: list[str] = []
+    parsed_plan: list[tuple[str, int]] = []
+    for flight_day, begin_city, end_city in flights:
+        flight_days.append(int(flight_day))
+        if not visit_cities:
+            visit_cities.append(begin_city)
+        visit_cities.append(end_city)
+    if not days or not flights or not visit_cities:
+        return []
+    last_day = int(days[-1].split("-")[1])
+    flight_days = [1] + flight_days + [last_day]
+    for i, visit_city in enumerate(visit_cities):
+        parsed_plan.append((visit_city, flight_days[i + 1] - flight_days[i] + 1))
+    return parsed_plan
+
+
+def grade_trip(text: str) -> tuple[bool, str]:
+    """Exact-match the parsed stays against golden cities/durations
+    (natural-plan compute_example_score semantics: prefix must match fully)."""
+    cities = os.environ.get("SMEVALS_TASK_CITIES", "")
+    durations = os.environ.get("SMEVALS_TASK_DURATIONS", "")
+    assert cities and durations, "main() validates trip task keys"
+    stays = [x for x in cities.split("**") if x]
+    days = [int(x) for x in durations.split("**") if x]
+    parsed = parse_trip_response(text)
+    if not parsed:
+        return False, "no parseable trip plan in output"
+    num_match = 0
+    for i in range(min(len(stays), len(parsed))):
+        if stays[i] == parsed[i][0] and days[i] == parsed[i][1]:
+            num_match += 1
+        else:
+            break
+    passed = num_match == len(stays)
+    return passed, f"matched {num_match}/{len(stays)} stays; parsed {parsed}"
+
+
+def parse_calendar_response(response: str) -> tuple[str, float, float]:
+    """natural-plan _parse_response + hour_to_num, near-verbatim (Apache-2.0)."""
+    assert isinstance(response, str), "caller passes decoded text"
+    time_strs = re.findall(r"[A-Za-z]+, [0-9]+:[0-9]+ - [0-9]+:[0-9]+", response)
+    if not time_strs:
+        return "", -1.0, -1.0
+
+    def hour_to_num(hr_str: str) -> float:
+        return float(hr_str.split(":")[0]) + (0.5 if hr_str.split(":")[1] == "30" else 0.0)
+
+    time_str = time_strs[0]
+    day = time_str.split(",")[0].strip()
+    hour_str = time_str.split(",")[1].strip()
+    start_hour = hour_str.split("-")[0].strip()
+    end_hour = hour_str.split("-")[1].strip()
+    return day, hour_to_num(start_hour), hour_to_num(end_hour)
+
+
+def grade_calendar(text: str) -> tuple[bool, str]:
+    """Compare the first parsed meeting span to the golden's, numerically."""
+    golden = os.environ.get("SMEVALS_TASK_GOLDEN", "")
+    assert golden, "main() validates calendar task keys"
+    want = parse_calendar_response(golden)
+    assert want[0], "golden must parse — vendoring validated this"
+    got = parse_calendar_response(text)
+    if not got[0]:
+        return False, "no parseable meeting time in output"
+    return got == want, f"got {got}, expected {want}"
+
+
+def parse_plan_actions(text: str, kind: str) -> list[tuple[str, ...]]:
+    """Extract (action, args...) steps from s-expr or PlanBench NL lines.
+    If a [PLAN] marker is present, only the text after the LAST one counts
+    (models often echo the query's worked example)."""
+    assert kind in NL_ACTION_PATTERNS, "caller validates kind"
+    if "[PLAN]" in text:
+        text = text.rsplit("[PLAN]", 1)[1]
+    text = text.split("[PLAN END]", 1)[0]
+    actions: list[tuple[str, ...]] = []
+    for line in text.splitlines():
+        sexpr = SEXPR_ACTION.search(line)
+        if sexpr:
+            actions.append(tuple(g for g in sexpr.groups() if g))
+            continue
+        for pattern, name in NL_ACTION_PATTERNS[kind]:
+            nl = pattern.search(line)
+            if nl:
+                actions.append((name, *nl.groups()))
+                break
+    return actions
+
+
+def validate_plan(actions: list[tuple[str, ...]], kind: str) -> tuple[bool, str]:
+    """Simulate the STRIPS domain from `init`; pass iff `goal` holds at the end."""
+    ops = STRIPS_OPS[kind]
+    init = [tuple(f) for f in json.loads(os.environ["SMEVALS_TASK_INIT"])]
+    goal = [tuple(f) for f in json.loads(os.environ["SMEVALS_TASK_GOAL"])]
+    assert init and goal, "vendoring guarantees non-empty init and goal"
+    if not actions:
+        return False, "no parseable plan steps in output"
+    if len(actions) > MAX_PLAN_STEPS_COUNT:
+        return False, f"plan exceeds {MAX_PLAN_STEPS_COUNT} steps"
+    state = set(init)
+    for step_index, action in enumerate(actions):
+        name, args = action[0], action[1:]
+        if name not in ops or len(args) != ops[name][0]:
+            return False, f"step {step_index + 1} {action}: unknown action or wrong arity"
+        _, pre, add, delete = ops[name]
+        bind = lambda fact: tuple(args[t] if isinstance(t, int) else t for t in fact)  # noqa: E731
+        missing = [bind(f) for f in pre if bind(f) not in state]
+        if missing:
+            return False, f"step {step_index + 1} {action}: precondition {missing[0]} not met"
+        state = (state - {bind(f) for f in delete}) | {bind(f) for f in add}
+    unmet = [f for f in goal if f not in state]
+    if unmet:
+        return False, f"plan executes but goal {unmet[0]} not achieved"
+    return True, f"valid {len(actions)}-step plan achieves the goal"
+
+
+def main() -> int:
+    run_dir = os.environ.get("SMEVALS_RUN_DIR")
+    kind = os.environ.get("SMEVALS_TASK_KIND")
+    graders = {"trip": grade_trip, "calendar": grade_calendar}
+    # VALIDATE config input: missing/invalid env is a harness bug, exit 2.
+    if not run_dir or kind not in ("trip", "calendar", "blocksworld", "mystery"):
+        print("plan-grade: SMEVALS_RUN_DIR and a valid task `kind` are required", file=sys.stderr)
+        return 2
+    needed = {"trip": ["SMEVALS_TASK_CITIES", "SMEVALS_TASK_DURATIONS"],
+              "calendar": ["SMEVALS_TASK_GOLDEN"],
+              "blocksworld": ["SMEVALS_TASK_INIT", "SMEVALS_TASK_GOAL"],
+              "mystery": ["SMEVALS_TASK_INIT", "SMEVALS_TASK_GOAL"]}[kind]
+    if any(not os.environ.get(key) for key in needed):
+        print(f"plan-grade: kind={kind} requires {needed}", file=sys.stderr)
+        return 2
+
+    output_path = pathlib.Path(run_dir) / "output.txt"
+    text = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+    if kind in graders:
+        passed, notes = graders[kind](text)
+    else:
+        try:
+            passed, notes = validate_plan(parse_plan_actions(text, kind), kind)
+        except (json.JSONDecodeError, TypeError):
+            print(f"plan-grade: task init/goal is not valid JSON for kind={kind}", file=sys.stderr)
+            return 2
+
+    metrics: dict[str, int | bool] = {"parsed": "no parseable" not in notes}
+    traj_items = count_traj_items(pathlib.Path(run_dir))
+    if traj_items is not None:
+        metrics["traj_items"] = traj_items
+    print(json.dumps({"score": 1.0 if passed else 0.0, "metrics": metrics, "notes": notes}))
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
