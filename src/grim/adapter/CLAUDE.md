@@ -54,7 +54,25 @@ D6 revised → native tool-calling).
   recently-valuable scripts (non-seeded, run, not mostly-failing), value-ranked
   then ordered most-recent-**last**, rendered by `instance_template` beside the
   task (not the system prompt) so recency bias weighs it. Off by default: no
-  `GRIM_RECALL` means the prompt is byte-for-byte unchanged.
+  `GRIM_RECALL` means the prompt is byte-for-byte unchanged. `GrimAgent` also
+  overrides `_prompt_and_handle_slash_commands` to extend mini's own `/h /m
+  /y /c /u`: `/verb ...` dispatches grim's own CLI verbs (`slash.py`) and
+  `/new <task>` starts a fresh session — see both below. `run()` itself loops
+  over `InteractiveAgent.run()` (rather than looping inside it) so `/new` can
+  break all the way out via an exit-flavored `UserInterruption` and restart
+  cleanly with a rotated `env.session_id`, instead of resetting state
+  mid-flow.
+- `slash.py` — `GRIM_CLI_VERBS` (a small, intentional duplicate of
+  `cli.py`'s subcommand names — `init`/`config`/`doctor`/`near`/`recent`/
+  `edit`/the six data verbs) and `run_slash_command(text, session_id) ->
+  str | None`. `/verb args...` dispatches straight to `cli.main` in-process
+  via the same `environment._invoke` bang.py uses — a human side-channel,
+  never sent to the model or billed as tokens, the same category as mini's
+  own `/h`. Recognizes `/edit NAME` too: since `_invoke` only swaps the
+  Python-level `sys.stdin`/`stdout`, not the OS file descriptors, `grim
+  edit`'s `$EDITOR` subprocess (inherited stdio, curate/CLAUDE.md) still
+  gets the real terminal — the same verb code works from a real shell and
+  from this slash command.
 - `run.sh` — the recommended launcher: `./run.sh -m <model> -y -t
   "<task>"`. A pre-launch wrapper only (runs *before* the agent loop
   starts, to pick a fresh `/tmp` trajectory path per invocation) — not

@@ -21,6 +21,7 @@ GRIM_CLI_VERBS = (
     "doctor",
     "near",
     "recent",
+    "edit",
     "write",
     "update",
     "read",
