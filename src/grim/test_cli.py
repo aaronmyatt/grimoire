@@ -148,3 +148,20 @@ def test_grim_doctor_fails_when_required_tool_missing(
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "FAIL" in out
+
+
+def test_grim_doctor_reports_enabled_languages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    cli.main(["init"])
+    capsys.readouterr()
+    monkeypatch.setenv("GRIM_LANGUAGES", "php,osascript,not_a_language")
+
+    exit_code = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0  # language checks are warnings, never critical
+    assert "lang: php" in out
+    assert "lang: osascript" in out
+    assert "not_a_language" in out
