@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Language dispatch table and subprocess execution.
 
 The only entry point `verbs/run.py` calls (see exec/CLAUDE.md). Stateless:
@@ -10,6 +11,7 @@ import contextlib
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -21,6 +23,11 @@ TIMEOUT_EXIT_CODE = 124
 # while draining output before falling back to a direct kill(). SIGKILL makes
 # this near-instant; the bound only guards a pathological unkillable descendant.
 _REAP_TIMEOUT_S = 5.0
+
+# Env var carrying the extended languages the user enabled (comma-joined).
+# config.py seeds it from ~/.grimoire/config.toml's `[languages]` table; a
+# shell-set value wins (setdefault). Unset/empty = everything off, the default.
+LANGUAGES_ENV = "GRIM_LANGUAGES"
 
 
 @dataclass(frozen=True)
@@ -46,9 +53,42 @@ class ExecutionRequest:
     timeout: float
 
 
-# language -> (file suffix, argv-prefix builder, version-check argv)
-# Phase 1 scope: bash + python only; Phase 4 extends this table with
-# js/ts -> bun and a `run --json` fallback for everything else (D9).
+@dataclass(frozen=True)
+class Runner:
+    """How to execute one language: temp-file suffix, argv builder, version
+    probe, the primary binary (for `grim doctor`), and an optional OS gate
+    (sys.platform values; None = runs on any platform)."""
+
+    suffix: str
+    build_argv: Callable[[Path], list[str]]
+    version_argv: list[str]
+    tool: str
+    platforms: tuple[str, ...] | None = None
+
+
+def _argv(binary: str, *prefix: str) -> Callable[[Path], list[str]]:
+    """An argv builder that runs BINARY on the temp script, with any fixed
+    PREFIX flags (e.g. `go run`) before the path."""
+    return lambda path: [binary, *prefix, str(path)]
+
+
+def _shlex_quote(text: str) -> str:
+    """Single-quote a path for embedding inside a CLI dot-command argument:
+    sqlite3/duckdb `.read` tokenize the rest of the line, so a space in a
+    temp path must be quoted (a separate argv element is rejected with
+    'Usage: .read FILE')."""
+    return "'%s'" % text.replace("'", "'\\''")
+
+
+def _read_argv(binary: str) -> Callable[[Path], list[str]]:
+    """An argv builder whose binary reads a dot-command FILE inline, e.g.
+    `sqlite3 :memory: ".read FILE"` — one argv element, path quoted."""
+    return lambda path: [binary, ":memory:", ".read %s" % _shlex_quote(str(path))]
+
+
+# language -> Runner. The builtin pair is always available; the extended
+# catalog (docs/languages.md) is opt-in via GRIM_LANGUAGES (config [languages])
+# and platform-gated where an interpreter is OS-specific (osascript -> darwin).
 #
 # python's --no-project (https://docs.astral.sh/uv/reference/cli/#uv-run)
 # stops `uv run` from ever attaching to *grimoire's own* pyproject.toml/
@@ -59,18 +99,125 @@ class ExecutionRequest:
 # is the sandboxed "install a dependency" story for python scripts, not a
 # regression in it. A bare script with no header just runs against uv's
 # base interpreter, dependency-free.
-_RUNNERS: dict[str, tuple[str, Callable[[Path], list[str]], list[str]]] = {
-    "bash": (".sh", lambda path: ["bash", str(path)], ["bash", "--version"]),
-    "python": (
+_BUILTIN_RUNNERS: dict[str, Runner] = {
+    "bash": Runner(".sh", _argv("bash"), ["bash", "--version"], tool="bash"),
+    "python": Runner(
         ".py",
         lambda path: ["uv", "run", "--no-project", str(path)],
         ["uv", "--version"],
+        tool="uv",
     ),
 }
 
+_EXTENDED_RUNNERS: dict[str, Runner] = {
+    "janet": Runner(".janet", _argv("janet"), ["janet", "--version"], tool="janet"),
+    "racket": Runner(".rkt", _argv("racket"), ["racket", "--version"], tool="racket"),
+    "hy": Runner(".hy", _argv("hy"), ["hy", "--version"], tool="hy"),
+    "nim": Runner(".nim", _argv("nim", "r"), ["nim", "--version"], tool="nim"),
+    "ruby": Runner(".rb", _argv("ruby"), ["ruby", "--version"], tool="ruby"),
+    # js/ts via bun (docs/languages.md: "bun (node)") — bun runs both.
+    "bun": Runner(".ts", _argv("bun"), ["bun", "--version"], tool="bun"),
+    "php": Runner(".php", _argv("php"), ["php", "--version"], tool="php"),
+    "go": Runner(".go", _argv("go", "run"), ["go", "version"], tool="go"),
+    "perl": Runner(".pl", _argv("perl"), ["perl", "--version"], tool="perl"),
+    "jq": Runner(".jq", _argv("jq", "-f"), ["jq", "--version"], tool="jq"),
+    # sql via the sqlite3 CLI: the script is `.read` inline (see _read_argv).
+    "sql": Runner(".sql", _read_argv("sqlite3"), ["sqlite3", "--version"], tool="sqlite3"),
+    "awk": Runner(".awk", _argv("awk", "-f"), ["awk", "--version"], tool="awk"),
+    # macOS-only: AppleScript needs the OS's osascript interpreter.
+    "osascript": Runner(
+        ".applescript",
+        _argv("osascript"),
+        ["osascript", "-e", "return (system version of (system info))"],
+        tool="osascript",
+        platforms=("darwin",),
+    ),
+    "lua": Runner(".lua", _argv("lua"), ["lua", "-v"], tool="lua"),
+    "luajit": Runner(".lua", _argv("luajit"), ["luajit", "-v"], tool="luajit"),
+    "fennel": Runner(".fnl", _argv("fennel"), ["fennel", "--version"], tool="fennel"),
+    "zig": Runner(".zig", _argv("zig", "run"), ["zig", "version"], tool="zig"),
+    # duckdb + prql: SQL-ish execution; duckdb mirrors sqlite3's .read, and
+    # prql compiles to SQL, piped straight into duckdb to actually run.
+    "duckdb": Runner(".sql", _read_argv("duckdb"), ["duckdb", "--version"], tool="duckdb"),
+    "prql": Runner(
+        ".prql",
+        lambda path: [
+            "bash",
+            "-c",
+            'prqlc compile --no-color "$1" | duckdb :memory:',
+            "prql",
+            str(path),
+        ],
+        ["prqlc", "--version"],
+        tool="prqlc",
+    ),
+    "typst": Runner(
+        ".typ",
+        lambda path: ["typst", "compile", str(path), str(path) + ".pdf"],
+        ["typst", "--version"],
+        tool="typst",
+    ),
+    "bc": Runner(".bc", _argv("bc"), ["bc", "--version"], tool="bc"),
+    "dc": Runner(".dc", _argv("dc"), ["dc", "--version"], tool="dc"),
+}
+
+_ALL_RUNNERS: dict[str, Runner] = {**_BUILTIN_RUNNERS, **_EXTENDED_RUNNERS}
+
+
 # Public so verbs/write.py can reject unsupported languages at write
 # time instead of only failing later here at run time.
-SUPPORTED_LANGUAGES: frozenset[str] = frozenset(_RUNNERS)
+def requested_languages() -> frozenset[str]:
+    """Extended languages named in $GRIM_LANGUAGES (seeded by config.py from
+    config.toml's [languages] table) BEFORE platform filtering — lets `grim
+    doctor` explain why one was skipped. Unset/empty -> empty set."""
+    raw = os.environ.get(LANGUAGES_ENV, "")
+    return frozenset(tok.strip() for tok in raw.split(",") if tok.strip())
+
+
+def enabled_languages() -> frozenset[str]:
+    """Extended languages the user opted into that are ALSO valid on this OS.
+    Everything is off by default: no config -> empty set. Never includes a
+    name outside the catalog (external input, filtered not asserted)."""
+    enabled = frozenset(
+        lang
+        for lang in requested_languages()
+        if lang in _EXTENDED_RUNNERS and _platform_ok(_EXTENDED_RUNNERS[lang])
+    )
+    assert enabled <= frozenset(_EXTENDED_RUNNERS), "enabled is a subset of the catalog"
+    return enabled
+
+
+def supported_languages() -> frozenset[str]:
+    """Languages `grim write --lang` accepts right now: bash + python always,
+    plus enabled, platform-valid extended languages (off by default)."""
+    return frozenset(_BUILTIN_RUNNERS) | enabled_languages()
+
+
+def language_tool(language: str) -> str:
+    """Primary binary for LANGUAGE (its `grim doctor` availability probe), or
+    '' for a language outside the catalog."""
+    runner = _ALL_RUNNERS.get(language)
+    return runner.tool if runner is not None else ""
+
+
+def language_status(language: str) -> str:
+    """Why LANGUAGE is (or isn't) runnable here, for `grim doctor`: 'ready',
+    an unknown-catalog note, or a platform-mismatch note."""
+    runner = _EXTENDED_RUNNERS.get(language)
+    if runner is None:
+        return "unknown language (not in the extended catalog)"
+    if not _platform_ok(runner):
+        return "not supported on %s — requires %s" % (
+            sys.platform,
+            ", ".join(runner.platforms or ()),
+        )
+    return "ready"
+
+
+def _platform_ok(runner: Runner) -> bool:
+    """A runner without a platform gate runs anywhere; a gated one only on the
+    listed sys.platform values (osascript: darwin)."""
+    return runner.platforms is None or sys.platform in runner.platforms
 
 
 def _env_fingerprint(version_argv: list[str]) -> str:
@@ -89,24 +236,31 @@ def _env_fingerprint(version_argv: list[str]) -> str:
 def dispatch(script_version: ScriptVersion, request: ExecutionRequest) -> ExecutionResult:
     """Run `script_version.body` under the runner for its language.
 
-    Raises ValueError for a language outside `_RUNNERS` — `language` is
-    external input (came from `grim write --lang`), so this is real
-    validation, not an assertion (root CLAUDE.md §3).
+    Raises ValueError for a language outside the catalog or one that is
+    catalogued but invalid on this platform — `language` is external input
+    (came from `grim write --lang`), so this is real validation, not an
+    assertion (root CLAUDE.md §3). A catalogued language runs even when
+    currently disabled in config: the toggle gates *writing* new scripts
+    (supported_languages), not executing ones already in the library.
     """
     assert request.timeout > 0, "timeout must be positive"
-    if script_version.language not in _RUNNERS:
-        supported = ", ".join(sorted(_RUNNERS))
+    runner = _ALL_RUNNERS.get(script_version.language)
+    if runner is None:
+        supported = ", ".join(sorted(_ALL_RUNNERS))
         raise ValueError(
-            f"unsupported language {script_version.language!r} — "
-            f"supported: {supported} (Phase 4 extends this table)"
+            f"unsupported language {script_version.language!r} — supported: {supported}"
         )
-    suffix, build_argv, version_argv = _RUNNERS[script_version.language]
-    fingerprint = _env_fingerprint(version_argv)
+    if not _platform_ok(runner):
+        raise ValueError(
+            f"language {script_version.language!r} is not supported on this platform "
+            f"({sys.platform!r}) — requires {runner.platforms!r}"
+        )
+    fingerprint = _env_fingerprint(runner.version_argv)
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=True) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=runner.suffix, delete=True) as f:
         f.write(script_version.body)
         f.flush()
-        command = build_argv(Path(f.name)) + request.argv
+        command = runner.build_argv(Path(f.name)) + request.argv
         result = _run(command, request.stdin, request.cwd, request.timeout)
 
     assert result.exit_code is not None, "dispatch must always resolve an exit code"

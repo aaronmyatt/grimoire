@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Internal helpers for the curate slice — not public surface.
 
 Slices never import each other (root CLAUDE.md §2), so connect()/
@@ -13,6 +14,29 @@ import sqlite3
 import subprocess
 
 from grim import db
+
+# language -> syntax-checker argv (body fed on stdin), a deliberate copy of
+# verbs/_shared.py's map (slice independence). Best-effort: a missing binary
+# degrades to no lint, and `grim doctor` reports missing interpreters.
+_SUBPROCESS_LINT: dict[str, list[str]] = {
+    "ruby": ["ruby", "-c"],
+    "php": ["php", "-l"],
+    "perl": ["perl", "-c"],
+    "go": ["gofmt", "-e"],
+}
+
+
+def _subprocess_lint(argv: list[str], body: str, language: str) -> str | None:
+    """Run a syntax checker that reads `body` on stdin: None when it passes, a
+    diagnostic string when it fails. A missing checker binary (OSError) means
+    no lint — best-effort, never a write blocker."""
+    try:
+        result = subprocess.run(argv, input=body, capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return f"{language} syntax error: {result.stderr.strip() or result.stdout.strip()}"
+    return None
 
 
 def connect() -> sqlite3.Connection:
@@ -48,8 +72,9 @@ def resolve_script_version(conn: sqlite3.Connection, name: str, version: int | N
 
 
 def lint(language: str, body: str) -> str | None:
-    """Diagnostic string if `body` fails syntax lint, else None (unknown
-    languages pass silently — Phase 1 scope is bash + python)."""
+    """Diagnostic string if `body` fails syntax lint, else None. Unknown
+    languages, and languages without a cheap offline checker, pass silently;
+    opt-in extended languages get best-effort lints where one exists."""
     if language == "python":
         try:
             compile(body, "<grim edit>", "exec")
@@ -63,6 +88,8 @@ def lint(language: str, body: str) -> str | None:
         if result.returncode != 0:
             return f"bash syntax error: {result.stderr.strip()}"
         return None
+    if language in _SUBPROCESS_LINT:
+        return _subprocess_lint(_SUBPROCESS_LINT[language], body, language)
     return None
 
 

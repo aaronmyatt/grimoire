@@ -2,17 +2,21 @@
 
 ## Purpose
 The language dispatch table and execution envelope: `python → uv run`,
-`bash → bash`, `js/ts → bun`, everything else → `run --json`
-(Esubaalew/run). Owns truncation of stored output into the observation
-returned to the agent (build plan D8, D9, §4).
+`bash → bash`, plus an opt-in catalog of extended languages
+(docs/languages.md) enabled via config.toml's `[languages]` table — all
+off by default, platform-gated where needed (osascript → macOS only).
+Owns truncation of stored output into the observation returned to the
+agent (build plan D8, D9, §4).
 
 ## Public interface
 - `dispatch.py` — `dispatch(script_version: ScriptVersion, request:
   ExecutionRequest) -> ExecutionResult`. `ExecutionRequest` bundles
   `argv`/`stdin`/`cwd`/`timeout` (root CLAUDE.md §3: >4 params bundle
   into an options struct). The only entry point the `verbs/run.py`
-  module calls. Phase 1 scope: bash + python only (Phase 4 extends
-  `_RUNNERS`).
+  module calls. Bash + python always run; a catalogued extended language
+  runs even when disabled in config (the toggle gates writing, not
+  executing the library), and `supported_languages()` — bash + python +
+  enabled, platform-valid extended — is the write-time gate.
 - `envelope.py` — `truncate(stdout, stderr, ...) -> str`, the
   first-40/last-10-lines formatting described in build plan §4.
 

@@ -113,3 +113,93 @@ def test_shell_env_beats_repo_and_global(tmp_path: Path, monkeypatch: pytest.Mon
     config.apply_global_config(global_cfg)
 
     assert os.environ["GRIM_MODEL"] == "shell/m"  # env beats both files
+
+
+def test_languages_table_seeds_joined_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[languages]\nruby = true\njq = true\n")
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+
+    config.apply_global_config(cfg)
+
+    assert os.environ["GRIM_LANGUAGES"] == "jq,ruby"  # sorted, comma-joined
+
+
+def test_languages_array_form_seeds_joined_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('languages = ["ruby", "jq"]\n')
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+
+    config.apply_global_config(cfg)
+
+    assert os.environ["GRIM_LANGUAGES"] == "jq,ruby"
+
+
+def test_languages_false_entries_do_not_enable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[languages]\nruby = false\n")
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+
+    config.apply_global_config(cfg)
+
+    # the key present but nothing enabled -> explicit empty disable
+    assert os.environ.get("GRIM_LANGUAGES") == ""
+
+
+def test_languages_absent_is_off_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('model = "prov/m"\n')
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+
+    config.apply_global_config(cfg)
+
+    assert "GRIM_LANGUAGES" not in os.environ  # no languages key -> nothing seeded
+
+
+def test_languages_shell_env_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[languages]\nruby = true\n")
+    monkeypatch.setenv("GRIM_LANGUAGES", "perl")
+
+    config.apply_global_config(cfg)
+
+    assert os.environ["GRIM_LANGUAGES"] == "perl"  # setdefault never overwrites
+
+
+def test_languages_repo_overrides_global(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "proj"
+    (repo / ".grimoire").mkdir(parents=True)
+    (repo / ".grimoire" / "config.toml").write_text("[languages]\nruby = true\n")
+    global_cfg = tmp_path / "global.toml"
+    global_cfg.write_text("[languages]\njq = true\n")
+    monkeypatch.chdir(repo)
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+
+    config.apply_global_config(global_cfg)
+
+    assert os.environ["GRIM_LANGUAGES"] == "ruby"  # repo wins over global
+
+
+def test_effective_config_reports_languages_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[languages]\nruby = true\n")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg)
+    monkeypatch.chdir(tmp_path)  # no repo layer under tmp
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+    config.apply_global_config(cfg)
+
+    settings = config.effective_config()
+
+    langs = [s for s in settings if s.key == "languages"]
+    assert len(langs) == 1
+    assert langs[0].env == "GRIM_LANGUAGES"
+    assert langs[0].value == "ruby"
+    assert langs[0].source == "global"

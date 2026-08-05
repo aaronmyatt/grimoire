@@ -19,7 +19,9 @@ agent:
     finish. There is no shell available to you directly; anything else you
     need happens inside a script you write (a bash script can call any
     command on PATH, a python script can subprocess.run any CLI tool).
-    Scripts may only be written in python or bash.
+    Scripts may only be written in python or bash, plus any extended languages
+    you've enabled under [languages] in ~/.grimoire/config.toml (all off by
+    default; osascript is macOS-only).
 
     Each script you accumulate becomes a reusable verb in your vocabulary,
     and find is how you remember you know it. Naming and descriptions are

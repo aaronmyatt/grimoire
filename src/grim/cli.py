@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from grim import config, db
 from grim.curate import edit, near, recent, tags
+from grim.exec import dispatch
 from grim.seeds.bodies import SEEDS
 from grim.seeds.loader import load_seeds
 from grim.verbs import find, read, run, update, write
@@ -81,10 +82,13 @@ _REQUIRED_TOOLS = ("uv", "bash")
 _OPTIONAL_TOOLS = ("rg", "git")
 
 
-def _tool_check(tool: str, *, critical: bool) -> _Check:
+def _tool_check(
+    tool: str, *, critical: bool, hint: str | None = None, label: str | None = None
+) -> _Check:
     path = shutil.which(tool)
-    hint = "required" if critical else "a seed needs it"
-    return _Check(f"tool: {tool}", path is not None, path or f"not on PATH — {hint}", critical)
+    hint = hint or ("required" if critical else "a seed needs it")
+    detail = path or f"not on PATH — {hint}"
+    return _Check(label or f"tool: {tool}", path is not None, detail, critical)
 
 
 def _fts5_check() -> _Check:
@@ -117,9 +121,34 @@ def _config_check() -> _Check:
         return _Check("config", False, f"{path}: {exc}", critical=False)
 
 
+def _language_checks() -> list[_Check]:
+    """One warning-level check per language the user enabled in config:
+    interpreter availability for platform-valid ones, a why-not note for the
+    rest (unknown name, wrong OS). Never critical — opt-ins are off by
+    default, and doctor must not fail because one is missing."""
+    checks: list[_Check] = []
+    for lang in sorted(dispatch.requested_languages()):
+        if lang in dispatch.enabled_languages():
+            tool = dispatch.language_tool(lang)
+            checks.append(
+                _tool_check(
+                    tool,
+                    critical=False,
+                    hint="enabled in config [languages]",
+                    label=f"lang: {tool}",
+                )
+            )
+        else:
+            detail = dispatch.language_status(lang)
+            checks.append(_Check(f"lang: {lang}", True, detail, critical=False))
+    assert len(checks) <= len(dispatch.requested_languages()), "one check per requested language"
+    return checks
+
+
 def _doctor_checks() -> list[_Check]:
     checks = [_tool_check(t, critical=True) for t in _REQUIRED_TOOLS]
     checks += [_tool_check(t, critical=False) for t in _OPTIONAL_TOOLS]
+    checks += _language_checks()
     checks += [_fts5_check(), _db_check(), _config_check()]
     assert len(checks) >= len(_REQUIRED_TOOLS), "doctor runs at least the required-tool checks"
     return checks

@@ -189,6 +189,12 @@ def test_run_script_supports_nested_grim_run_without_deadlocking(
     # neither sets GRIM_SESSION), matching how composition would actually
     # be used within one agent session.
     conn = _migrated_conn(tmp_path, monkeypatch)
+    # Hermetic: an ambient $GRIM_SESSION (e.g. from the agent harness or the
+    # telegram bot) would leak into the nested `grim run` subprocess, landing
+    # its execution row in a different session — both rows would get seq 1
+    # and the assertion below would fail. Clear it so the subprocess
+    # deterministically falls back to 'human-adhoc'.
+    monkeypatch.delenv("GRIM_SESSION", raising=False)
     _seed_script(conn, body="print('base result')")
     write_script(
         conn,

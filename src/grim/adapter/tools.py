@@ -17,10 +17,23 @@ six-verb data surface (root CLAUDE.md §2, build plan D11/D12) is unchanged.
 
 from __future__ import annotations
 
+import os
 import shlex
 from typing import Any
 
 SUBMIT_TOOL_NAME = "submit"
+
+
+def _lang_enum() -> list[str]:
+    """The `--lang` choices the model may propose: bash + python always, plus
+    extended languages enabled in $GRIM_LANGUAGES (seeded by config.py from
+    config.toml's [languages] table; off by default). A deliberate copy of
+    exec/dispatch.py's env parse — the adapter never imports a slice; the
+    authoritative platform gate stays in write_script."""
+    raw = os.environ.get("GRIM_LANGUAGES", "")
+    enabled = {tok.strip() for tok in raw.split(",") if tok.strip()}
+    return sorted({"python", "bash"} | enabled)
+
 
 # The six data verbs `tool_call_to_argv` knows how to invoke. `submit` is
 # deliberately absent — it never reaches cli.main (environment.py stops on
@@ -110,10 +123,11 @@ GRIM_TOOLS: list[dict[str, Any]] = [
         "write",
         "Create a new script in the library. Name it verb_noun; the description is a "
         "search-index entry for your future self's `find` queries, not documentation. "
-        "Only python or bash. The body is the full script source.",
+        "python or bash, plus any languages you enabled in config (off by default). "
+        "The body is the full script source.",
         {
             "name": {**_STR, "description": "slug, ^[a-z][a-z0-9_]{2,63}$"},
-            "lang": {"type": "string", "enum": ["python", "bash"]},
+            "lang": {"type": "string", "enum": _lang_enum()},
             "desc": {**_STR, "description": "search-index description"},
             "body": {**_STR, "description": "full script source"},
             "parent": {**_STR, "description": "fork lineage: parent script name[@version]"},
@@ -149,7 +163,7 @@ GRIM_TOOLS: list[dict[str, Any]] = [
         "Terse rows of library scripts. Prefer find when you know what you want.",
         {
             "scope": _STR,
-            "lang": {"type": "string", "enum": ["python", "bash"]},
+            "lang": {"type": "string", "enum": _lang_enum()},
             "limit": _INT,
             "offset": _INT,
         },
