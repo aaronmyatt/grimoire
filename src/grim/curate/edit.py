@@ -174,31 +174,34 @@ def persist_edit(conn: sqlite3.Connection, request: PersistRequest) -> EditResul
 def cmd_edit(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        current = _shared.resolve_script_version(conn, args.name, None)
-    except LookupError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        try:
+            current = _shared.resolve_script_version(conn, args.name, None)
+        except LookupError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
-    editor = os.environ.get("EDITOR", DEFAULT_EDITOR)
-    new_body = edit_in_editor(current["body"], current["language"], editor=editor)
-    if new_body == current["body"]:
-        print("no changes")
+        editor = os.environ.get("EDITOR", DEFAULT_EDITOR)
+        new_body = edit_in_editor(current["body"], current["language"], editor=editor)
+        if new_body == current["body"]:
+            print("no changes")
+            return 0
+
+        diff = unified_diff(current["body"], new_body)
+        options = ChangelogOptions(override=args.changelog, model=changelog_model())
+        changelog = resolve_changelog(diff, options)
+        request = PersistRequest(
+            script_id=current["script_id"],
+            latest_version=current["version"],
+            language=current["language"],
+            body=new_body,
+            changelog=changelog,
+        )
+        try:
+            result = persist_edit(conn, request)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"updated {args.name}@{result.version} — {result.changelog}")
         return 0
-
-    diff = unified_diff(current["body"], new_body)
-    options = ChangelogOptions(override=args.changelog, model=changelog_model())
-    changelog = resolve_changelog(diff, options)
-    request = PersistRequest(
-        script_id=current["script_id"],
-        latest_version=current["version"],
-        language=current["language"],
-        body=new_body,
-        changelog=changelog,
-    )
-    try:
-        result = persist_edit(conn, request)
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(f"updated {args.name}@{result.version} — {result.changelog}")
-    return 0
+    finally:
+        conn.close()

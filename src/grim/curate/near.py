@@ -54,11 +54,14 @@ def neighbors(
 def cmd_near(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        precedes, follows = neighbors(conn, args.name, args.limit or DEFAULT_NEAR_LIMIT)
-    except LookupError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    for label, rows in (("before", precedes), ("after", follows)):
-        for row in rows:
-            print(f"{label}\t{row['name']}\ttimes={row['times_adjacent']}")
-    return 0
+        try:
+            precedes, follows = neighbors(conn, args.name, args.limit or DEFAULT_NEAR_LIMIT)
+        except LookupError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        for label, rows in (("before", precedes), ("after", follows)):
+            for row in rows:
+                print(f"{label}\t{row['name']}\ttimes={row['times_adjacent']}")
+        return 0
+    finally:
+        conn.close()

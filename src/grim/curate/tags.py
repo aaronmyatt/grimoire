@@ -99,42 +99,54 @@ def scripts_for_tag(
 def cmd_tag(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        normalized = add_tags(conn, args.name, args.tags)
-    except (LookupError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(f"tagged {args.name}: {', '.join(normalized)}")
-    return 0
+        try:
+            normalized = add_tags(conn, args.name, args.tags)
+        except (LookupError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"tagged {args.name}: {', '.join(normalized)}")
+        return 0
+    finally:
+        conn.close()
 
 
 def cmd_untag(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        normalized = remove_tags(conn, args.name, args.tags)
-    except (LookupError, ValueError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(f"untagged {args.name}: {', '.join(normalized)}")
-    return 0
+        try:
+            normalized = remove_tags(conn, args.name, args.tags)
+        except (LookupError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"untagged {args.name}: {', '.join(normalized)}")
+        return 0
+    finally:
+        conn.close()
 
 
 def cmd_tags(args: argparse.Namespace) -> int:
     conn = _shared.connect()
-    for row in list_tags(conn, args.limit or DEFAULT_TAG_LIMIT):
-        print(f"{row['name']}\tuses={row['uses']}")
-    return 0
+    try:
+        for row in list_tags(conn, args.limit or DEFAULT_TAG_LIMIT):
+            print(f"{row['name']}\tuses={row['uses']}")
+        return 0
+    finally:
+        conn.close()
 
 
 def cmd_tagged(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        rows = scripts_for_tag(conn, args.tag, args.limit or DEFAULT_TAG_LIMIT)
-    except LookupError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    for row in rows:
-        print(f"{row['name']}\t{row['language']}\t{row['description']}")
-    return 0
+        try:
+            rows = scripts_for_tag(conn, args.tag, args.limit or DEFAULT_TAG_LIMIT)
+        except LookupError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        for row in rows:
+            print(f"{row['name']}\t{row['language']}\t{row['description']}")
+        return 0
+    finally:
+        conn.close()
 
 
 # --- favourite: sugar over tagging with one well-known tag ------------------
@@ -147,31 +159,40 @@ FAVOURITE_TAG = "favourite"
 def cmd_favourite(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        add_tags(conn, args.name, [FAVOURITE_TAG])
-    except LookupError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(f"favourited {args.name}")
-    return 0
+        try:
+            add_tags(conn, args.name, [FAVOURITE_TAG])
+        except (LookupError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"favourited {args.name}")
+        return 0
+    finally:
+        conn.close()
 
 
 def cmd_unfavourite(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        remove_tags(conn, args.name, [FAVOURITE_TAG])
-    except LookupError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(f"unfavourited {args.name}")
-    return 0
+        try:
+            remove_tags(conn, args.name, [FAVOURITE_TAG])
+        except (LookupError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"unfavourited {args.name}")
+        return 0
+    finally:
+        conn.close()
 
 
 def cmd_favourites(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        rows = scripts_for_tag(conn, FAVOURITE_TAG, args.limit or DEFAULT_TAG_LIMIT)
-    except LookupError:
-        rows = []  # nobody has favourited anything yet — not an error
-    for row in rows:
-        print(f"{row['name']}\t{row['language']}\t{row['description']}")
-    return 0
+        try:
+            rows = scripts_for_tag(conn, FAVOURITE_TAG, args.limit or DEFAULT_TAG_LIMIT)
+        except LookupError:
+            rows = []  # nobody has favourited anything yet — not an error
+        for row in rows:
+            print(f"{row['name']}\t{row['language']}\t{row['description']}")
+        return 0
+    finally:
+        conn.close()

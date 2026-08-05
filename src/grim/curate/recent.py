@@ -34,6 +34,9 @@ def recent_scripts(
 
 def cmd_recent(args: argparse.Namespace) -> int:
     conn = _shared.connect()
-    for row in recent_scripts(conn, args.limit or DEFAULT_RECENT_LIMIT):
-        print(f"{row['name']}\truns={row['runs']}\tlast={row['last_used']}")
-    return 0
+    try:
+        for row in recent_scripts(conn, args.limit or DEFAULT_RECENT_LIMIT):
+            print(f"{row['name']}\truns={row['runs']}\tlast={row['last_used']}")
+        return 0
+    finally:
+        conn.close()
