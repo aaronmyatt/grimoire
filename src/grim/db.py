@@ -38,12 +38,21 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     settles on for "one agent + one human." foreign_keys defaults OFF in
     SQLite for backward compatibility and must be set per-connection
     (https://sqlite.org/pragma.html#pragma_foreign_keys).
+
+    Many sessions share one library, and WAL allows a single writer, so
+    busy_timeout is 30 s (not SQLite's default 0): a writer waits out brief
+    collisions with another session's commit instead of failing instantly.
+    synchronous=NORMAL is the WAL-mode durability sweet spot (safe across
+    app crashes; one fsync per checkpoint instead of per commit), which
+    shortens write transactions and therefore the window another session's
+    write has to wait.
     """
     path = db_path if db_path is not None else resolve_db_path()
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA synchronous = NORMAL")
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
     fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     assert str(mode).lower() == "wal", f"expected WAL journal mode, got {mode}"
