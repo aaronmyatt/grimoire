@@ -172,26 +172,37 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
     # dispatched script may have already inserted execution rows for this
     # same session, so the "next" seq must be read fresh here to avoid a
     # UNIQUE(session_id, seq) collision with whatever it already claimed.
-    seq = _next_seq(conn, request.session_id)
-    cursor = conn.execute(
-        "INSERT INTO execution (script_version_id, session_id, seq, argv, stdin, cwd, "
-        "exit_code, stdout, stderr, duration_ms, env_fingerprint) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            row["id"],
-            request.session_id,
-            seq,
-            json.dumps(request.argv),
-            request.stdin,
-            request.cwd,
-            result.exit_code,
-            result.stdout,
-            result.stderr,
-            result.duration_ms,
-            result.env_fingerprint,
-        ),
-    )
-    conn.commit()
+    # BEGIN IMMEDIATE serializes the claim across PROCESSES that share a
+    # session id (several concurrent `grim run`s on "human-adhoc", a bot and
+    # an agent stamped with the same GRIM_SESSION): a second writer blocks
+    # until this commit, then sees the row and takes the next seq. The window
+    # is two statements plus a commit — microseconds — so it does not
+    # reintroduce write-lock hold-ups. Rollback on failure releases the lock.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        seq = _next_seq(conn, request.session_id)
+        cursor = conn.execute(
+            "INSERT INTO execution (script_version_id, session_id, seq, argv, stdin, cwd, "
+            "exit_code, stdout, stderr, duration_ms, env_fingerprint) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row["id"],
+                request.session_id,
+                seq,
+                json.dumps(request.argv),
+                request.stdin,
+                request.cwd,
+                result.exit_code,
+                result.stdout,
+                result.stderr,
+                result.duration_ms,
+                result.env_fingerprint,
+            ),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
     assert cursor.lastrowid is not None, "execution insert must produce a rowid"
     header = (
@@ -210,32 +221,35 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
 
 def cmd_run(args: argparse.Namespace) -> int:
     conn = _shared.connect()
-    name, version = _shared.parse_name_version(args.name)
-    stdin = Path(args.stdin_file).read_text() if args.stdin_file else None
-    timeout = resolve_timeout(args.timeout, os.environ.get(_TIMEOUT_ENV))
-    if args.timeout and args.timeout > MAX_TIMEOUT_S:
-        print(
-            f"[grim] --timeout {args.timeout:g}s exceeds the {MAX_TIMEOUT_S:g}s ceiling; "
-            "clamped. Run long-lived processes as a background job instead.",
-            file=sys.stderr,
-        )
-    request = RunRequest(
-        name=name,
-        version=version,
-        argv=args.args,
-        stdin=stdin,
-        cwd=None,
-        timeout=timeout,
-        session_id=_shared.session_id_from_env(),
-        # getattr keeps this working before cli.py (frozen, committed
-        # separately) grows the --head/--tail options; absent → None → full.
-        head_lines=getattr(args, "head", None),
-        tail_lines=getattr(args, "tail", None),
-    )
     try:
-        result = run_script(conn, request)
-    except (LookupError, CallDepthExceeded) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(result.observation)
-    return result.exit_code
+        name, version = _shared.parse_name_version(args.name)
+        stdin = Path(args.stdin_file).read_text() if args.stdin_file else None
+        timeout = resolve_timeout(args.timeout, os.environ.get(_TIMEOUT_ENV))
+        if args.timeout and args.timeout > MAX_TIMEOUT_S:
+            print(
+                f"[grim] --timeout {args.timeout:g}s exceeds the {MAX_TIMEOUT_S:g}s ceiling; "
+                "clamped. Run long-lived processes as a background job instead.",
+                file=sys.stderr,
+            )
+        request = RunRequest(
+            name=name,
+            version=version,
+            argv=args.args,
+            stdin=stdin,
+            cwd=None,
+            timeout=timeout,
+            session_id=_shared.session_id_from_env(),
+            # getattr keeps this working before cli.py (frozen, committed
+            # separately) grows the --head/--tail options; absent → None → full.
+            head_lines=getattr(args, "head", None),
+            tail_lines=getattr(args, "tail", None),
+        )
+        try:
+            result = run_script(conn, request)
+        except (LookupError, CallDepthExceeded) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(result.observation)
+        return result.exit_code
+    finally:
+        conn.close()
