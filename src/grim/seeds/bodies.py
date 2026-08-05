@@ -192,7 +192,32 @@ db_path = os.environ.get("GRIM_DB") or str(Path.home() / ".grimoire" / "grimoire
 conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
 
-EXT = {"python": "py", "bash": "sh"}
+EXT = {
+    "python": "py",
+    "bash": "sh",
+    "janet": "janet",
+    "racket": "rkt",
+    "hy": "hy",
+    "nim": "nim",
+    "ruby": "rb",
+    "bun": "ts",
+    "php": "php",
+    "go": "go",
+    "perl": "pl",
+    "jq": "jq",
+    "sql": "sql",
+    "awk": "awk",
+    "osascript": "applescript",
+    "lua": "lua",
+    "luajit": "lua",
+    "fennel": "fnl",
+    "zig": "zig",
+    "duckdb": "sql",
+    "prql": "prql",
+    "typst": "typ",
+    "bc": "bc",
+    "dc": "dc",
+}
 
 rows = conn.execute(
     "SELECT s.name, s.language, sv.body FROM script s "
