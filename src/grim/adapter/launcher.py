@@ -37,7 +37,11 @@ from grim import cli, db
 # wheel. Ref: https://docs.python.org/3/library/importlib.resources.html
 _CONFIG_PACKAGE = "grim.adapter"
 _CONFIG_NAME = "grimoire.yaml"
-_MISSING_EXTRA_HINT = 'grim-agent needs the "agent" extra: uv tool install "grimoire[agent]"'
+_MISSING_EXTRA_HINT = (
+    'grim-agent needs the "agent" extra: uv tool install "grimoire[agent]"'
+    " (or, from a checkout: uv run --extra agent grim-agent)\n"
+    "Once tool-installed it is on PATH outside uv: GRIM_MODEL=... grim-agent '<task>'"
+)
 MISSING_EXTRA_EXIT_CODE = 2  # returned when the optional `agent` extra isn't importable
 
 # One-line startup banner, replacing mini's version/migration/config-path
