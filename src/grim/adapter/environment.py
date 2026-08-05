@@ -11,7 +11,9 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import sqlite3
 import sys
+import time
 import uuid
 from typing import Any
 
@@ -34,7 +36,11 @@ class GrimEnvironment(LocalEnvironment):
     def __init__(self, *, config_class: type = GrimEnvironmentConfig, **kwargs: Any) -> None:
         self.config = config_class(**kwargs)
         self.session_id = self.config.session_id or str(uuid.uuid4())
-        db.migrate(db.connect())  # no `init` verb reaches the agent (D12) — ensure schema exists
+        conn = db.connect()  # no `init` verb reaches the agent (D12) — ensure schema exists
+        try:
+            db.migrate(conn)
+        finally:
+            conn.close()
 
     def execute(
         self, action: dict[str, Any], cwd: str = "", *, timeout: int | None = None
@@ -76,6 +82,17 @@ def _session_env(session_id: str) -> Any:
             os.environ["GRIM_SESSION"] = previous
 
 
+# Several sessions (and the human CLI) share one SQLite library, and WAL
+# allows a single writer: a verb's first write can briefly collide with
+# another session's commit and raise sqlite3.OperationalError("database is
+# locked") after busy_timeout. Contention is transient — every verb write
+# transaction is committed promptly — so retry with backoff before giving up.
+# A still-locked write degrades into an ordinary nonzero observation the
+# agent can read and self-correct from, never a session-killing exception.
+_BUSY_RETRIES = 3
+_BUSY_BACKOFF_S = (0.5, 1.0, 2.0)
+
+
 def _invoke(argv: list[str], stdin: str, session_id: str) -> tuple[str, int]:
     """Calls cli.main(argv) in-process with captured stdio — the only
     path from the agent into verbs/*, matching D7's "no shell in the
@@ -91,26 +108,45 @@ def _invoke(argv: list[str], stdin: str, session_id: str) -> tuple[str, int]:
     read (argparse's usage text is already captured on stderr) and
     self-correct from — which is the entire point of the six-verb sandbox.
     Ref: https://docs.python.org/3/library/argparse.html#exiting-methods
+
+    The same never-tear-through-the-loop contract covers a transient
+    sqlite3.OperationalError ("database is locked"): retry cli.main with
+    short backoff; only a persistently locked write becomes an ordinary
+    observation (returncode 1) instead of crashing the session.
     """
     stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
     original_stdin = sys.stdin
     sys.stdin = io.StringIO(stdin)
     try:
-        with (
-            _session_env(session_id),
-            contextlib.redirect_stdout(stdout_buf),
-            contextlib.redirect_stderr(stderr_buf),
-        ):
-            exit_code = cli.main(argv)
-    except SystemExit as exit_signal:
-        # Normalize SystemExit.code to a shell-style int the same way the
-        # CPython interpreter does on process exit: None -> 0, an int ->
-        # itself, anything else -> 1 (argparse uses 2 for usage errors, 0
-        # for --help). The redirected buffers already hold argparse's
-        # message because it writes before calling sys.exit.
-        # Ref: https://docs.python.org/3/library/exceptions.html#SystemExit
-        code = exit_signal.code
-        exit_code = code if isinstance(code, int) else (0 if code is None else 1)
+        attempt = 0
+        while True:
+            try:
+                with (
+                    _session_env(session_id),
+                    contextlib.redirect_stdout(stdout_buf),
+                    contextlib.redirect_stderr(stderr_buf),
+                ):
+                    exit_code = cli.main(argv)
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt >= _BUSY_RETRIES:
+                    note = (
+                        f"[grim] error: database busy — {exc} (another session "
+                        "holds the write lock; retry the verb)\n"
+                    )
+                    return note, 1
+                time.sleep(_BUSY_BACKOFF_S[attempt])
+                attempt += 1
+            except SystemExit as exit_signal:
+                # Normalize SystemExit.code to a shell-style int the same way
+                # the CPython interpreter does on process exit: None -> 0, an
+                # int -> itself, anything else -> 1 (argparse uses 2 for usage
+                # errors, 0 for --help). The redirected buffers already hold
+                # argparse's message because it writes before calling sys.exit.
+                # Ref: https://docs.python.org/3/library/exceptions.html#SystemExit
+                code = exit_signal.code
+                exit_code = code if isinstance(code, int) else (0 if code is None else 1)
+                break
     finally:
         sys.stdin = original_stdin
     assert isinstance(exit_code, int), "invoke must always resolve an int exit code"
