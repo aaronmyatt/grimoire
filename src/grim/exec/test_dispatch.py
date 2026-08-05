@@ -54,6 +54,17 @@ def test_bash_receives_argv() -> None:
     assert result.stdout.strip() == "a-b"
 
 
+def test_bash_binary_output_decodes_with_replacement_not_crash() -> None:
+    # Regression: a script emitting non-UTF-8 bytes (e.g. cat-ing a binary
+    # file) used to raise UnicodeDecodeError inside proc.communicate(),
+    # killing the whole caller. errors="replace" maps undecodable bytes to
+    # U+FFFD instead. Ref: https://docs.python.org/3/library/codecs.html#error-handlers
+    sv = ScriptVersion(language="bash", body=r"printf '\xa2binary\xff'")
+    result = dispatch(sv, _request())
+    assert result.exit_code == 0
+    assert result.stdout == "�binary�"
+
+
 def test_bash_receives_stdin() -> None:
     sv = ScriptVersion(language="bash", body="cat")
     result = dispatch(sv, _request(stdin="piped in"))

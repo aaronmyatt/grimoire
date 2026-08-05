@@ -156,6 +156,8 @@ def _run(command: list[str], stdin: str | None, cwd: str | None, timeout: float)
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=cwd,
         start_new_session=True,
     )
