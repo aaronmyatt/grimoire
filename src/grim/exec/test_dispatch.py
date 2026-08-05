@@ -1,22 +1,27 @@
-"""Smoke tests for exec/dispatch.py — bash + python runners only (Phase 1
-scope; build plan Phase 4 extends the table). No network access needed:
-a bare python script with no PEP 723 header runs fine under `uv run`.
-"""
+#!/usr/bin/env python3
+"""Smoke tests for exec/dispatch.py — the bash + python runners always, plus
+config-gated extended languages (off by default; docs/languages.md). No
+network access needed: a bare python script with no PEP 723 header runs fine
+under `uv run`."""
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import sys
 import time
 
 import pytest
 
 from grim.exec.dispatch import (
-    SUPPORTED_LANGUAGES,
     TIMEOUT_EXIT_CODE,
     ExecutionRequest,
     ExecutionResult,
     ScriptVersion,
     dispatch,
+    enabled_languages,
+    language_status,
+    supported_languages,
 )
 
 BASH_TIMEOUT_S = 5
@@ -102,7 +107,9 @@ def test_python_propagates_nonzero_exit() -> None:
 
 
 def test_unsupported_language_raises_value_error() -> None:
-    sv = ScriptVersion(language="ruby", body="puts 'hi'")
+    # fortran is outside the catalog entirely (unlike ruby, which is
+    # catalogued and simply off by default).
+    sv = ScriptVersion(language="fortran", body="print *, 'hi'")
     with pytest.raises(ValueError, match="unsupported language"):
         dispatch(sv, _request())
 
@@ -116,10 +123,87 @@ def test_env_fingerprint_present_for_bash_and_python() -> None:
     assert python_result.env_fingerprint.startswith("uv:")
 
 
-def test_supported_languages_is_bash_and_python_only() -> None:
-    # Documents the exact contract verbs/write.py validates against —
-    # catches accidental drift when Phase 4 extends the dispatch table.
-    assert SUPPORTED_LANGUAGES == frozenset({"bash", "python"})
+def test_supported_languages_off_by_default() -> None:
+    # With no [languages] config, only bash + python are writable — the exact
+    # contract verbs/write.py validates against.
+    assert supported_languages() == frozenset({"bash", "python"})
+
+
+def test_enabled_languages_filters_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_LANGUAGES", "ruby,jq,not_a_language")
+    assert enabled_languages() == frozenset({"ruby", "jq"})
+
+
+def test_supported_languages_includes_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_LANGUAGES", "ruby,jq")
+    assert supported_languages() == frozenset({"bash", "python", "ruby", "jq"})
+
+
+def test_osascript_gated_to_darwin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_LANGUAGES", "osascript")
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert enabled_languages() == frozenset()  # wrong OS -> skipped
+    assert "osascript" not in supported_languages()
+    assert "requires" in language_status("osascript")
+
+
+def test_dispatch_runs_catalogued_language_even_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A language already in the library keeps running after config toggles it
+    # off — the gate covers writing new scripts, not executing existing ones.
+    captured: dict[str, list[str]] = {}
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+
+    def fake_run(
+        command: list[str], stdin: str | None, cwd: str | None, timeout: float
+    ) -> ExecutionResult:
+        captured["command"] = command
+        return ExecutionResult(exit_code=0, stdout="", stderr="", duration_ms=0, env_fingerprint="")
+
+    monkeypatch.setattr("grim.exec.dispatch._run", fake_run)
+    dispatch(ScriptVersion(language="ruby", body="puts 1"), _request())
+    assert captured["command"][0] == "ruby"
+
+
+def test_dispatch_rejects_platform_mismatched_language(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    with pytest.raises(ValueError, match="not supported on this platform"):
+        dispatch(ScriptVersion(language="osascript", body='"hi"'), _request())
+
+
+def test_dispatch_rejects_unknown_language() -> None:
+    with pytest.raises(ValueError, match="unsupported language"):
+        dispatch(ScriptVersion(language="fortran", body="x"), _request())
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
+def test_jq_script_runs_for_real() -> None:
+    sv = ScriptVersion(language="jq", body=".name")
+    result = dispatch(sv, _request(stdin='{"name": "grim"}'))
+    assert result.exit_code == 0
+    assert '"grim"' in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("sqlite3") is None, reason="sqlite3 not installed")
+def test_sql_script_runs_for_real() -> None:
+    sv = ScriptVersion(language="sql", body="SELECT 'hi-sql' AS greeting;")
+    result = dispatch(sv, _request())
+    assert result.exit_code == 0
+    assert "hi-sql" in result.stdout
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin" or shutil.which("osascript") is None,
+    reason="osascript is macOS-only",
+)
+def test_osascript_runs_on_darwin() -> None:
+    sv = ScriptVersion(language="osascript", body='"hi"')
+    result = dispatch(sv, _request())
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "hi"
 
 
 def test_python_runner_never_attaches_to_grimoires_own_project(
