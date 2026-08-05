@@ -56,28 +56,31 @@ def read_execution_page(conn: sqlite3.Connection, execution_id: int, page: int) 
 def cmd_read(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        if args.exec is not None:
-            print(read_execution_page(conn, args.exec, args.page or 1))
-            return 0
-        if args.name is None:
-            print("error: provide NAME[@V] or --exec ID", file=sys.stderr)
+        try:
+            if args.exec is not None:
+                print(read_execution_page(conn, args.exec, args.page or 1))
+                return 0
+            if args.name is None:
+                print("error: provide NAME[@V] or --exec ID", file=sys.stderr)
+                return 1
+            name, version = _shared.parse_name_version(args.name)
+            result = read_script(conn, name, version)
+        except LookupError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
-        name, version = _shared.parse_name_version(args.name)
-        result = read_script(conn, name, version)
-    except LookupError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
 
-    print(f"{result.name}@{result.version} ({result.language})")
-    print(result.description)
-    print("---")
-    print(result.body)
-    for execution in result.recent_executions:
-        print(
-            f"exec #{execution['id']}: exit {execution['exit_code']} · "
-            f"{execution['duration_ms']}ms · {_preview_line(execution['stdout_preview'])}"
-        )
-    return 0
+        print(f"{result.name}@{result.version} ({result.language})")
+        print(result.description)
+        print("---")
+        print(result.body)
+        for execution in result.recent_executions:
+            print(
+                f"exec #{execution['id']}: exit {execution['exit_code']} · "
+                f"{execution['duration_ms']}ms · {_preview_line(execution['stdout_preview'])}"
+            )
+        return 0
+    finally:
+        conn.close()
 
 
 def _preview_line(stdout_preview: str | None) -> str:

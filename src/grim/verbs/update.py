@@ -58,11 +58,14 @@ def update_script(conn: sqlite3.Connection, request: UpdateRequest) -> UpdateRes
 def cmd_update(args: argparse.Namespace) -> int:
     body = sys.stdin.read()
     conn = _shared.connect()
-    request = UpdateRequest(name=args.name, changelog=args.changelog, body=body)
     try:
-        result = update_script(conn, request)
-    except (ValueError, LookupError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    print(f"updated {args.name}@{result.version}")
-    return 0
+        request = UpdateRequest(name=args.name, changelog=args.changelog, body=body)
+        try:
+            result = update_script(conn, request)
+        except (ValueError, LookupError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"updated {args.name}@{result.version}")
+        return 0
+    finally:
+        conn.close()

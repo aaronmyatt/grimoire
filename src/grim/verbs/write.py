@@ -90,22 +90,25 @@ def write_script(conn: sqlite3.Connection, request: WriteRequest) -> WriteResult
 def cmd_write(args: argparse.Namespace) -> int:
     body = sys.stdin.read()
     conn = _shared.connect()
-    request = WriteRequest(
-        name=args.name,
-        language=args.lang,
-        description=args.desc,
-        body=body,
-        parent=args.parent,
-        scope=args.scope,
-        session_id=_shared.session_id_from_env(),
-    )
     try:
-        result = write_script(conn, request)
-    except (ValueError, LookupError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+        request = WriteRequest(
+            name=args.name,
+            language=args.lang,
+            description=args.desc,
+            body=body,
+            parent=args.parent,
+            scope=args.scope,
+            session_id=_shared.session_id_from_env(),
+        )
+        try:
+            result = write_script(conn, request)
+        except (ValueError, LookupError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
-    print(f"wrote {args.name}@{result.version}")
-    for name, score in result.similar:
-        print(f"similar: {name} ({score:.2f}) — consider 'grim update' or '--parent'")
-    return 0
+        print(f"wrote {args.name}@{result.version}")
+        for name, score in result.similar:
+            print(f"similar: {name} ({score:.2f}) — consider 'grim update' or '--parent'")
+        return 0
+    finally:
+        conn.close()

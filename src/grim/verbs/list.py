@@ -56,16 +56,19 @@ def list_scripts(conn: sqlite3.Connection, filters: ListFilters) -> list[sqlite3
 
 def cmd_list(args: argparse.Namespace) -> int:
     conn = _shared.connect()
-    filters = ListFilters(
-        scope=args.scope,
-        language=args.lang,
-        limit=args.limit or DEFAULT_LIST_LIMIT,
-        offset=args.offset or 0,
-        # getattr default bridges callers whose Namespace predates the --sort
-        # flag (the frozen cli.py wiring lands as its own commit); real CLI use
-        # always sets it via argparse choices=/default="name".
-        sort=getattr(args, "sort", None) or DEFAULT_SORT,
-    )
-    for row in list_scripts(conn, filters):
-        print(f"{row['name']}\t{row['language']}\t{row['scope']}\t{row['description']}")
-    return 0
+    try:
+        filters = ListFilters(
+            scope=args.scope,
+            language=args.lang,
+            limit=args.limit or DEFAULT_LIST_LIMIT,
+            offset=args.offset or 0,
+            # getattr default bridges callers whose Namespace predates the --sort
+            # flag (the frozen cli.py wiring lands as its own commit); real CLI use
+            # always sets it via argparse choices=/default="name".
+            sort=getattr(args, "sort", None) or DEFAULT_SORT,
+        )
+        for row in list_scripts(conn, filters):
+            print(f"{row['name']}\t{row['language']}\t{row['scope']}\t{row['description']}")
+        return 0
+    finally:
+        conn.close()
