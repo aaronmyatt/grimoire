@@ -40,6 +40,21 @@ touches your real `~/.grimoire`. Which DB it points at is the experiment's knob:
 | **Warm** | `export GRIM_EVAL_DB=/tmp/grim-eval.db` | One shared library accumulates across tasks — the compounding condition. |
 | **Grouped** | task key `grim_db: <path>` | Per-task DB path, e.g. one DB per repo (SWE-bench, next task). |
 
+## Language modes
+
+`run-grim` pins `GRIM_LANGUAGES` the same way it pins `GRIM_DB`, so the set
+of languages the agent may write never leaks from the operator's
+`~/.grimoire/config.toml`. The default is the baseline pair `python,bash`
+(both are always in the agent's schema anyway); a task opts into more by
+declaring a `grim_languages:` key (smevals uppercases it to
+`SMEVALS_TASK_GRIM_LANGUAGES` for the runner, and it lands in `run.yaml`),
+e.g. `grim_languages: python,bash,jq`.
+
+This is the knob for language-variation evals: run the same task with
+different `grim_languages:` sets (or omit it for the baseline) and compare
+pass rates and the language lean of agent-written scripts across models.
+
+
 `grim-agent` must be on `PATH` (`uv tool install "grimoire[agent]"`), or set
 `GRIM_AGENT_CMD` to launch it another way, e.g.
 `export GRIM_AGENT_CMD="uv run --project $PWD grim-agent"`.
