@@ -27,7 +27,32 @@ from grim.curate import _shared
 # Ref: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/vi.html
 DEFAULT_EDITOR = "vi"
 
-_LANGUAGE_SUFFIX = {"python": ".py", "bash": ".sh"}
+_LANGUAGE_SUFFIX = {
+    "python": ".py",
+    "bash": ".sh",
+    "janet": ".janet",
+    "racket": ".rkt",
+    "hy": ".hy",
+    "nim": ".nim",
+    "ruby": ".rb",
+    "bun": ".ts",
+    "php": ".php",
+    "go": ".go",
+    "perl": ".pl",
+    "jq": ".jq",
+    "sql": ".sql",
+    "awk": ".awk",
+    "osascript": ".applescript",
+    "lua": ".lua",
+    "luajit": ".lua",
+    "fennel": ".fnl",
+    "zig": ".zig",
+    "duckdb": ".sql",
+    "prql": ".prql",
+    "typst": ".typ",
+    "bc": ".bc",
+    "dc": ".dc",
+}
 
 # A real network call, so it must not hang `grim edit` indefinitely.
 _AI_TIMEOUT_S = 15.0

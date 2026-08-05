@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Internal helpers shared by the six verb modules — not public surface
 (verbs/CLAUDE.md). Verbs never import each other; all may import this.
 """
@@ -15,6 +16,32 @@ from grim import db
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 
 
+# language -> syntax-checker argv (body fed on stdin). Keep the set small:
+# a checker must be cheap, offline, and read stdin — no temp files. A missing
+# binary degrades to no lint, never a write blocker (`grim doctor` reports
+# missing interpreters instead).
+_SUBPROCESS_LINT: dict[str, list[str]] = {
+    "ruby": ["ruby", "-c"],
+    "php": ["php", "-l"],
+    "perl": ["perl", "-c"],
+    "go": ["gofmt", "-e"],
+}
+
+
+def _subprocess_lint(argv: list[str], body: str, language: str) -> str | None:
+    """Run a syntax checker that reads `body` on stdin: None when it passes, a
+    diagnostic string when it fails. A missing checker binary (OSError) means
+    no lint — lint is best-effort, and `grim doctor` owns reporting missing
+    interpreters."""
+    try:
+        result = subprocess.run(argv, input=body, capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return f"{language} syntax error: {result.stderr.strip() or result.stdout.strip()}"
+    return None
+
+
 def connect() -> sqlite3.Connection:
     """`db.connect()` with row_factory set, so verb SQL can use `row["col"]`."""
     conn = db.connect()
@@ -30,8 +57,9 @@ def validate_slug(name: str) -> None:
 
 
 def lint(language: str, body: str) -> str | None:
-    """Diagnostic string if `body` fails syntax lint, else None (unknown
-    languages pass silently — Phase 1 scope is bash + python)."""
+    """Diagnostic string if `body` fails syntax lint, else None. Unknown
+    languages, and languages without a cheap offline checker, pass silently;
+    opt-in extended languages get best-effort lints where one exists."""
     if language == "python":
         try:
             compile(body, "<grim write>", "exec")
@@ -45,6 +73,8 @@ def lint(language: str, body: str) -> str | None:
         if result.returncode != 0:
             return f"bash syntax error: {result.stderr.strip()}"
         return None
+    if language in _SUBPROCESS_LINT:
+        return _subprocess_lint(_SUBPROCESS_LINT[language], body, language)
     return None
 
 

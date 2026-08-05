@@ -113,3 +113,26 @@ def test_cmd_write_prints_confirmation(
 
     assert exit_code == 0
     assert "wrote foo_bar@1" in capsys.readouterr().out
+
+
+def test_write_script_accepts_enabled_extended_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    monkeypatch.setenv("GRIM_LANGUAGES", "ruby")
+
+    result = write_script(conn, _request(name="ruby_greet", language="ruby", body="puts 'hi'"))
+
+    assert result.version == 1
+    row = conn.execute("SELECT language FROM script WHERE id = ?", (result.script_id,)).fetchone()
+    assert row["language"] == "ruby"
+
+
+def test_write_script_rejects_disabled_extended_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+
+    with pytest.raises(ValueError, match="unsupported language"):
+        write_script(conn, _request(language="ruby", body="puts 'hi'"))

@@ -39,8 +39,8 @@ def write_script(conn: sqlite3.Connection, request: WriteRequest) -> WriteResult
     _shared.validate_slug(request.name)
     if not request.description.strip():
         raise ValueError("description is required")
-    if request.language not in dispatch.SUPPORTED_LANGUAGES:
-        supported = ", ".join(sorted(dispatch.SUPPORTED_LANGUAGES))
+    if request.language not in dispatch.supported_languages():
+        supported = ", ".join(sorted(dispatch.supported_languages()))
         raise ValueError(f"unsupported language {request.language!r} — supported: {supported}")
     lint_error = _shared.lint(request.language, request.body)
     if lint_error:

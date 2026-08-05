@@ -68,7 +68,9 @@ def test_lint_bash_accepts_valid_and_rejects_invalid() -> None:
 
 
 def test_lint_unknown_language_passes_through() -> None:
-    assert _shared.lint("ruby", "this is not even ruby {{{") is None
+    # janet is catalogued but has no cheap offline checker, so it passes
+    # silently like any language outside the lint map.
+    assert _shared.lint("janet", "this is not even ruby {{{") is None
 
 
 def test_body_hash_is_deterministic() -> None:
