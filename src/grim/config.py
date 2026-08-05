@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Global configuration — env-var defaults seeded from ~/.grimoire/config.toml.
 
 Frozen path (root CLAUDE.md §5): part of the shared kernel alongside db.py and
@@ -6,6 +7,11 @@ cli.py. `cli.main()` calls `apply_global_config()` once at startup so a value in
 already exported in the shell always wins (os.environ.setdefault). Slices keep
 reading plain env vars (GRIM_MODEL, GRIM_DB, GRIM_TIMEOUT, GRIM_TRAJ_DIR) — the
 file is just their persistence layer, so no slice has to learn a config format.
+
+Extended languages are configured the same way: the `[languages]` table (or a
+`languages = [...]` array) seeds GRIM_LANGUAGES with the enabled names,
+comma-joined. Everything is off by default — an absent/empty table seeds
+nothing.
 """
 
 from __future__ import annotations
@@ -22,7 +28,9 @@ CONFIG_PATH = Path.home() / ".grimoire" / "config.toml"
 
 # config key -> the env var it seeds. Precedence falls out of setdefault:
 # shell env > config file > each slice's built-in default. Only these keys are
-# recognized; anything else in the file is ignored (forward-compatible).
+# recognized as scalar settings; anything else in the file is ignored
+# (forward-compatible). `languages` is handled separately below — it is a
+# table/array, not a scalar, so it seeds its env var as a joined string.
 _CONFIG_ENV_KEYS: dict[str, str] = {
     "model": "GRIM_MODEL",
     "db": "GRIM_DB",
@@ -33,6 +41,10 @@ _CONFIG_ENV_KEYS: dict[str, str] = {
     "step": "GRIM_STEP_LIMIT",
     "changelog_model": "GRIM_CHANGELOG_MODEL",  # `grim edit`'s AI changelog; falls back to model
 }
+
+# Env var the enabled extended languages land in (comma-joined), read by
+# exec/dispatch.py. Same env-var-seeding pattern as the scalar keys above.
+_LANGUAGES_ENV = "GRIM_LANGUAGES"
 
 # Bound the upward search for a repo-local config (CLAUDE.md §3: every loop has
 # an explicit max) — deep enough to reach a repo root from any real subdir.
@@ -73,10 +85,27 @@ def _repo_config_path() -> Path | None:
     return None
 
 
+def _languages_from(data: dict[str, object]) -> str:
+    """Comma-joined names of the extended languages enabled in a config table:
+    the `[languages]` form (`ruby = true`) or the `languages = [...]` array
+    form. Only explicit `true` (bool) enables in the table form; a string is
+    validated by the catalog later. Unknown keys are ignored
+    (forward-compatible)."""
+    value = data.get("languages")
+    enabled: list[str] = []
+    if isinstance(value, dict):
+        enabled = [str(k) for k, v in value.items() if v is True]
+    elif isinstance(value, list):
+        enabled = [str(v) for v in value if isinstance(v, str)]
+    return ",".join(sorted(enabled))
+
+
 def _apply_config(data: dict[str, object]) -> None:
     """setdefault each known key's env var from a parsed config table. A
     shell-set var is never overwritten, and a key already seeded by a
-    higher-priority file wins over a lower one — both fall out of setdefault."""
+    higher-priority file wins over a lower one — both fall out of setdefault.
+    `languages` seeds GRIM_LANGUAGES only when the key is present (an empty
+    table/array deliberately disables at this priority level)."""
     assert isinstance(data, dict), "config data is a parsed table"
     applied = 0
     for key, env in _CONFIG_ENV_KEYS.items():
@@ -85,7 +114,10 @@ def _apply_config(data: dict[str, object]) -> None:
         if isinstance(value, (str, int, float)) and not isinstance(value, bool):
             os.environ.setdefault(env, str(value))
             applied += 1
-    assert applied <= len(_CONFIG_ENV_KEYS), "cannot apply more keys than are known"
+    if "languages" in data:
+        os.environ.setdefault(_LANGUAGES_ENV, _languages_from(data))
+        applied += 1
+    assert applied <= len(_CONFIG_ENV_KEYS) + 1, "cannot apply more keys than are known"
 
 
 def apply_global_config(path: Path | None = None) -> None:
@@ -137,6 +169,17 @@ def effective_config() -> list[Setting]:
         value = os.environ.get(env)
         source = _classify(value, repo.get(key), global_data.get(key))
         settings.append(Setting(key=key, env=env, value=value, source=source))
-    assert len(settings) == len(_CONFIG_ENV_KEYS), "one setting per known key"
+    # languages is a table, not a scalar: its effective value is the joined
+    # enabled set, compared against each file's joined set for the source.
+    langs_value = os.environ.get(_LANGUAGES_ENV)
+    langs_source = _classify(
+        langs_value,
+        _languages_from(repo) if "languages" in repo else None,
+        _languages_from(global_data) if "languages" in global_data else None,
+    )
+    settings.append(
+        Setting(key="languages", env=_LANGUAGES_ENV, value=langs_value, source=langs_source)
+    )
+    assert len(settings) == len(_CONFIG_ENV_KEYS) + 1, "one setting per known key plus languages"
     assert all(isinstance(s, Setting) for s in settings), "settings are Setting rows"
     return settings
