@@ -35,19 +35,22 @@ def cmd_init(args: argparse.Namespace) -> int:
     """`grim init`: connect + migrate + seed the library, reporting what
     was newly applied/seeded (build plan Phase 3)."""
     conn = db.connect()
-    applied = db.migrate(conn)
-    print(f"applied: {', '.join(applied)}" if applied else "already up to date")
+    try:
+        applied = db.migrate(conn)
+        print(f"applied: {', '.join(applied)}" if applied else "already up to date")
 
-    conn.row_factory = sqlite3.Row
-    newly_seeded = load_seeds(conn)
-    if newly_seeded:
-        print(f"seeded: {', '.join(newly_seeded)}")
-    else:
-        print(f"seeds already present ({len(SEEDS)})")
+        conn.row_factory = sqlite3.Row
+        newly_seeded = load_seeds(conn)
+        if newly_seeded:
+            print(f"seeded: {', '.join(newly_seeded)}")
+        else:
+            print(f"seeds already present ({len(SEEDS)})")
 
-    assert isinstance(applied, list), "migrate() must always return a list"
-    assert conn is not None, "connect() must always return a connection or raise"
-    return 0
+        assert isinstance(applied, list), "migrate() must always return a list"
+        assert conn is not None, "connect() must always return a connection or raise"
+        return 0
+    finally:
+        conn.close()
 
 
 def cmd_config(args: argparse.Namespace) -> int:
