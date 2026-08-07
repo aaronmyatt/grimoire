@@ -43,7 +43,13 @@ _DATA_VERBS = frozenset({"write", "update", "read", "list", "find", "run"})
 
 def _str(value: object) -> str:
     """JSON numbers arrive as int/float; cli.py re-parses argv with
-    type=int/float, so everything crosses the boundary as a string."""
+    type=int/float, so everything crosses the boundary as a string.
+
+    Also the last line of defense against a model that slips a non-string
+    (e.g. a list) into a string-typed field: argv must stay ``list[str]`` or
+    ``render_command``'s ``shlex.join`` raises TypeError ("expected string
+    object, got 'list'"). toolcall_model.py rejects those calls with a
+    FormatError before dispatch; coercion here keeps the pure mapper total."""
     return str(value)
 
 
@@ -60,13 +66,21 @@ def tool_call_to_argv(tool: str, args: dict[str, Any]) -> tuple[list[str], str |
     assert tool in _DATA_VERBS, f"tool_call_to_argv maps data verbs only, got {tool!r}"
     match tool:
         case "write":
-            argv = ["write", "--name", args["name"], "--lang", args["lang"], "--desc", args["desc"]]
+            argv = [
+                "write",
+                "--name", _str(args["name"]),
+                "--lang", _str(args["lang"]),
+                "--desc", _str(args["desc"]),
+            ]
             argv += _opt("--parent", args.get("parent")) + _opt("--scope", args.get("scope"))
             return argv, args["body"]
         case "update":
-            return ["update", args["name"], "--changelog", args["changelog"]], args["body"]
+            return (
+                ["update", _str(args["name"]), "--changelog", _str(args["changelog"])],
+                args["body"],
+            )
         case "read":
-            argv = ["read", *([args["name"]] if args.get("name") else [])]
+            argv = ["read", *([_str(args["name"])] if args.get("name") else [])]
             argv += _opt("--exec", args.get("exec")) + _opt("--page", args.get("page"))
             return argv, None
         case "list":
@@ -74,11 +88,15 @@ def tool_call_to_argv(tool: str, args: dict[str, Any]) -> tuple[list[str], str |
             argv += _opt("--limit", args.get("limit")) + _opt("--offset", args.get("offset"))
             return argv, None
         case "find":
-            return ["find", args["query"], *_opt("--limit", args.get("limit"))], None
+            return ["find", _str(args["query"]), *_opt("--limit", args.get("limit"))], None
         case "run":
-            argv = ["run", args["name"], *_opt("--timeout", args.get("timeout"))]
+            argv = ["run", _str(args["name"]), *_opt("--timeout", args.get("timeout"))]
             argv += _opt("--head", args.get("head")) + _opt("--tail", args.get("tail"))
             script_args = args.get("args") or []
+            # A bare string where the schema wants an array is a single script
+            # arg, not a sequence of characters to split.
+            if isinstance(script_args, str):
+                script_args = [script_args]
             if script_args:
                 argv += ["--", *(_str(a) for a in script_args)]
             return argv, args.get("stdin")

@@ -3,6 +3,8 @@ tool-call → cli.main argv mapper. No mini-swe-agent import needed."""
 
 from __future__ import annotations
 
+import shlex
+
 import pytest
 
 from grim.adapter.tools import (
@@ -93,3 +95,25 @@ def test_render_command_gives_a_readable_cli_string() -> None:
     assert render_command("find", {"query": "github repos"}) == "grim find 'github repos'"
     assert render_command("run", {"name": "greet", "args": ["a b"]}) == "grim run greet -- 'a b'"
     assert render_command(SUBMIT_TOOL_NAME, {"result": "done"}) == "submit"
+
+
+def test_argv_elements_are_always_strings_even_for_wrong_typed_input() -> None:
+    # A model may slip a list into a string field; the mapper must coerce
+    # every argv element through _str so render_command's shlex.join can
+    # never raise TypeError (regression for the mini-swe-agent
+    # 'expected string object, got list' crash).
+    argv, _ = tool_call_to_argv("find", {"query": ["a", "b"]})
+    assert argv == ["find", "['a', 'b']"]
+    assert all(isinstance(a, str) for a in argv)
+    argv, _ = tool_call_to_argv("write", {"name": ["x"], "lang": "bash", "desc": "d", "body": "b"})
+    assert argv == ["write", "--name", "['x']", "--lang", "bash", "--desc", "d"]
+    argv, _ = tool_call_to_argv("run", {"name": "greet", "args": "hi there"})
+    assert argv == ["run", "greet", "--", "hi there"]
+
+
+def test_render_command_tolerates_list_valued_string_fields() -> None:
+    # render_command must always produce a display string, never crash.
+    assert (
+        render_command("find", {"query": ["a", "b"]})
+        == "grim find " + shlex.join(["['a', 'b']"])
+    )

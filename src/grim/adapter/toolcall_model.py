@@ -31,6 +31,58 @@ _TOOL_NAMES = frozenset(t["function"]["name"] for t in GRIM_TOOLS)
 _REQUIRED: dict[str, list[str]] = {
     t["function"]["name"]: t["function"]["parameters"]["required"] for t in GRIM_TOOLS
 }
+# name -> property schemas, precomputed from GRIM_TOOLS so argument
+# type-checking and the schemas handed to the model can never drift apart.
+_PROPERTIES: dict[str, dict[str, Any]] = {
+    t["function"]["name"]: t["function"]["parameters"]["properties"] for t in GRIM_TOOLS
+}
+
+# Cap how much of a mismatched value is echoed back to the model.
+_MAX_SHOWN = 60
+
+
+def _expected_type(prop: dict[str, Any]) -> str:
+    """Human phrasing of a property schema's type for FormatError messages,
+    e.g. 'a string' or 'an array of strings'."""
+    ptype = prop.get("type", "value")
+    if ptype == "array":
+        items = prop.get("items", {}).get("type", "value")
+        return f"an array of {items}s"
+    article = "an" if ptype.startswith(("a", "e", "i", "o", "u")) else "a"
+    return f"{article} {ptype}"
+
+
+def _type_ok(expected: str, value: object) -> bool:
+    """Whether `value` satisfies a JSON-schema `type` from our tool schemas.
+    `bool` is rejected for numeric types (it subclasses int)."""
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "array":
+        return isinstance(value, list) and all(isinstance(item, str) for item in value)
+    return True  # unknown schema type: don't guess, let the verb decide
+
+
+def _type_violations(tool: str, args: dict[str, Any]) -> list[str]:
+    """Human-readable argument type mismatches, e.g. ``'query' must be a
+    string, got list (['a', 'b'])``. Unknown keys are tolerated — the verbs
+    ignore extras, so only declared properties are checked."""
+    props = _PROPERTIES[tool]
+    out: list[str] = []
+    for key, value in args.items():
+        prop = props.get(key)
+        if prop is None or _type_ok(prop.get("type", ""), value):
+            continue
+        shown = repr(value)
+        if len(shown) > _MAX_SHOWN:
+            shown = shown[:_MAX_SHOWN - 3] + "..."
+        out.append(
+            f"{key!r} must be {_expected_type(prop)}, got {type(value).__name__} ({shown})"
+        )
+    return out
 
 
 class GrimToolcallModel(LitellmModel):
@@ -88,6 +140,13 @@ class GrimToolcallModel(LitellmModel):
         if missing:
             raise self._format_error(
                 f"Tool {name!r} is missing required argument(s): {', '.join(missing)}.",
+                finish_reason,
+            )
+
+        violations = _type_violations(name, args)
+        if violations:
+            raise self._format_error(
+                f"Tool {name!r} has argument type error(s): {'; '.join(violations)}.",
                 finish_reason,
             )
         assert isinstance(tool_call.id, str), "a tool call must carry an id for result correlation"
