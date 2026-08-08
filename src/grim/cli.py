@@ -16,7 +16,7 @@ import tomllib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from grim import config, db
+from grim import completions, config, db
 from grim.curate import edit, near, recent, tags
 from grim.exec import dispatch
 from grim.seeds.bodies import SEEDS
@@ -49,6 +49,12 @@ def cmd_init(args: argparse.Namespace) -> int:
 
         assert isinstance(applied, list), "migrate() must always return a list"
         assert conn is not None, "connect() must always return a connection or raise"
+        # Shell completion is part of setup, not a hard requirement: a broken
+        # HOME or missing shell must never fail `grim init`.
+        try:
+            completions.install()
+        except Exception as exc:
+            print(f"warning: could not install shell completion: {exc}", file=sys.stderr)
         return 0
     finally:
         conn.close()
@@ -233,6 +239,31 @@ def _add_run_parser(subparsers: _SubParsers) -> None:
     parser.set_defaults(func=run.cmd_run)
 
 
+def _add_completion_parser(subparsers: _SubParsers) -> None:
+    parser = subparsers.add_parser(
+        "completion", help="install/uninstall bash+zsh completion for grim"
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--uninstall", action="store_true", help="remove completion files and rc hooks"
+    )
+    group.add_argument(
+        "--print-bash", action="store_true", help="print the bash completion source"
+    )
+    group.add_argument(
+        "--print-zsh", action="store_true", help="print the zsh completion source"
+    )
+    group.add_argument(
+        "--check", action="store_true", help="report completion install state"
+    )
+    group.add_argument(
+        "--selftest",
+        action="store_true",
+        help="syntax-check both snippets and verify the db query",
+    )
+    parser.set_defaults(func=completions.cmd_completion)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Top-level `grim` parser: `init` plus the six agent-facing verbs."""
     parser = argparse.ArgumentParser(prog="grim", description="A script-hoarding agent harness.")
@@ -290,6 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
         _add_list_parser,
         _add_find_parser,
         _add_run_parser,
+        _add_completion_parser,
     ):
         add_parser(subparsers)
 
@@ -321,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     assert hasattr(args, "func"), "every subcommand must set_defaults(func=...)"
     # init creates the DB; config and doctor are diagnostics that must work
     # before (and when) the library is broken, so none is gated on a ready DB.
-    if args.command not in ("init", "config", "doctor") and not _database_ready():
+    if args.command not in ("init", "config", "doctor", "completion") and not _database_ready():
         print("error: database not initialized — run `grim init` first", file=sys.stderr)
         return 1
     result: int = args.func(args)

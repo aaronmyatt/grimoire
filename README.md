@@ -119,6 +119,7 @@ ledger lives in `RATCHET.md`.
 ```bash
 uv sync
 uv run grim init      # creates ~/.grimoire/grimoire.db (or $GRIM_DB) and applies schema v1
+uv run grim completion  # (re)install bash+zsh tab-completion — `grim run <TAB>` reads script names from the db (auto-runs on init)
 uv run pytest         # smoke tests: fresh init + idempotent re-init
 ```
 
