@@ -4,8 +4,8 @@ completer.py's Phase 1: `@`/`:` completion).
 When a human types `!slug` as a standalone token in any interactive prompt,
 it is replaced with `grim run slug`'s captured output before the text
 becomes a message. Wired in by wrapping mini's own prompt_toolkit sessions
-(no fork), the same two `install_grim_completer` already reaches into — that
-covers every place a human composes text: the initial task, human-mode
+(no fork), the same sessions `install_grim_completer` already reaches into —
+that covers every place a human composes text: the initial task, human-mode
 commands, interrupt comments, confirm/reject replies, and post-submit new
 tasks.
 """
@@ -65,7 +65,7 @@ _WRAPPED: set[int] = set()
 
 
 def install_bang_expansion(session_id_fn: Callable[[], str]) -> None:
-    """Wrap `.prompt` on mini's two shared prompt sessions so every human
+    """Wrap `.prompt` on mini's shared prompt sessions so every human
     input is passed through expand_bangs before it becomes a message.
     `session_id_fn` is called fresh on every prompt (never captured once),
     so a session_id that changes later in the same process (GrimAgent's
@@ -74,7 +74,10 @@ def install_bang_expansion(session_id_fn: Callable[[], str]) -> None:
     from minisweagent.agents.utils import prompt_user  # noqa: PLC0415 -- extra may be absent
 
     assert callable(session_id_fn), "session_id_fn must be callable"
-    sessions = (prompt_user.prompt_session, prompt_user._multiline_prompt_session)
+    sessions = [prompt_user.prompt_session, prompt_user._multiline_prompt_session]
+    task_session = getattr(prompt_user, "_task_prompt_session", None)
+    if task_session is not None:
+        sessions.append(task_session)
     for session in sessions:
         if id(session) in _WRAPPED:
             continue

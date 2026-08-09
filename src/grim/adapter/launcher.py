@@ -31,6 +31,7 @@ from importlib import resources
 from typing import Any, NamedTuple
 
 from grim import cli, db
+from grim.adapter.mini_prompt_patch import ensure_mini_task_prompt_patch
 
 # grimoire.yaml ships inside this package (see pyproject hatchling config);
 # resources.files locates it whether grim runs from source or an installed
@@ -517,4 +518,18 @@ def main(argv: list[str] | None = None) -> int:
 
     # $GRIM_MODEL supplies the model when the user didn't pass -m, matching the
     # container entrypoint and giving `export GRIM_MODEL=…; grim-agent "task"`.
+    # Self-heal the submit-on-Enter initial-task prompt: minisweagent is a PyPI
+    # dependency with no repo checkout, so a tool reinstall re-extracts the
+    # pristine wheel and reverts the venv-only patch. Fail-soft on layout drift.
+    ensure_mini_task_prompt_patch()
+
+    # Attach the @/: completer to mini's prompt sessions *before* the initial
+    # "What do you want to do?" prompt so the helpers work in the first
+    # interaction (agent.run() also installs it, but only after that prompt).
+    try:
+        from grim.adapter.completer import install_grim_completer  # noqa: PLC0415 -- agent extra
+        install_grim_completer()
+    except Exception as exc:  # prompt_toolkit layout drift must not kill the harness
+        print(f"warning: could not attach the @/: completer early: {exc}", file=sys.stderr)
+
     return _launch(app, raw, print_opts, continue_on)

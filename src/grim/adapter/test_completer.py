@@ -92,13 +92,21 @@ def test_completion_survives_an_unmigrated_db(
     assert _complete("@re") == []  # no crash, just nothing
 
 
-def test_install_attaches_completer_to_mini_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_attaches_completer_to_all_mini_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("minisweagent")
     from minisweagent.agents.utils import prompt_user
 
     from grim.adapter.completer import install_grim_completer
 
+    # grim-agent self-heals the submit-on-Enter patch into the venv; against a
+    # pristine minisweagent, synthesize the session so this branch is covered.
+    if not hasattr(prompt_user, "_task_prompt_session"):
+        monkeypatch.setattr(
+            prompt_user, "_task_prompt_session", prompt_user._multiline_prompt_session
+        )
+
     install_grim_completer()
 
     assert isinstance(prompt_user.prompt_session.completer, GrimCompleter)
     assert isinstance(prompt_user._multiline_prompt_session.completer, GrimCompleter)
+    assert isinstance(prompt_user._task_prompt_session.completer, GrimCompleter)
