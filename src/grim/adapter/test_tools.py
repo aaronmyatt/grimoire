@@ -113,7 +113,6 @@ def test_argv_elements_are_always_strings_even_for_wrong_typed_input() -> None:
 
 def test_render_command_tolerates_list_valued_string_fields() -> None:
     # render_command must always produce a display string, never crash.
-    assert (
-        render_command("find", {"query": ["a", "b"]})
-        == "grim find " + shlex.join(["['a', 'b']"])
+    assert render_command("find", {"query": ["a", "b"]}) == "grim find " + shlex.join(
+        ["['a', 'b']"]
     )

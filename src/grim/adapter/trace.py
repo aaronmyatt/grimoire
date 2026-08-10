@@ -215,8 +215,13 @@ def session_open(session_id: str, **fields: object) -> None:
     if closed is not None:
         _emit(closed)
     _emit(
-        {"kind": "session", "phase": "open", "session": session_id,
-         "ts": int(time.time() * 1000), **fields}
+        {
+            "kind": "session",
+            "phase": "open",
+            "session": session_id,
+            "ts": int(time.time() * 1000),
+            **fields,
+        }
     )
 
 
@@ -244,8 +249,12 @@ def _close_snapshot_locked(session_id: str) -> dict[str, object]:
     wall_ms = (time.time() - started) * 1000.0
     totals = _totals.pop(session_id, {})
     return {
-        "kind": "session", "phase": "close", "session": session_id,
-        "ts": int(time.time() * 1000), "wall_ms": round(wall_ms, 3), "totals": totals,
+        "kind": "session",
+        "phase": "close",
+        "session": session_id,
+        "ts": int(time.time() * 1000),
+        "wall_ms": round(wall_ms, 3),
+        "totals": totals,
     }
 
 

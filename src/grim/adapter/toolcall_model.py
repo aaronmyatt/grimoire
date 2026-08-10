@@ -79,10 +79,8 @@ def _type_violations(tool: str, args: dict[str, Any]) -> list[str]:
             continue
         shown = repr(value)
         if len(shown) > _MAX_SHOWN:
-            shown = shown[:_MAX_SHOWN - 3] + "..."
-        out.append(
-            f"{key!r} must be {_expected_type(prop)}, got {type(value).__name__} ({shown})"
-        )
+            shown = shown[: _MAX_SHOWN - 3] + "..."
+        out.append(f"{key!r} must be {_expected_type(prop)}, got {type(value).__name__} ({shown})")
     return out
 
 

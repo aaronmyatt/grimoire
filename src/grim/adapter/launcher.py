@@ -432,6 +432,7 @@ def last_agent_session_id() -> str | None:
         conn.close()
     return str(row[0]) if row else None
 
+
 def _remember_trajectory(path: str) -> None:
     """Record the finished run's trajectory path for the next `--continue`
     (adapter/context.py::previous_session_snippet reads it). An adapter-owned
@@ -443,7 +444,6 @@ def _remember_trajectory(path: str) -> None:
         target.write_text(path + "\n")
     except OSError:
         return
-
 
 
 def _launch(app: Any, raw: list[str], print_opts: PrintOptions, continue_on: bool) -> int:
@@ -554,6 +554,7 @@ def main(argv: list[str] | None = None) -> int:
             from grim.adapter.completer import (  # noqa: PLC0415 -- agent extra
                 install_grim_completer,
             )
+
             install_grim_completer()
         except Exception as exc:  # prompt_toolkit layout drift must not kill the harness
             print(f"warning: could not attach the @/: completer early: {exc}", file=sys.stderr)

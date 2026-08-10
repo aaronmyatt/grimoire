@@ -220,9 +220,7 @@ class GrimAgent(InteractiveAgent):
                 self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
                 self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
                 if recall_enabled():
-                    self.extra_template_vars["grim_recent_library"] = recent_library(
-                        recall_limit()
-                    )
+                    self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
                     self.extra_template_vars["grim_previous_session"] = (
                         context.previous_session_snippet()
                     )

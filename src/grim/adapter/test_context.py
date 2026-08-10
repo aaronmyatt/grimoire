@@ -32,8 +32,13 @@ _AUTHORITATIVE = 99_999
 
 @pytest.fixture(autouse=True)
 def _context_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("GRIM_COMPACT", "GRIM_COMPACT_AT", "GRIM_COMPACT_KEEP",
-                 "GRIM_MAX_TOOL_OUTPUT", "GRIM_COMPACT_MODEL"):
+    for name in (
+        "GRIM_COMPACT",
+        "GRIM_COMPACT_AT",
+        "GRIM_COMPACT_KEEP",
+        "GRIM_MAX_TOOL_OUTPUT",
+        "GRIM_COMPACT_MODEL",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -52,13 +57,17 @@ _LONG_OUTPUT = "x" * 5000
 
 
 def _assistant_turn(i: int, with_result: bool = True) -> list[dict]:
-    tool_call = {"tool": "run", "args": {"name": f"s{i}"},
-                 "tool_call_id": f"tc{i}", "command": f"run s{i}"}
-    messages = [{"role": "assistant", "content": f"reasoning {i}",
-                 "tool_calls": [tool_call]}]
+    tool_call = {
+        "tool": "run",
+        "args": {"name": f"s{i}"},
+        "tool_call_id": f"tc{i}",
+        "command": f"run s{i}",
+    }
+    messages = [{"role": "assistant", "content": f"reasoning {i}", "tool_calls": [tool_call]}]
     if with_result:
-        messages.append({"role": "tool", "content": f"output-{i}-" + _LONG_OUTPUT,
-                         "tool_call_id": f"tc{i}"})
+        messages.append(
+            {"role": "tool", "content": f"output-{i}-" + _LONG_OUTPUT, "tool_call_id": f"tc{i}"}
+        )
     return messages
 
 
@@ -115,8 +124,9 @@ def test_compact_noop_when_few_turns() -> None:
 def test_compact_never_mutates_input() -> None:
     messages = _conversation()
     before = [dict(m) for m in messages]
-    context.compact_messages(messages, keep_turns=_SUMMARY_KEEP, max_output=_MAX_OUTPUT,
-                             summary_text="S")
+    context.compact_messages(
+        messages, keep_turns=_SUMMARY_KEEP, max_output=_MAX_OUTPUT, summary_text="S"
+    )
     assert messages == before
 
 
@@ -165,16 +175,19 @@ def test_prompt_tokens_uses_authoritative_count() -> None:
 
 def test_is_context_error_classification() -> None:
     import litellm
+
     assert context.is_context_error(
         litellm.exceptions.ContextWindowExceededError("boom", "gpt-4o", "openai")
     )
-    assert context.is_context_error(litellm.exceptions.BadRequestError(
-        "This model's maximum context length is 128000 tokens", "gpt-4o", "openai"
-    ))
+    assert context.is_context_error(
+        litellm.exceptions.BadRequestError(
+            "This model's maximum context length is 128000 tokens", "gpt-4o", "openai"
+        )
+    )
     assert not context.is_context_error(ValueError("nope"))
-    assert not context.is_context_error(litellm.exceptions.BadRequestError(
-        "bad json", "gpt-4o", "openai"
-    ))
+    assert not context.is_context_error(
+        litellm.exceptions.BadRequestError("bad json", "gpt-4o", "openai")
+    )
 
 
 def test_previous_session_snippet(tmp_path) -> None:

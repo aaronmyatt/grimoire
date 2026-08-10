@@ -181,7 +181,10 @@ def _trim_text(text: str, limit: int) -> str:
 
 
 def _compact_old_span(
-    out: list[dict[str, Any]], cut: int, summary_text: str | None, notes: list[str],
+    out: list[dict[str, Any]],
+    cut: int,
+    summary_text: str | None,
+    notes: list[str],
 ) -> list[dict[str, Any]]:
     """Replace the old span (between the first user message and `cut`) with a
     single summary message, or drop its stale tool results when no summary is
@@ -338,11 +341,14 @@ def _llm_summary(messages: list[dict[str, Any]]) -> str:
         response = litellm.completion(
             model=model,
             messages=[
-                {"role": "system", "content": (
-                    "Summarize this conversation in at most 120 words. Keep concrete "
-                    "facts: scripts/tools used, files touched, decisions, current "
-                    "state, and next steps."
-                )},
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarize this conversation in at most 120 words. Keep concrete "
+                        "facts: scripts/tools used, files touched, decisions, current "
+                        "state, and next steps."
+                    ),
+                },
                 {"role": "user", "content": tail},
             ],
             max_tokens=200,

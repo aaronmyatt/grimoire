@@ -36,7 +36,7 @@ def _tool_args_snippet(args: dict[str, Any]) -> str:
         text = json.dumps(args, default=str)
     except (TypeError, ValueError):
         return ""
-    return text if len(text) <= _ARGS_PREVIEW_LIMIT else text[:_ARGS_PREVIEW_LIMIT - 3] + "..."
+    return text if len(text) <= _ARGS_PREVIEW_LIMIT else text[: _ARGS_PREVIEW_LIMIT - 3] + "..."
 
 
 class GrimEnvironmentConfig(BaseModel):

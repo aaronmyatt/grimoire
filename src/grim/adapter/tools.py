@@ -68,9 +68,12 @@ def tool_call_to_argv(tool: str, args: dict[str, Any]) -> tuple[list[str], str |
         case "write":
             argv = [
                 "write",
-                "--name", _str(args["name"]),
-                "--lang", _str(args["lang"]),
-                "--desc", _str(args["desc"]),
+                "--name",
+                _str(args["name"]),
+                "--lang",
+                _str(args["lang"]),
+                "--desc",
+                _str(args["desc"]),
             ]
             argv += _opt("--parent", args.get("parent")) + _opt("--scope", args.get("scope"))
             return argv, args["body"]

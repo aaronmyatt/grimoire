@@ -112,9 +112,7 @@ def test_type_error_message_names_the_offending_argument() -> None:
 def test_non_string_run_args_raise_format_error() -> None:
     # run's args schema is an array of strings; a nested list is invalid.
     with pytest.raises(FormatError):
-        _model()._parse_actions(
-            _response([_tool_call("run", {"name": "x", "args": ["a", ["b"]]})])
-        )
+        _model()._parse_actions(_response([_tool_call("run", {"name": "x", "args": ["a", ["b"]]})]))
 
 
 def test_bool_is_rejected_for_numeric_fields() -> None:
