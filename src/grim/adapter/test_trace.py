@@ -13,6 +13,7 @@ import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -54,7 +55,7 @@ def _trace_reset() -> Iterator[None]:
     _reset_trace()
 
 
-def _events() -> list[dict]:
+def _events() -> list[dict[str, Any]]:
     path = Path(os.environ["GRIM_INSTRUMENT_FILE"])
     if not path.exists():
         return []

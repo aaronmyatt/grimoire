@@ -175,15 +175,19 @@ def span(phase: str, **fields: object) -> Iterator[_Span]:
     field overrides the module's current values (agent.turn passes turn)."""
     explicit_session = fields.pop("session", None)
     explicit_turn = fields.pop("turn", None)
+    # Internal invariant, not input validation: the only turn-passing caller
+    # is grim's own adapter (agent.turn hands its int counter), so a non-int
+    # here is a codebase bug — assert narrows `object` for the math below.
+    assert explicit_turn is None or isinstance(explicit_turn, int), "span turn must be an int"
     if not _ensure_enabled():
-        turn = int(explicit_turn or 0) if explicit_turn is not None else 0
+        turn = (explicit_turn or 0) if explicit_turn is not None else 0
         sp = _Span(phase, None, turn, **fields)
         sp._closed = True  # inert: update/end are no-ops when disabled
         yield sp
         return
     with _lock:
         session = _current_session if explicit_session is None else str(explicit_session)
-        turn = _current_turn if explicit_turn is None else int(explicit_turn or 0)
+        turn = _current_turn if explicit_turn is None else (explicit_turn or 0)
     sp = _Span(phase, session, turn, **fields)
     try:
         yield sp

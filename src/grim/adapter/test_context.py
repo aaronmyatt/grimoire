@@ -9,6 +9,10 @@ never leak in.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from grim.adapter import context
@@ -43,7 +47,7 @@ def _context_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _reset_state() -> None:
+def _reset_state() -> Iterator[None]:
     context._LAST_PROMPT_TOKENS = None
     context._MODEL_INFO.clear()
     yield
@@ -56,7 +60,7 @@ _TASK = {"role": "user", "content": "solve this"}
 _LONG_OUTPUT = "x" * 5000
 
 
-def _assistant_turn(i: int, with_result: bool = True) -> list[dict]:
+def _assistant_turn(i: int, with_result: bool = True) -> list[dict[str, Any]]:
     tool_call = {
         "tool": "run",
         "args": {"name": f"s{i}"},
@@ -71,7 +75,7 @@ def _assistant_turn(i: int, with_result: bool = True) -> list[dict]:
     return messages
 
 
-def _conversation(turns: int = _TURNS, with_results: bool = True) -> list[dict]:
+def _conversation(turns: int = _TURNS, with_results: bool = True) -> list[dict[str, Any]]:
     messages = [_SYSTEM, _TASK]
     for i in range(turns):
         messages += _assistant_turn(i, with_results)
@@ -190,7 +194,7 @@ def test_is_context_error_classification() -> None:
     )
 
 
-def test_previous_session_snippet(tmp_path) -> None:
+def test_previous_session_snippet(tmp_path: Path) -> None:
     traj = tmp_path / "grimoire-test.traj.json"
     traj.write_text(
         '{"info": {"exit_status": "Submitted"}, "messages": ['
@@ -205,7 +209,7 @@ def test_previous_session_snippet(tmp_path) -> None:
     assert "reasoning" in snippet and "output" in snippet
 
 
-def test_previous_session_snippet_degrades(tmp_path) -> None:
+def test_previous_session_snippet_degrades(tmp_path: Path) -> None:
     assert context.previous_session_snippet(tmp_path / "absent") == ""
     bad = tmp_path / "bad.traj.json"
     bad.write_text("not json")
