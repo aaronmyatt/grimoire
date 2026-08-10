@@ -84,6 +84,11 @@ compounding condition). `GRIM_EVAL_COLD=1` forces the cold per-run control;
     smevals run evals/grim-swebench -t 001-django__django-7530 \
       -m anthropic/claude-sonnet-4-5 -g
 
+    # the control arm — vanilla mini-swe-agent (-c mini), same tasks, same
+    # caps, same grader, no script library (Phase 8's baseline):
+    smevals run evals/grim-swebench -c mini -t 001-django__django-7530 \
+      -m anthropic/claude-sonnet-4-5 -g
+
 On Apple silicon the checker defaults to `--namespace ''` (build instance
 images locally; upstream calls arm64 experimental) and on x86_64 to the
 prebuilt `swebench` DockerHub namespace; override with `SWEBENCH_NAMESPACE`.

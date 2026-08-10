@@ -1,0 +1,6 @@
+name: mini
+runner: ../run-mini
+# Baseline arm (build plan Phase 8's control): vanilla mini-swe-agent — raw
+# bash in the same host checkout, same caps, same grader — no script library.
+# Usage: smevals run evals/grim-swebench -c mini -m <model> -g
+# Runner contract: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)

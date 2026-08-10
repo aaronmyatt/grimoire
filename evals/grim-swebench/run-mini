@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# smevals Runner for the VANILLA mini-swe-agent baseline arm (build plan
+# Phase 8's control): raw bash in the same host checkout, same caps, same
+# grader — no script library. Selected via configs/mini.yaml
+# (`smevals run evals/grim-swebench -c mini …`); everything measurable
+# differs from ../run-grim in exactly one variable: the agent.
+# Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+#
+# Same stdout deviation as ../run-grim, stated loudly: stdout is the
+# model_patch (the workspace's staged git diff), NOT answer text. Vanilla
+# mini has no print mode — its whole console UI is redirected to stderr
+# (captured as stderr.txt) so the patch stays the only thing on stdout.
+set -uo pipefail
+
+: "${SMEVALS_MODEL:?run-mini: SMEVALS_MODEL is required}"
+: "${SMEVALS_PROMPT:?run-mini: SMEVALS_PROMPT is required (the task needs a prompt)}"
+: "${SMEVALS_RUN_DIR:?run-mini: SMEVALS_RUN_DIR is required}"
+: "${SMEVALS_TASK_INSTANCE_ID:?run-mini: task must declare instance_id:}"
+: "${SMEVALS_TASK_REPO:?run-mini: task must declare repo: (org/name)}"
+: "${SMEVALS_TASK_BASE_COMMIT:?run-mini: task must declare base_commit:}"
+
+# BASH_SOURCE locates this eval dir regardless of smevals' working directory.
+# Ref: https://www.gnu.org/software/bash/manual/bash.html#index-BASH_005fSOURCE
+EVAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# `mini` comes from the same optional extra as grim-agent. A missing binary
+# is the baseline's analogue of grim's exit-2 missing-extra: infra, pre-launch.
+# Word-split the override on purpose (launcher, not control plane).
+# shellcheck disable=SC2086
+set -- ${MINI_AGENT_CMD:-mini}
+if ! command -v "$1" >/dev/null 2>&1; then
+  echo "run-mini: '$1' not found — uv tool install 'grimoire[agent]' puts mini on PATH," >&2
+  echo "run-mini: or set MINI_AGENT_CMD (e.g. 'uv run --project <grimoire> --extra agent mini')" >&2
+  exit 1
+fi
+
+# --- workspace: identical materialization to ../run-grim ---------------------
+# (bare-mirror cache + shared clone at base_commit; duplication across the
+# run-grim family is ledgered in ABSTRACTIONS.md — arms must not drift.)
+CACHE_DIR="${GRIM_SWEBENCH_CACHE:-$EVAL_DIR/cache}"
+MIRROR="$CACHE_DIR/${SMEVALS_TASK_REPO//\//__}.git"
+if [ ! -d "$MIRROR" ]; then
+  echo "run-mini: caching bare mirror of $SMEVALS_TASK_REPO (first use, one-off cost)" >&2
+  mkdir -p "$CACHE_DIR"
+  if ! git clone --quiet --bare "https://github.com/$SMEVALS_TASK_REPO.git" "$MIRROR"; then
+    echo "run-mini: bare clone of $SMEVALS_TASK_REPO failed — infra failure" >&2
+    exit 1
+  fi
+fi
+
+WORKSPACE="$SMEVALS_RUN_DIR/workspace"
+if ! git clone --quiet --shared --no-checkout "$MIRROR" "$WORKSPACE"; then
+  echo "run-mini: workspace clone from $MIRROR failed — infra failure" >&2
+  exit 1
+fi
+checkout() {
+  git -C "$WORKSPACE" -c advice.detachedHead=false checkout -q "$SMEVALS_TASK_BASE_COMMIT"
+}
+if ! checkout; then
+  git --git-dir="$MIRROR" fetch --quiet origin || true
+  if ! checkout; then
+    echo "run-mini: $SMEVALS_TASK_BASE_COMMIT not reachable in $MIRROR — infra failure" >&2
+    exit 1
+  fi
+fi
+git -C "$WORKSPACE" config user.email "grim-eval@localhost"
+git -C "$WORKSPACE" config user.name "grim-eval"
+cd "$WORKSPACE" || exit 1
+
+# Identical caps to the grim arm — the comparison is agent vs agent, never
+# budget vs budget. Same env names, same defaults as ../run-grim.
+: "${GRIM_STEP_LIMIT:=100}"
+: "${GRIM_COST_LIMIT:=3}"
+
+# Run identity artifact for the run-metrics Grader: db is deliberately empty
+# — the baseline has no library, so DB metrics are skipped, while trajectory
+# metrics (cost/steps/format errors) still work off vanilla-mini.traj.json.
+printf '{"session_id": "", "db": "", "db_mode": "baseline"}\n' \
+  > "$SMEVALS_RUN_DIR/grim-run.json"
+
+echo "run-mini: task=$SMEVALS_TASK instance=$SMEVALS_TASK_INSTANCE_ID model=$SMEVALS_MODEL" >&2
+echo "run-mini: baseline arm (no library) steps<=$GRIM_STEP_LIMIT cost<=\$$GRIM_COST_LIMIT" >&2
+
+# Vanilla mini quirk that matters: passing ANY -c REPLACES its default config
+# list, so the stock mini.yaml must be named explicitly before the step-limit
+# override. `-y --exit-immediately` = unattended; `1>&2` sends the whole UI
+# to stderr because there is no print mode.
+# Ref: https://mini-swe-agent.com/latest/usage/mini/
+# shellcheck disable=SC2086
+${MINI_AGENT_CMD:-mini} -y --exit-immediately \
+  -c mini.yaml -c "agent.step_limit=${GRIM_STEP_LIMIT}" \
+  -l "$GRIM_COST_LIMIT" -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT" \
+  -o "$SMEVALS_RUN_DIR/vanilla-mini.traj.json" 1>&2
+ec=$?
+echo "run-mini: agent done exit=$ec" >&2
+
+# Same policy as ../run-grim: after a successful launch, every outcome is
+# gradable — a limit-exhausted or crashed run is judged on whatever diff it
+# left behind (an empty diff fails cheaply in the grader). Infra failures
+# were all handled pre-launch.
+git -C "$WORKSPACE" add -A >&2
+git -C "$WORKSPACE" diff --cached --no-color -- . \
+  ':(exclude,glob)**/__pycache__/**' ':(exclude,glob)**/*.pyc'
+exit 0
