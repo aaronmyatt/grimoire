@@ -77,11 +77,11 @@ compounding condition). `GRIM_EVAL_COLD=1` forces the cold per-run control;
     # prove the grading pipeline once, no model cost (gold patch must pass):
     uvx --from swebench python -m swebench.harness.run_evaluation \
       --dataset_name princeton-nlp/SWE-bench_Verified --predictions_path gold \
-      --max_workers 1 --instance_ids django__django-11039 \
+      --max_workers 1 --instance_ids django__django-7530 \
       --run_id smoke-gold --namespace ''
 
     # one real instance, grouped library, graded:
-    smevals run evals/grim-swebench -t 001-django__django-11039 \
+    smevals run evals/grim-swebench -t 001-django__django-7530 \
       -m anthropic/claude-sonnet-4-5 -g
 
 On Apple silicon the checker defaults to `--namespace ''` (build instance
