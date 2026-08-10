@@ -6,5 +6,10 @@ checks:
   - checker: ../checkers/run-tests
     timeout_s: 60
     required: true
+  # Observer only (constant score 1.0, always exit 0): harvests experiment
+  # metrics — cost/steps/format errors + session-scoped escape/reuse — into
+  # this grade's metrics block. Never affects the outcome.
+  - checker: ../checkers/run-metrics
+    required: false
 scoring:
   pass_threshold: 1.0
