@@ -116,8 +116,9 @@ echo "run-grim: db=$DB_MODE ($GRIM_DB) steps<=$GRIM_STEP_LIMIT cost<=\$$GRIM_COS
 # are gone. Values are slugs/paths that never contain quotes — safe to
 # inline as JSON without an escaping pass.
 GRIM_SESSION_ID="smevals-${SMEVALS_TASK}-$(date +%Y%m%dT%H%M%S)-$$"
-printf '{"session_id": "%s", "db": "%s", "db_mode": "%s"}\n' \
-  "$GRIM_SESSION_ID" "$GRIM_DB" "$DB_MODE" > "$SMEVALS_RUN_DIR/grim-run.json"
+printf '{"session_id": "%s", "db": "%s", "db_mode": "%s", "languages": "%s"}\n' \
+  "$GRIM_SESSION_ID" "$GRIM_DB" "$DB_MODE" "$GRIM_LANGUAGES" \
+  > "$SMEVALS_RUN_DIR/grim-run.json"
 
 # `-p` (print mode) is load-bearing: it runs unattended and keeps stdout clean
 # — though here the agent's answer is a breadcrumb, not the graded artifact.

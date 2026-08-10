@@ -75,7 +75,7 @@ cd "$WORKSPACE" || exit 1
 # Run identity artifact for the run-metrics Grader: db is deliberately empty
 # — the baseline has no library, so DB metrics are skipped, while trajectory
 # metrics (cost/steps/format errors) still work off vanilla-mini.traj.json.
-printf '{"session_id": "", "db": "", "db_mode": "baseline"}\n' \
+printf '{"session_id": "", "db": "", "db_mode": "baseline", "languages": ""}\n' \
   > "$SMEVALS_RUN_DIR/grim-run.json"
 
 echo "run-mini: task=$SMEVALS_TASK instance=$SMEVALS_TASK_INSTANCE_ID model=$SMEVALS_MODEL" >&2
