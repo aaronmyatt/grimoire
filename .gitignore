@@ -18,3 +18,6 @@ evals/**/*.db-shm
 
 # swebench repo mirrors are a pure local cache (evals/grim-swebench/run-grim)
 evals/**/cache/
+
+# sweep arm label configs are generated on demand by evals/sweep-langs
+evals/**/configs/L-*.yaml

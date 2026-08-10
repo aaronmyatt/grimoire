@@ -63,6 +63,25 @@ still wins, mirroring the `GRIM_EVAL_DB` precedence), or pin a set per task
 with `grim_languages:`. Compare pass rates and the language lean of
 agent-written scripts across arms and models.
 
+## Language sweep
+
+`evals/sweep-langs` drives whole arm matrices and renders the comparison:
+
+    # the 10-arm screen (controls, single additions, the pool) x
+    # grim-smoke+debug+solve, cold, sequential (~45-90 min, ~$1-3 on flash):
+    evals/sweep-langs --preset screen -m deepseek/deepseek-v4-flash -n 1
+
+    evals/sweep-langs --preset screen --report-only   # re-render the table
+    smevals report evals/grim-debug                   # native config x model view
+
+An arm is a generated `L-<slug>` label config zipped with the
+GRIM_EVAL_LANGUAGES export; each run's actual set is stamped in its
+grim-run.json, and the verdict columns come from run-metrics (pass, cost,
+steps, escape rate, format errors, `writes_<lang>` lean). `-n` is plain
+repetition (re-running a finished sweep adds runs; `--report-only`
+aggregates what exists). Custom arms repeat the flag:
+`--arms python,bash --arms python,bash,jq --evals grim-smoke`.
+
 
 ## SWE-bench (grim-swebench)
 
