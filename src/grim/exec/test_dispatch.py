@@ -18,6 +18,7 @@ from grim.exec.dispatch import (
     ExecutionRequest,
     ExecutionResult,
     ScriptVersion,
+    base_languages,
     dispatch,
     enabled_languages,
     language_status,
@@ -277,3 +278,39 @@ def test_kill_group_terminates_a_grandchild() -> None:
         assert _poll(_ORPHAN_MARKER_KILLGRP, want=False), "_kill_group left an orphan"
     finally:
         subprocess.run(["pkill", "-f", _ORPHAN_MARKER_KILLGRP], capture_output=True)
+
+
+# --- base-language subsetting (GRIM_BASE_LANGUAGES, the solo-arm knob) -------
+
+
+def test_base_languages_unset_keeps_both_builtins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GRIM_BASE_LANGUAGES", raising=False)
+    assert base_languages() == frozenset({"python", "bash"})
+
+
+def test_base_languages_subsets_and_filters_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "python")
+    assert base_languages() == frozenset({"python"})
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "bash, junk, jq")
+    # Unknown names are filtered (external input); extended names never
+    # enter through this knob — they ride GRIM_LANGUAGES.
+    assert base_languages() == frozenset({"bash"})
+
+
+def test_base_languages_empty_removes_builtins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "")
+    assert base_languages() == frozenset()
+
+
+def test_supported_languages_solo_extended(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The solo arm: no builtins, one extended language writable.
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "")
+    monkeypatch.setenv("GRIM_LANGUAGES", "jq")
+    assert supported_languages() == frozenset({"jq"})
+
+
+def test_supported_languages_fail_safe_never_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Both knobs emptied out -> fall back to the builtin pair, never a brick.
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "")
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+    assert supported_languages() == frozenset({"python", "bash"})

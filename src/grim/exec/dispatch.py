@@ -29,6 +29,12 @@ _REAP_TIMEOUT_S = 5.0
 # shell-set value wins (setdefault). Unset/empty = everything off, the default.
 LANGUAGES_ENV = "GRIM_LANGUAGES"
 
+# Env var SUBSETTING which builtin languages the agent may write: unset ->
+# both python and bash (status quo); a set value names the subset to keep,
+# and '' keeps none — the solo-language experiment knob (language sweeps).
+# Only ever narrows the builtin pair; extended languages ride LANGUAGES_ENV.
+BASE_LANGUAGES_ENV = "GRIM_BASE_LANGUAGES"
+
 
 @dataclass(frozen=True)
 class ScriptVersion:
@@ -187,10 +193,34 @@ def enabled_languages() -> frozenset[str]:
     return enabled
 
 
+def base_languages() -> frozenset[str]:
+    """Builtin languages the agent may WRITE: unset -> both (status quo);
+    set -> the named subset of {python, bash} — '' removes the builtins
+    entirely, the solo-language experiment knob. Unknown names are filtered,
+    never asserted (external input). Execution of scripts already in the
+    library is not gated by this — the same writing-only rule as the
+    extended-language toggle."""
+    raw = os.environ.get(BASE_LANGUAGES_ENV)
+    if raw is None:
+        return frozenset(_BUILTIN_RUNNERS)
+    assert isinstance(raw, str), "environment values are strings"
+    tokens = frozenset(tok.strip() for tok in raw.split(",") if tok.strip())
+    base = tokens & frozenset(_BUILTIN_RUNNERS)
+    assert base <= frozenset(_BUILTIN_RUNNERS), "base only ever narrows the builtin pair"
+    return base
+
+
 def supported_languages() -> frozenset[str]:
-    """Languages `grim write --lang` accepts right now: bash + python always,
-    plus enabled, platform-valid extended languages (off by default)."""
-    return frozenset(_BUILTIN_RUNNERS) | enabled_languages()
+    """Languages `grim write --lang` accepts right now: the (subsettable)
+    builtins plus enabled, platform-valid extended languages. Fail-safe: if
+    the two knobs together empty the set, fall back to the builtin pair —
+    an agent that can write nothing is an operator error, never a brick."""
+    supported = base_languages() | enabled_languages()
+    if not supported:
+        return frozenset(_BUILTIN_RUNNERS)
+    assert supported <= frozenset(_ALL_RUNNERS), "supported stays within the catalog"
+    assert supported, "the writable set is never empty"
+    return supported
 
 
 def language_tool(language: str) -> str:

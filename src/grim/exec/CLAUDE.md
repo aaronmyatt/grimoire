@@ -15,8 +15,11 @@ agent (build plan D8, D9, §4).
   into an options struct). The only entry point the `verbs/run.py`
   module calls. Bash + python always run; a catalogued extended language
   runs even when disabled in config (the toggle gates writing, not
-  executing the library), and `supported_languages()` — bash + python +
-  enabled, platform-valid extended — is the write-time gate.
+  executing the library), and `supported_languages()` — the subsettable
+  builtins (`base_languages()`, from `GRIM_BASE_LANGUAGES`: unset -> both,
+  '' -> none — the solo-language experiment knob) plus enabled,
+  platform-valid extended — is the write-time gate, with a fail-safe:
+  if both knobs empty the set, it falls back to the builtin pair.
 - `envelope.py` — `truncate(stdout, stderr, ...) -> str`, the
   first-40/last-10-lines formatting described in build plan §4.
 
