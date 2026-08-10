@@ -139,3 +139,52 @@ def test_system_template_renders_operator_instructions() -> None:
 
     without = jinja2.Template(template).render(grim_user_prompt="")
     assert "operator_instructions" not in without
+
+
+def test_templates_render_enabled_languages() -> None:
+    # The language-sweep confound fix: with grim_languages stashed, BOTH
+    # templates must NAME the enabled set; without the var they fall back to
+    # the old static python-or-bash text (grimoire.yaml's guard philosophy).
+    import jinja2  # ships transitively with mini-swe-agent
+
+    config = yaml.safe_load(GRIMOIRE_YAML.read_text())["agent"]
+    enabled = ["python", "bash", "jq"]
+    for name in ("system_template", "instance_template"):
+        rendered = jinja2.Template(config[name]).render(grim_languages=enabled, task="t")
+        assert "python, bash, jq" in rendered, name
+        fallback = jinja2.Template(config[name]).render(task="t")
+        assert "python or bash" in fallback, name
+        assert "jq" not in fallback, name
+
+
+def test_run_stashes_enabled_languages(monkeypatch: pytest.MonkeyPatch) -> None:
+    # grim_languages reaches the prompt from the SAME function that builds the
+    # write/list schema enums (tools.lang_enum) — an enabled language becomes
+    # visible prose, not just an enum entry the model may never read.
+    monkeypatch.setenv("GRIM_LANGUAGES", "jq")
+    db.migrate(db.connect())
+
+    def act(tool: str, args: dict[str, object]) -> dict[str, object]:
+        return {
+            "tool": tool,
+            "args": args,
+            "tool_call_id": "c",
+            "command": render_command(tool, args),
+        }
+
+    outputs = [make_output("done", [act("submit", {"result": "ok"})])]
+    agent = GrimAgent(
+        DeterministicModel(outputs=outputs),  # type: ignore[no-untyped-call]
+        GrimEnvironment(session_id="langs-e2e"),
+        system_template="langs: {{ grim_languages | join(', ') }}",
+        instance_template="{{task}}",
+        mode="yolo",
+        confirm_exit=False,
+        cost_limit=0,
+    )
+
+    result = agent.run("noop")
+
+    assert result["exit_status"] == "Submitted"
+    assert agent.extra_template_vars["grim_languages"] == ["bash", "jq", "python"]
+    assert agent.messages[0]["content"] == "langs: bash, jq, python"

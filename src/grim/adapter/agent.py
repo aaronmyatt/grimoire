@@ -28,6 +28,7 @@ from grim.adapter.completer import install_grim_completer
 from grim.adapter.display import action_renderables, grim_actions, reasoning_text
 from grim.adapter.environment import GrimEnvironment
 from grim.adapter.slash import GRIM_CLI_VERBS, run_slash_command
+from grim.adapter.tools import lang_enum
 
 # Operator-authored system-prompt extension, the agent-harness analogue of a
 # global ~/.claude or ~/.pi instruction file. Lives under grim's home dir (the
@@ -219,6 +220,11 @@ class GrimAgent(InteractiveAgent):
             with trace.span("agent.turn", turn=turn):
                 self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
                 self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
+                # The enabled language set, from the SAME function that builds
+                # the write/list schema enums — prompt and schema cannot drift.
+                # Without this the prose undersells granted languages (the
+                # language-sweep confound this line exists to remove).
+                self.extra_template_vars["grim_languages"] = lang_enum()
                 if recall_enabled():
                     self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
                     self.extra_template_vars["grim_previous_session"] = (

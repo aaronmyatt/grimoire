@@ -24,12 +24,14 @@ from typing import Any
 SUBMIT_TOOL_NAME = "submit"
 
 
-def _lang_enum() -> list[str]:
+def lang_enum() -> list[str]:
     """The `--lang` choices the model may propose: bash + python always, plus
     extended languages enabled in $GRIM_LANGUAGES (seeded by config.py from
     config.toml's [languages] table; off by default). A deliberate copy of
     exec/dispatch.py's env parse — the adapter never imports a slice; the
-    authoritative platform gate stays in write_script."""
+    authoritative platform gate stays in write_script. Public: feeds BOTH the
+    write/list tool schemas below and grimoire.yaml's prompts (GrimAgent
+    stashes it as grim_languages), so the two can never drift."""
     raw = os.environ.get("GRIM_LANGUAGES", "")
     enabled = {tok.strip() for tok in raw.split(",") if tok.strip()}
     return sorted({"python", "bash"} | enabled)
@@ -148,7 +150,7 @@ GRIM_TOOLS: list[dict[str, Any]] = [
         "The body is the full script source.",
         {
             "name": {**_STR, "description": "slug, ^[a-z][a-z0-9_]{2,63}$"},
-            "lang": {"type": "string", "enum": _lang_enum()},
+            "lang": {"type": "string", "enum": lang_enum()},
             "desc": {**_STR, "description": "search-index description"},
             "body": {**_STR, "description": "full script source"},
             "parent": {**_STR, "description": "fork lineage: parent script name[@version]"},
@@ -184,7 +186,7 @@ GRIM_TOOLS: list[dict[str, Any]] = [
         "Terse rows of library scripts. Prefer find when you know what you want.",
         {
             "scope": _STR,
-            "lang": {"type": "string", "enum": _lang_enum()},
+            "lang": {"type": "string", "enum": lang_enum()},
             "limit": _INT,
             "offset": _INT,
         },

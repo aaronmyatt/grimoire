@@ -8,10 +8,13 @@ D6 revised → native tool-calling).
 
 ## Public interface
 - `tools.py` — `GRIM_TOOLS` (OpenAI function schemas for the six agent
-  verbs + a terminal `submit` control) and `tool_call_to_argv(tool, args)
-  -> (argv, stdin)`, the pure structured-args → `cli.main` argv mapper.
-  Text/data in, data out; no mini-swe-agent import. This is the successor
-  to the old text-based `parse.py`.
+  verbs + a terminal `submit` control), `tool_call_to_argv(tool, args)
+  -> (argv, stdin)`, the pure structured-args → `cli.main` argv mapper,
+  and `lang_enum()` — the enabled-language list ($GRIM_LANGUAGES +
+  builtins) that feeds BOTH the write/list schema enums and the prompt
+  (GrimAgent stashes it as `grim_languages`), so schema and prose can
+  never drift. Text/data in, data out; no mini-swe-agent import. This is
+  the successor to the old text-based `parse.py`.
 - `toolcall_model.py` — `GrimToolcallModel(LitellmModel)`. Overrides
   `_query` (hands the model `GRIM_TOOLS` instead of the single `bash`
   tool) and `_parse_actions` (validates each tool call — name + required
@@ -45,6 +48,9 @@ D6 revised → native tool-calling).
   Mitigates build plan §8's "optional find misses/duplicates existing
   scripts" risk by surfacing a high-confidence hit before the agent
   decides whether to search at all. `run()` also stashes
+  `tools.lang_enum()` as `grim_languages`, rendered by BOTH templates so
+  every enabled language is named in prose (static python-or-bash fallback
+  when undefined — the language-sweep confound fix), and
   `user_prompt_extension()` (the operator's `~/.grimoire/system.md`, read
   fresh each run) as `grim_user_prompt`, which `system_template` renders as
   an `<operator_instructions>` block when non-empty — the agent-harness

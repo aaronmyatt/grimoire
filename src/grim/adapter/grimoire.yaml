@@ -19,9 +19,13 @@ agent:
     finish. There is no shell available to you directly; anything else you
     need happens inside a script you write (a bash script can call any
     command on PATH, a python script can subprocess.run any CLI tool).
-    Scripts may only be written in python or bash, plus any extended languages
-    you've enabled under [languages] in ~/.grimoire/config.toml (all off by
-    default; osascript is macOS-only).
+    {%- if grim_languages is defined and grim_languages %}
+    Scripts may be written in any of these enabled languages:
+    {{ grim_languages | join(', ') }}. Reach for whichever fits the job —
+    the operator controls this set; treat every listed language as fair game.
+    {%- else %}
+    Scripts may only be written in python or bash.
+    {%- endif %}
 
     Each script you accumulate becomes a reusable verb in your vocabulary,
     and find is how you remember you know it. Naming and descriptions are
@@ -116,9 +120,13 @@ agent:
     Please solve this task: {{task}}
 
     Remember: you act by calling tools — the six verbs (write, update,
-    read, list, find, run) plus submit to finish — and scripts may only be
-    python or bash. Call find first when you're not already sure a suitable
-    script exists.
+    read, list, find, run) plus submit to finish.
+    {%- if grim_languages is defined and grim_languages %}
+    Scripts may be written in: {{ grim_languages | join(', ') }}.
+    {%- else %}
+    Scripts may only be python or bash.
+    {%- endif %}
+    Call find first when you're not already sure a suitable script exists.
     {%- if grim_recent_library is defined and grim_recent_library %}
 
     <recent_library>
