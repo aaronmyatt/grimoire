@@ -24,3 +24,14 @@ mechanically.
   (the adapter's copy skips platform filtering by design, so the two sets
   can differ on a wrong-OS language). A tiny shared kernel helper would
   unify them if a third consumer appears.
+- **smevals run-grim preamble, four copies.** All four eval runners
+  (`evals/grim-{smoke,debug,solve,plan}/run-grim` share three; `evals/
+  grim-swebench/run-grim` is the fourth, diverging on GRIM_DB precedence —
+  it adds GRIM_EVAL_COLD/grim_group — and on stdout carrying the patch
+  instead of the answer) repeat the same blocks: required-env asserts,
+  GRIM_DB isolation precedence, GRIM_TRAJ_DIR export, GRIM_LANGUAGES pin,
+  the word-split `$GRIM_AGENT_CMD -p` launch, and the exit-2/infra-fail
+  convention. The abstraction might be a sourced `evals/lib/run-grim.sh`
+  prelude — but each eval is deliberately self-contained (the same
+  independence rule as slices), so extraction waits for the human's call
+  as its own task.
