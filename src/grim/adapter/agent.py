@@ -22,6 +22,7 @@ from minisweagent.agents.interactive import InteractiveAgent, console
 from minisweagent.exceptions import UserInterruption
 
 from grim import db
+from grim.adapter import context, trace
 from grim.adapter.bang import install_bang_expansion
 from grim.adapter.completer import install_grim_completer
 from grim.adapter.display import action_renderables, grim_actions, reasoning_text
@@ -197,6 +198,16 @@ class GrimAgent(InteractiveAgent):
     def run(self, task: str = "", **kwargs: object) -> dict[str, object]:
         assert isinstance(task, str), "task is a string"
         env = self._grim_env()
+        model = str(getattr(getattr(self.model, "config", None), "model_name", "") or "")
+        trace.session_open(env.session_id, task=task[:500], model=model)
+        try:
+            return self._run_loop(task, env, model, **kwargs)
+        finally:
+            trace.session_close()
+
+    def _run_loop(
+        self, task: str, env: GrimEnvironment, model: str, **kwargs: object
+    ) -> dict[str, object]:
         # Enable @/: completion and !slug execute-and-substitute on mini's
         # prompt sessions (no-op without a TTY); installed once, but
         # session_id is re-read live so /new's fresh session is honored.
@@ -204,16 +215,24 @@ class GrimAgent(InteractiveAgent):
         install_bang_expansion(lambda: env.session_id)
         console.print(_SLASH_HINT)
         while True:
-            self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
-            self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
-            if recall_enabled():
-                self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
-            result = super().run(task, **kwargs)
+            turn = trace.turn_begin()
+            with trace.span("agent.turn", turn=turn):
+                self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
+                self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
+                if recall_enabled():
+                    self.extra_template_vars["grim_recent_library"] = recent_library(
+                        recall_limit()
+                    )
+                    self.extra_template_vars["grim_previous_session"] = (
+                        context.previous_session_snippet()
+                    )
+                result = super().run(task, **kwargs)
             assert isinstance(result, dict), "InteractiveAgent.run always returns a dict"
             if result.get("exit_status") != _NEW_SESSION_EXIT_STATUS:
                 return result
             env.session_id = str(uuid.uuid4())
             task = str(result.get("submission", ""))
+            trace.session_open(env.session_id, task=task[:500], model=model)
 
     def _grim_env(self) -> GrimEnvironment:
         env = self.env
@@ -263,7 +282,8 @@ class GrimAgent(InteractiveAgent):
         grim-only commands: /new <task> (below) and grim's CLI verbs as
         /verb ... (slash.py) — both dispatched here, never sent to the
         model."""
-        user_input = super()._prompt_and_handle_slash_commands(prompt, _multiline=_multiline)
+        with trace.span("agent.human_wait"):
+            user_input = super()._prompt_and_handle_slash_commands(prompt, _multiline=_multiline)
         assert isinstance(user_input, str), "prompt input is always a string"
         if user_input == _NEW_SESSION_COMMAND or user_input.startswith(_NEW_SESSION_COMMAND + " "):
             new_task = user_input[len(_NEW_SESSION_COMMAND) :].strip()

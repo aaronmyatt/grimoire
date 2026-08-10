@@ -23,6 +23,7 @@ from jinja2 import StrictUndefined, Template
 from minisweagent.exceptions import FormatError
 from minisweagent.models.litellm_model import LitellmModel
 
+from grim.adapter import context, trace
 from grim.adapter.tools import GRIM_TOOLS, render_command
 
 _TOOL_NAMES = frozenset(t["function"]["name"] for t in GRIM_TOOLS)
@@ -92,21 +93,45 @@ class GrimToolcallModel(LitellmModel):
     def _query(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         # Overridden wholesale (not super()) because the parent hardcodes
         # tools=[BASH_TOOL] with no seam to swap it. Auth-error hint kept
-        # for parity with the parent's UX.
+        # for parity with the parent's UX; the context budget (adapter/
+        # context.py) compacts and retries around the call, and a context
+        # error that survives compaction becomes a FormatError pointing at
+        # `grim-agent --continue` instead of a raw provider 400.
         try:
-            return litellm.completion(
-                model=self.config.model_name,
-                messages=messages,
-                tools=GRIM_TOOLS,
-                **(self.config.model_kwargs | kwargs),
-            )
+            with trace.span("llm.completion", model=self.config.model_name) as sp:
+                response = context.completion(
+                    self.config.model_name,
+                    messages,
+                    GRIM_TOOLS,
+                    self.config.model_kwargs | kwargs,
+                )
+                sp.update(**_usage_fields(response))
+            return response
         except litellm.exceptions.AuthenticationError as e:
             e.message += (
                 " You can permanently set your API key with `mini-extra config set KEY VALUE`."
             )
             raise
+        except (
+            litellm.exceptions.ContextWindowExceededError,
+            litellm.exceptions.BadRequestError,
+        ) as e:
+            if not context.is_context_error(e):
+                raise
+            raise self._format_error(
+                "Context budget exhausted: this conversation no longer fits the model "
+                "window even after compaction. Wrap up and submit now, or start a "
+                "fresh run with `grim-agent --continue` to warm-start from the "
+                "last session.",
+                None,
+            ) from e
 
     def _parse_actions(self, response: Any) -> list[dict[str, Any]]:
+        """Timed wrapper — llm.parse spans cover validation + lowering."""
+        with trace.span("llm.parse"):
+            return self._parse_actions_impl(response)
+
+    def _parse_actions_impl(self, response: Any) -> list[dict[str, Any]]:
         """Validate the model's tool calls and lower them to grim actions.
         Any deviation (no call, unknown tool, bad/missing args) raises
         FormatError so the agent loop feeds a precise correction back —
@@ -166,3 +191,17 @@ class GrimToolcallModel(LitellmModel):
         return FormatError(
             {"role": "user", "content": content, "extra": {"interrupt_type": "FormatError"}}
         )
+
+
+def _usage_fields(response: Any) -> dict[str, object]:
+    """Token counts for the llm.completion span — best-effort: a provider
+    that omits usage yields {} (external input, degrade, never crash)."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {}
+    fields: dict[str, object] = {}
+    for attr in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, attr, None)
+        if isinstance(value, int):
+            fields[attr] = value
+    return fields

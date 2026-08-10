@@ -28,9 +28,11 @@ import sys
 import tempfile
 import time
 from importlib import resources
+from pathlib import Path
 from typing import Any, NamedTuple
 
 from grim import cli, db
+from grim.adapter import trace
 from grim.adapter.mini_prompt_patch import ensure_mini_task_prompt_patch
 
 # grimoire.yaml ships inside this package (see pyproject hatchling config);
@@ -430,6 +432,19 @@ def last_agent_session_id() -> str | None:
         conn.close()
     return str(row[0]) if row else None
 
+def _remember_trajectory(path: str) -> None:
+    """Record the finished run's trajectory path for the next `--continue`
+    (adapter/context.py::previous_session_snippet reads it). An adapter-owned
+    file under ~/.grimoire — fail-soft: a broken HOME must never fail a run."""
+    assert path.endswith(".traj.json"), "trajectory path must be a .traj.json file"
+    try:
+        target = Path.home() / ".grimoire" / "last-trajectory"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(path + "\n")
+    except OSError:
+        return
+
+
 
 def _launch(app: Any, raw: list[str], print_opts: PrintOptions, continue_on: bool) -> int:
     """Build mini's argv and run the agent — in print mode (clean stdout) or
@@ -457,14 +472,19 @@ def _launch(app: Any, raw: list[str], print_opts: PrintOptions, continue_on: boo
     )
     mini_args = build_mini_args(raw, spec)
     if print_opts.enabled:
-        return run_print(app, mini_args, spec.trajectory, print_opts.output_format)
+        code = run_print(app, mini_args, spec.trajectory, print_opts.output_format)
+        _remember_trajectory(spec.trajectory)
+        return code
     try:
         # Typer app.__call__ -> click main(args=..., standalone_mode=False):
         # returns instead of sys.exit, so real errors propagate (fail loud).
         app(args=mini_args, standalone_mode=False)
     except SystemExit as exc:  # usage errors still raise SystemExit
-        return _exit_code(exc)
-    return 0
+        code = _exit_code(exc)
+    else:
+        code = 0
+    _remember_trajectory(spec.trajectory)
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -510,26 +530,32 @@ def main(argv: list[str] | None = None) -> int:
 
     # Idempotent migrate + seed via the kernel CLI. Its progress lines go to
     # stderr so stdout stays clean for the agent's final answer.
-    with contextlib.redirect_stdout(sys.stderr):
-        init_code = cli.main(["init"])
-    if init_code != 0:
-        print("grim-agent: library init failed (see above)", file=sys.stderr)
-        return init_code
+    # The boot span covers everything from library init to the first session
+    # turn: migrate/seed, completer attach, mini's config load — the "other
+    # system IO" that shows up as harness overhead in the report.
+    with trace.span("agent.boot"):
+        with contextlib.redirect_stdout(sys.stderr):
+            init_code = cli.main(["init"])
+        if init_code != 0:
+            print("grim-agent: library init failed (see above)", file=sys.stderr)
+            return init_code
 
-    # $GRIM_MODEL supplies the model when the user didn't pass -m, matching the
-    # container entrypoint and giving `export GRIM_MODEL=…; grim-agent "task"`.
-    # Self-heal the submit-on-Enter initial-task prompt: minisweagent is a PyPI
-    # dependency with no repo checkout, so a tool reinstall re-extracts the
-    # pristine wheel and reverts the venv-only patch. Fail-soft on layout drift.
-    ensure_mini_task_prompt_patch()
+        # $GRIM_MODEL supplies the model when the user didn't pass -m, matching the
+        # container entrypoint and giving `export GRIM_MODEL=…; grim-agent "task"`.
+        # Self-heal the submit-on-Enter initial-task prompt: minisweagent is a PyPI
+        # dependency with no repo checkout, so a tool reinstall re-extracts the
+        # pristine wheel and reverts the venv-only patch. Fail-soft on layout drift.
+        ensure_mini_task_prompt_patch()
 
-    # Attach the @/: completer to mini's prompt sessions *before* the initial
-    # "What do you want to do?" prompt so the helpers work in the first
-    # interaction (agent.run() also installs it, but only after that prompt).
-    try:
-        from grim.adapter.completer import install_grim_completer  # noqa: PLC0415 -- agent extra
-        install_grim_completer()
-    except Exception as exc:  # prompt_toolkit layout drift must not kill the harness
-        print(f"warning: could not attach the @/: completer early: {exc}", file=sys.stderr)
+        # Attach the @/: completer to mini's prompt sessions *before* the initial
+        # "What do you want to do?" prompt so the helpers work in the first
+        # interaction (agent.run() also installs it, but only after that prompt).
+        try:
+            from grim.adapter.completer import (  # noqa: PLC0415 -- agent extra
+                install_grim_completer,
+            )
+            install_grim_completer()
+        except Exception as exc:  # prompt_toolkit layout drift must not kill the harness
+            print(f"warning: could not attach the @/: completer early: {exc}", file=sys.stderr)
 
-    return _launch(app, raw, print_opts, continue_on)
+        return _launch(app, raw, print_opts, continue_on)
