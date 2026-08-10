@@ -107,12 +107,23 @@ export GRIM_STEP_LIMIT GRIM_COST_LIMIT
 echo "run-grim: task=$SMEVALS_TASK instance=$SMEVALS_TASK_INSTANCE_ID model=$SMEVALS_MODEL" >&2
 echo "run-grim: db=$DB_MODE ($GRIM_DB) steps<=$GRIM_STEP_LIMIT cost<=\$$GRIM_COST_LIMIT" >&2
 
+# Run identity: a runner-chosen session id (handed to GrimEnvironment via
+# mini's -c merge — the same seam `--continue` uses) plus a grim-run.json
+# artifact, so the run-metrics Grader can scope DB queries to exactly this
+# Run's rows in a shared (warm/grouped) library, long after these env vars
+# are gone. Values are slugs/paths that never contain quotes — safe to
+# inline as JSON without an escaping pass.
+GRIM_SESSION_ID="smevals-${SMEVALS_TASK}-$(date +%Y%m%dT%H%M%S)-$$"
+printf '{"session_id": "%s", "db": "%s", "db_mode": "%s"}\n' \
+  "$GRIM_SESSION_ID" "$GRIM_DB" "$DB_MODE" > "$SMEVALS_RUN_DIR/grim-run.json"
+
 # `-p` (print mode) is load-bearing: it runs unattended and keeps stdout clean
 # — though here the agent's answer is a breadcrumb, not the graded artifact.
 # GRIM_AGENT_CMD is left unquoted on purpose so a multi-word command
 # word-splits; this is a launcher, not grim's control plane.
 # shellcheck disable=SC2086
-out="$(${GRIM_AGENT_CMD:-grim-agent} -p -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT")"
+out="$(${GRIM_AGENT_CMD:-grim-agent} -p -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT" \
+  -c "environment.session_id=$GRIM_SESSION_ID")"
 ec=$?
 echo "run-grim: agent done exit=$ec answer_chars=${#out}" >&2
 if [ -n "$out" ]; then printf 'run-grim: agent summary: %.400s\n' "$out" >&2; fi
