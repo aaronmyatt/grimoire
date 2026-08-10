@@ -46,3 +46,9 @@ mechanically.
   checkout, and patch-emission blocks (arms must not drift — the
   comparison is agent vs agent). Any future sourced-prelude extraction
   should cover it together with the entry above.
+- **GRIM_BASE_LANGUAGES parse joins the GRIM_LANGUAGES two-copy.** The
+  builtin-subsetting knob is parsed in `exec/dispatch.py`
+  (`base_languages`) and `adapter/tools.py` (`lang_enum`) — the same
+  deliberate pair as the earlier GRIM_LANGUAGES entry, same reason
+  (slices never import each other), now with a matching never-empty
+  fail-safe in both. Any future unification covers all four parses.
