@@ -10,10 +10,11 @@ D6 revised → native tool-calling).
 - `tools.py` — `GRIM_TOOLS` (OpenAI function schemas for the six agent
   verbs + a terminal `submit` control), `tool_call_to_argv(tool, args)
   -> (argv, stdin)`, the pure structured-args → `cli.main` argv mapper,
-  and `lang_enum()` — the enabled-language list ($GRIM_LANGUAGES +
-  builtins) that feeds BOTH the write/list schema enums and the prompt
-  (GrimAgent stashes it as `grim_languages`), so schema and prose can
-  never drift. Text/data in, data out; no mini-swe-agent import. This is
+  and `lang_enum()` — the enabled-language list ($GRIM_LANGUAGES extended
+  + $GRIM_BASE_LANGUAGES-subsettable builtins, never-empty fail-safe,
+  mirroring exec/dispatch.py's knob pair) that feeds BOTH the write/list
+  schema enums and the prompt (GrimAgent stashes it as `grim_languages`),
+  so schema and prose can never drift. Text/data in, data out; no mini-swe-agent import. This is
   the successor to the old text-based `parse.py`.
 - `toolcall_model.py` — `GrimToolcallModel(LitellmModel)`. Overrides
   `_query` (hands the model `GRIM_TOOLS` instead of the single `bash`

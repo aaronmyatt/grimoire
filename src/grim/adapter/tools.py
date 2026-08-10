@@ -24,17 +24,31 @@ from typing import Any
 SUBMIT_TOOL_NAME = "submit"
 
 
+_BUILTIN_PAIR = frozenset({"python", "bash"})
+
+
 def lang_enum() -> list[str]:
-    """The `--lang` choices the model may propose: bash + python always, plus
-    extended languages enabled in $GRIM_LANGUAGES (seeded by config.py from
-    config.toml's [languages] table; off by default). A deliberate copy of
-    exec/dispatch.py's env parse — the adapter never imports a slice; the
-    authoritative platform gate stays in write_script. Public: feeds BOTH the
-    write/list tool schemas below and grimoire.yaml's prompts (GrimAgent
-    stashes it as grim_languages), so the two can never drift."""
-    raw = os.environ.get("GRIM_LANGUAGES", "")
-    enabled = {tok.strip() for tok in raw.split(",") if tok.strip()}
-    return sorted({"python", "bash"} | enabled)
+    """The `--lang` choices the model may propose: the (subsettable)
+    builtins plus extended languages enabled in $GRIM_LANGUAGES.
+    $GRIM_BASE_LANGUAGES mirrors exec/dispatch.py's knob — unset -> both
+    builtins, '' -> none (solo-language sweep arms) — including the same
+    never-empty fail-safe, so schema, prompt, and write gate always agree.
+    A deliberate copy of dispatch's env parses (ledgered) — the adapter
+    never imports a slice; the authoritative platform gate stays in
+    write_script. Public: feeds BOTH the write/list tool schemas below and
+    grimoire.yaml's prompts (GrimAgent stashes it as grim_languages)."""
+    raw_extended = os.environ.get("GRIM_LANGUAGES", "")
+    enabled = {tok.strip() for tok in raw_extended.split(",") if tok.strip()}
+    raw_base = os.environ.get("GRIM_BASE_LANGUAGES")
+    base = (
+        _BUILTIN_PAIR
+        if raw_base is None
+        else {tok.strip() for tok in raw_base.split(",") if tok.strip()} & _BUILTIN_PAIR
+    )
+    assert base <= _BUILTIN_PAIR, "base only ever narrows the builtin pair"
+    languages = sorted(base | enabled) or sorted(_BUILTIN_PAIR)  # dispatch's fail-safe, mirrored
+    assert languages, "the enum is never empty"
+    return languages
 
 
 # The six data verbs `tool_call_to_argv` knows how to invoke. `submit` is

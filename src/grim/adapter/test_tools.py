@@ -10,9 +10,32 @@ import pytest
 from grim.adapter.tools import (
     GRIM_TOOLS,
     SUBMIT_TOOL_NAME,
+    lang_enum,
     render_command,
     tool_call_to_argv,
 )
+
+
+def test_lang_enum_defaults_and_extended(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GRIM_BASE_LANGUAGES", raising=False)
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
+    assert lang_enum() == ["bash", "python"]
+    monkeypatch.setenv("GRIM_LANGUAGES", "jq")
+    assert lang_enum() == ["bash", "jq", "python"]
+
+
+def test_lang_enum_solo_arms_and_fail_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Solo arm: no builtins, one extended language — schema and prompt name
+    # only it; jq,bash keeps just that pair.
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "")
+    monkeypatch.setenv("GRIM_LANGUAGES", "jq")
+    assert lang_enum() == ["jq"]
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "bash")
+    assert lang_enum() == ["bash", "jq"]
+    # Both knobs emptied -> builtin pair, mirroring dispatch's fail-safe.
+    monkeypatch.setenv("GRIM_LANGUAGES", "")
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "")
+    assert lang_enum() == ["bash", "python"]
 
 
 def test_write_maps_flags_and_body_to_stdin() -> None:
