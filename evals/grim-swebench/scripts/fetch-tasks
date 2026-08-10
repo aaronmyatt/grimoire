@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Generate grim-swebench task yamls from SWE-bench Verified.
+
+Vendors ONLY what a task needs — instance_id, repo, base_commit and the
+problem statement (never `patch`/`test_patch`/`hints_text`, which would leak
+the answer) — via the HF datasets-server rows API, stdlib-only (the same
+approach VENDORED.md records for HumanEvalFix). Instances are filtered to one
+repo and ordered chronologically by created_at: the per-repo chronological
+curriculum is build plan Phase 8's experiment design, not a convenience.
+Ref: https://huggingface.co/docs/dataset-viewer/rows
+
+Usage:
+  scripts/fetch-tasks --repo django/django --limit 10 [--offset 0]
+                      [--out tasks] [--dataset ID] [--force]
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import pathlib
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any, NamedTuple
+
+API_URL = "https://datasets-server.huggingface.co/rows"
+DEFAULT_DATASET = "princeton-nlp/SWE-bench_Verified"
+SPLIT = "test"
+PAGE_LEN = 100  # the rows API's maximum page length
+MAX_PAGES = 6  # bounded paging: 600 rows covers the 500-row dataset
+MAX_TASKS = 50  # explicit cap on one generation sweep
+REQUEST_TIMEOUT_S = 60
+FIELDS = ("instance_id", "repo", "base_commit", "problem_statement", "created_at", "difficulty")
+
+# The task prompt's fixed preamble — THE main harness-iteration surface.
+# Honest about host-mode: deps are not pre-installed, tests are off-limits,
+# the patch is collected from the working tree, not from the answer text.
+PREAMBLE = """\
+You are working in a checkout of the {repo} repository at commit
+{base_commit} — its state just before the issue below was fixed. Your
+current working directory is the repository root.
+
+Resolve the issue with the smallest reasonable code change. Do not modify
+tests: the grader applies the project's own test patch and runs its test
+suite against your change. The project's dependencies are NOT pre-installed;
+if you need to run project code or tests, your scripts must bootstrap an
+environment first (e.g. `uv venv` + `uv pip install -e .`, or PEP 723 inline
+deps) — consider banking that setup as a reusable script.
+
+When the fix is in place, submit a one-paragraph summary of the change. Your
+patch is collected automatically as the git diff of the working tree — you
+do not need to print it.
+"""
+
+
+class Selection(NamedTuple):
+    """Which slice of the repo's chronological instance list to take."""
+
+    repo: str
+    offset: int
+    limit: int
+
+
+class TaskMeta(NamedTuple):
+    """Per-file generation context (bundled: 4-param budget, CLAUDE.md §1)."""
+
+    index: int  # 1-based position in the repo's chronological order
+    fetched_on: str
+    dataset: str
+
+
+def fetch_rows(dataset: str) -> list[dict[str, Any]]:
+    """Every row of the dataset's test split, via bounded paging."""
+    assert dataset, "dataset id required"
+    rows: list[dict[str, Any]] = []
+    for page in range(MAX_PAGES):  # bounded: MAX_PAGES * PAGE_LEN >= dataset size
+        query = urllib.parse.urlencode(
+            {"dataset": dataset, "config": "default", "split": SPLIT,
+             "offset": page * PAGE_LEN, "length": PAGE_LEN}
+        )
+        try:
+            with urllib.request.urlopen(f"{API_URL}?{query}", timeout=REQUEST_TIMEOUT_S) as resp:
+                payload = json.load(resp)
+        except (urllib.error.URLError, json.JSONDecodeError) as exc:
+            sys.exit(f"fetch-tasks: rows API request failed on page {page}: {exc}")
+        batch = payload.get("rows", [])
+        for item in batch:
+            # VALIDATE external input: a truncated cell would silently vendor
+            # a corrupted problem statement — refuse instead.
+            truncated = set(item.get("truncated_cells", [])) & set(FIELDS)
+            if truncated:
+                iid = item.get("row", {}).get("instance_id", "?")
+                sys.exit(f"fetch-tasks: rows API truncated {sorted(truncated)} for {iid}")
+            rows.append(item["row"])
+        if len(batch) < PAGE_LEN:
+            break
+    if not rows:
+        sys.exit(f"fetch-tasks: {dataset} ({SPLIT}) returned no rows")
+    assert len(rows) <= MAX_PAGES * PAGE_LEN, "pagination bound holds"
+    return rows
+
+
+def select_instances(rows: list[dict[str, Any]], sel: Selection) -> list[dict[str, Any]]:
+    """The repo's instances, chronological by created_at, sliced by offset/limit."""
+    assert sel.limit >= 1 and sel.offset >= 0, "slice bounds validated at the CLI"
+    assert sel.repo.count("/") == 1, "repo shape validated at the CLI"
+    mine = [r for r in rows if r.get("repo") == sel.repo]
+    if not mine:
+        known = ", ".join(sorted({str(r.get("repo")) for r in rows}))
+        sys.exit(f"fetch-tasks: no instances for {sel.repo}; known repos: {known}")
+    mine.sort(key=lambda r: str(r.get("created_at", "")))
+    picked = mine[sel.offset : sel.offset + sel.limit]
+    assert len(picked) <= sel.limit, "slice honors the limit"
+    return picked
+
+
+def yaml_block(text: str) -> str:
+    """Text as the body of a YAML literal block scalar (2-space indent; the
+    caller emits the `|2` header). Newlines normalized, content verbatim.
+    Ref: https://yaml.org/spec/1.2.2/#literal-style"""
+    assert isinstance(text, str), "text required"
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    body = "\n".join("  " + line if line else "" for line in lines)
+    assert body.count("\n") == len(lines) - 1, "line count preserved"
+    return body
+
+
+def task_yaml(row: dict[str, Any], meta: TaskMeta) -> tuple[str, str]:
+    """(filename, full text) for one task. Task name == file stem
+    (NNN-instance_id) so `smevals run -t` selection, run dirs, and directory
+    listing order (the chronological curriculum) all agree."""
+    iid, repo = row["instance_id"], row["repo"]
+    assert iid and repo, "row must carry instance_id and repo"
+    assert 1 <= meta.index <= 999, "index fits the NNN prefix"
+    stem = f"{meta.index:03d}-{iid}"
+    prompt = (
+        PREAMBLE.format(repo=repo, base_commit=row["base_commit"])
+        + "\n<issue>\n" + str(row["problem_statement"]).strip() + "\n</issue>"
+    )
+    head = (
+        f"# generated by scripts/fetch-tasks — {meta.dataset} ({SPLIT} split); do not hand-edit\n"
+        f"# created_at: {row.get('created_at')} · difficulty: {row.get('difficulty')}"
+        f" · fetched: {meta.fetched_on}\n"
+        f"name: {stem}\n"
+        f"instance_id: {iid}\n"
+        f"repo: {repo}\n"
+        f"base_commit: {row['base_commit']}\n"
+        f"grim_group: {repo.replace('/', '__')}\n"
+        f"dataset: {meta.dataset}\n"
+        f"prompt: |2\n"
+    )
+    return f"{stem}.yaml", head + yaml_block(prompt) + "\n"
+
+
+def write_tasks(files: list[tuple[str, str]], out_dir: pathlib.Path, force: bool) -> int:
+    """Write (filename, text) pairs into out_dir; never overwrite silently."""
+    assert files, "caller guarantees a non-empty selection"
+    assert out_dir.name, "out dir required"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    clashes = [name for name, _ in files if (out_dir / name).exists()]
+    if clashes and not force:
+        sys.exit(
+            f"fetch-tasks: {len(clashes)} task file(s) already exist in {out_dir} "
+            f"(e.g. {clashes[0]}) — pass --force to overwrite"
+        )
+    for name, text in files:
+        (out_dir / name).write_text(text, encoding="utf-8")
+    return len(files)
+
+
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    """CLI boundary: untrusted input becomes validated values here, once."""
+    default_out = pathlib.Path(__file__).resolve().parent.parent / "tasks"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", required=True, help="org/name, e.g. django/django")
+    parser.add_argument("--limit", type=int, default=10, help=f"tasks to write (1..{MAX_TASKS})")
+    parser.add_argument("--offset", type=int, default=0, help="skip N chronological instances")
+    parser.add_argument("--out", type=pathlib.Path, default=default_out)
+    parser.add_argument("--dataset", default=DEFAULT_DATASET)
+    parser.add_argument("--force", action="store_true", help="overwrite existing task files")
+    args = parser.parse_args(argv)
+    if not (1 <= args.limit <= MAX_TASKS) or args.offset < 0 or args.repo.count("/") != 1:
+        parser.error(f"--limit must be 1..{MAX_TASKS}, --offset >= 0, --repo must be org/name")
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    rows = fetch_rows(args.dataset)
+    picked = select_instances(rows, Selection(args.repo, args.offset, args.limit))
+    fetched_on = datetime.date.today().isoformat()
+    files = []
+    for i, row in enumerate(picked):
+        meta = TaskMeta(index=args.offset + i + 1, fetched_on=fetched_on, dataset=args.dataset)
+        files.append(task_yaml(row, meta))
+    count = write_tasks(files, args.out, args.force)
+    print(
+        f"fetch-tasks: wrote {count} task(s) to {args.out} "
+        f"({args.repo}, chronological positions {args.offset + 1}..{args.offset + count})"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
