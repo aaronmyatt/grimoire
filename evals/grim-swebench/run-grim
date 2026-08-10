@@ -95,7 +95,9 @@ export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run ar
 # Language availability is pinned for the same isolation reason as GRIM_DB:
 # without this, the languages the agent may write leak from the operator's
 # ~/.grimoire config. Task key `grim_languages:` wins; baseline is python+bash.
-export GRIM_LANGUAGES="${SMEVALS_TASK_GRIM_LANGUAGES:-python,bash}"
+# Sweep arm knob: GRIM_EVAL_LANGUAGES widens the set per batch (task key
+# still wins) — same operator-override slot GRIM_EVAL_DB occupies.
+export GRIM_LANGUAGES="${SMEVALS_TASK_GRIM_LANGUAGES:-${GRIM_EVAL_LANGUAGES:-python,bash}}"
 # Every agent run is bounded (CLAUDE.md §1: explicit max, always). Defaults
 # apply only when the operator hasn't exported their own; launcher.py maps
 # these to mini's step/cost limits (GRIM_STEP_LIMIT → agent.step_limit,

@@ -56,9 +56,12 @@ declaring a `grim_languages:` key (smevals uppercases it to
 `SMEVALS_TASK_GRIM_LANGUAGES` for the runner, and it lands in `run.yaml`),
 e.g. `grim_languages: python,bash,jq`.
 
-This is the knob for language-variation evals: run the same task with
-different `grim_languages:` sets (or omit it for the baseline) and compare
-pass rates and the language lean of agent-written scripts across models.
+This is the knob for language-variation evals. Sweep per batch with the
+operator export — `GRIM_EVAL_LANGUAGES=python,bash,jq smevals run …` — which
+slots between the task key and the default (a task's own `grim_languages:`
+still wins, mirroring the `GRIM_EVAL_DB` precedence), or pin a set per task
+with `grim_languages:`. Compare pass rates and the language lean of
+agent-written scripts across arms and models.
 
 
 ## SWE-bench (grim-swebench)

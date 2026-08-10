@@ -45,7 +45,9 @@ export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run ar
 # without this, the languages the agent may write leak from the operator's
 # ~/.grimoire config. Task key `grim_languages:` wins; the default baseline
 # is python+bash (both are always in the schema regardless).
-export GRIM_LANGUAGES="${SMEVALS_TASK_GRIM_LANGUAGES:-python,bash}"
+# Sweep arm knob: GRIM_EVAL_LANGUAGES widens the set per batch (task key
+# still wins) — same operator-override slot GRIM_EVAL_DB occupies.
+export GRIM_LANGUAGES="${SMEVALS_TASK_GRIM_LANGUAGES:-${GRIM_EVAL_LANGUAGES:-python,bash}}"
 
 # Breadcrumbs go to stderr (captured as stderr.txt, tail -f-able) — stdout is
 # EXCLUSIVELY the answer channel: it becomes output.txt, which the Grader reads.
