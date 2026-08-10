@@ -65,11 +65,20 @@ agent-written scripts across arms and models.
 
 ## Language sweep
 
-`evals/sweep-langs` drives whole arm matrices and renders the comparison:
+`evals/sweep-langs` drives whole arm matrices and renders the comparison.
+An arm is a plain language list; the driver derives both knobs from it —
+builtins named in the arm become `GRIM_EVAL_BASE_LANGUAGES` (naming
+neither python nor bash removes them from the writable set), the rest
+become `GRIM_EVAL_LANGUAGES` — so `jq` alone really is jq-only writing
+(seeds still run; the toggles gate writing, not the library):
 
     # the 10-arm screen (controls, single additions, the pool) x
     # grim-smoke+debug+solve, cold, sequential (~45-90 min, ~$1-3 on flash):
     evals/sweep-langs --preset screen -m deepseek/deepseek-v4-flash -n 1
+
+    # the 26-arm overnight matrix: real python/bash controls + each of 11
+    # languages solo AND with bash + the pool (~3-8 h, ~$3-8 on flash):
+    evals/sweep-langs --preset overnight -m deepseek/deepseek-v4-flash
 
     evals/sweep-langs --preset screen --report-only   # re-render the table
     smevals report evals/grim-debug                   # native config x model view

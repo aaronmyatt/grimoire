@@ -98,6 +98,10 @@ export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run ar
 # Sweep arm knob: GRIM_EVAL_LANGUAGES widens the set per batch (task key
 # still wins) — same operator-override slot GRIM_EVAL_DB occupies.
 export GRIM_LANGUAGES="${SMEVALS_TASK_GRIM_LANGUAGES:-${GRIM_EVAL_LANGUAGES:-python,bash}}"
+# Its pair: GRIM_EVAL_BASE_LANGUAGES SUBSETS the python/bash builtins the
+# agent may write ('' removes them — solo-language arms). `-` not `:-`:
+# empty string is meaningful here and must survive the chain.
+export GRIM_BASE_LANGUAGES="${SMEVALS_TASK_GRIM_BASE_LANGUAGES-${GRIM_EVAL_BASE_LANGUAGES-python,bash}}"
 # Every agent run is bounded (CLAUDE.md §1: explicit max, always). Defaults
 # apply only when the operator hasn't exported their own; launcher.py maps
 # these to mini's step/cost limits (GRIM_STEP_LIMIT → agent.step_limit,
@@ -116,8 +120,8 @@ echo "run-grim: db=$DB_MODE ($GRIM_DB) steps<=$GRIM_STEP_LIMIT cost<=\$$GRIM_COS
 # are gone. Values are slugs/paths that never contain quotes — safe to
 # inline as JSON without an escaping pass.
 GRIM_SESSION_ID="smevals-${SMEVALS_TASK}-$(date +%Y%m%dT%H%M%S)-$$"
-printf '{"session_id": "%s", "db": "%s", "db_mode": "%s", "languages": "%s"}\n' \
-  "$GRIM_SESSION_ID" "$GRIM_DB" "$DB_MODE" "$GRIM_LANGUAGES" \
+printf '{"session_id": "%s", "db": "%s", "db_mode": "%s", "languages": "%s", "base_languages": "%s"}\n' \
+  "$GRIM_SESSION_ID" "$GRIM_DB" "$DB_MODE" "$GRIM_LANGUAGES" "$GRIM_BASE_LANGUAGES" \
   > "$SMEVALS_RUN_DIR/grim-run.json"
 
 # `-p` (print mode) is load-bearing: it runs unattended and keeps stdout clean

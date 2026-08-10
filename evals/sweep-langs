@@ -6,12 +6,16 @@
 """Language-combination sweep: drive N arms across the screen evals, then
 render one arm × eval comparison table from the grades.
 
-An arm = one GRIM_EVAL_LANGUAGES set. Mechanically it is a PAIR this driver
-keeps zipped: a generated 2-line label config (configs/L-<slug>.yaml, same
+An arm = one writable-language set, written as a plain comma list. The
+driver derives BOTH knobs from it (arm_env): builtins named in the arm →
+GRIM_EVAL_BASE_LANGUAGES (naming neither python nor bash removes them — a
+solo arm like `jq` really is jq-only writing), everything else →
+GRIM_EVAL_LANGUAGES. Mechanically each arm is a PAIR the driver keeps
+zipped: a generated 2-line label config (configs/L-<slug>.yaml, same
 ../run-grim runner) that namespaces run dirs and smevals' native config ×
-model leaderboard, plus the GRIM_EVAL_LANGUAGES export that actually changes
-the agent's action space. Every run also stamps its set into grim-run.json
-(see run-grim), so arms are verifiable per run, never implied.
+model leaderboard, plus those env exports that actually change the agent's
+action space. Every run stamps both values into grim-run.json (see
+run-grim), so arms are verifiable per run, never implied.
 
 Always cold (GRIM_EVAL_COLD=1): the screen varies ONE thing — the language
 set — with no cross-arm library contamination. `-n` is plain repetition
@@ -56,7 +60,23 @@ SCREEN_ARMS = (
     _BASE + ",duckdb",
     _BASE + ",jq,bun,sql,awk,ruby,perl,php,go,bc,duckdb",  # the pool
 )
-MAX_ARMS = 16
+BUILTIN_PAIR = frozenset({"python", "bash"})
+# Solo-viable languages with runtimes installed on this host (docs/languages.md
+# catalog ∩ `grim doctor`-ready; typst/osascript/dc excluded as task-irrelevant).
+SOLO_LANGS = ("jq", "bun", "sql", "awk", "ruby", "perl", "php", "go", "lua", "duckdb", "bc")
+# The overnight matrix: real controls + each language solo and with bash + the
+# pool. Solo arms work because the arm string DERIVES both knobs (arm_env):
+# builtins named in the arm form GRIM_EVAL_BASE_LANGUAGES, the rest form
+# GRIM_EVAL_LANGUAGES — `jq` alone really is jq-only writing.
+OVERNIGHT_ARMS = (
+    "python",
+    "bash",
+    _BASE,
+    *SOLO_LANGS,
+    *(f"{lang},bash" for lang in SOLO_LANGS),
+    _BASE + ",jq,bun,sql,awk,ruby,perl,php,go,bc,duckdb",
+)
+MAX_ARMS = 32
 MAX_EVALS = 5
 N_MAX = 5  # repetitions cap — variance runs, not load tests
 DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
@@ -93,6 +113,23 @@ def arm_slug(arm: str) -> str:
     return slug
 
 
+def arm_env(arm: str) -> dict[str, str]:
+    """The env knobs one arm needs, derived from its plain language list:
+    builtins named in the arm -> GRIM_EVAL_BASE_LANGUAGES (possibly '' —
+    empty is meaningful, it removes python/bash from the writable set);
+    everything else -> GRIM_EVAL_LANGUAGES. Always cold."""
+    assert _ARM_RE.match(arm), "caller validates arms"
+    tokens = [tok for tok in arm.split(",") if tok]
+    base = [tok for tok in tokens if tok in BUILTIN_PAIR]
+    extended = [tok for tok in tokens if tok not in BUILTIN_PAIR]
+    assert len(base) + len(extended) == len(tokens), "every token lands in exactly one knob"
+    return {
+        "GRIM_EVAL_LANGUAGES": ",".join(extended),
+        "GRIM_EVAL_BASE_LANGUAGES": ",".join(base),
+        "GRIM_EVAL_COLD": "1",
+    }
+
+
 def ensure_config(eval_dir: pathlib.Path, slug: str) -> None:
     """Idempotently write the arm's label config. Content is fixed, tiny, and
     gitignored (evals/**/configs/L-*.yaml) — the driver recreates at will."""
@@ -126,7 +163,7 @@ def invocation(eval_name: str, arm: str, opts: Options) -> tuple[list[str], dict
         "run", str(EVALS_DIR / eval_name),
         "-c", f"L-{arm_slug(arm)}", "-m", opts.model, "-g",
     ]
-    env = os.environ | {"GRIM_EVAL_LANGUAGES": arm, "GRIM_EVAL_COLD": "1"}
+    env = os.environ | arm_env(arm)
     return argv, env
 
 
@@ -143,8 +180,8 @@ def run_sweep(opts: Options) -> None:
             done += 1
             print(f"\n=== [{done}/{total}] arm={arm} eval={eval_name} ===", flush=True)
             if opts.dry_run:  # print only — a dry run writes nothing, not even configs
-                print(f"  GRIM_EVAL_LANGUAGES={arm} GRIM_EVAL_COLD=1 {' '.join(argv)}"
-                      + (f"  (x{opts.n})" if opts.n > 1 else ""))
+                knobs = " ".join(f"{k}='{v}'" for k, v in sorted(arm_env(arm).items()))
+                print(f"  {knobs} {' '.join(argv)}" + (f"  (x{opts.n})" if opts.n > 1 else ""))
                 continue
             ensure_config(EVALS_DIR / eval_name, arm_slug(arm))
             for _ in range(opts.n):  # bounded: n validated <= N_MAX
@@ -254,14 +291,19 @@ def parse_args(argv: list[str] | None) -> Options:
     """CLI boundary: untrusted input becomes validated Options here, once."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arms", action="append", default=[], help="comma-joined set; repeatable")
-    parser.add_argument("--preset", choices=["screen"], help="use the built-in 10-arm screen")
+    parser.add_argument(
+        "--preset",
+        choices=["screen", "overnight"],
+        help="screen: 10 arms; overnight: 26 arms — controls + each language solo and +bash + pool",
+    )
     parser.add_argument("--evals", default=",".join(SCREEN_EVALS))
     parser.add_argument("-m", "--model", default=DEFAULT_MODEL)
     parser.add_argument("-n", type=int, default=1, help="repetitions per arm x eval (1..%d)" % N_MAX)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--report-only", action="store_true")
     args = parser.parse_args(argv)
-    arms = tuple(args.arms) + (SCREEN_ARMS if args.preset == "screen" else ())
+    presets = {"screen": SCREEN_ARMS, "overnight": OVERNIGHT_ARMS}
+    arms = tuple(args.arms) + presets.get(args.preset or "", ())
     evals = tuple(e.strip() for e in args.evals.split(",") if e.strip())
     if not args.report_only and not arms:
         parser.error("no arms: pass --arms a,b (repeatable) or --preset screen")

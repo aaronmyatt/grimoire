@@ -38,6 +38,18 @@ repo `[languages]` table fully determines it when present, so an empty
 `languages = []` at repo level explicitly disables everything even if a
 global config enables some.
 
+## Subsetting the builtins (experiments)
+
+`GRIM_BASE_LANGUAGES` (env-only, no config surface) subsets which BUILTIN
+languages `grim write` accepts: unset keeps both python and bash (the
+default everywhere); a set value names the subset to keep; `""` keeps
+none — the solo-language knob the eval sweeps use (`evals/sweep-langs`).
+It only ever narrows the builtin pair — extended languages still arrive
+via `GRIM_LANGUAGES` — and if the two knobs together would leave nothing
+writable, the write gate falls back to python+bash rather than bricking
+the agent. Like the extended toggle, it gates *writing* only: scripts
+already in the library (including the python seeds) always run.
+
 ## Platform-specific languages
 
 A language whose interpreter is OS-specific carries a platform gate and is
