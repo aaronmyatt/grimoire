@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""smevals Checker: experiment-metrics observer — never affects the grade.
+
+Harvests the numbers every harness comparison needs into grade.yaml's
+per-check `metrics:` block, so `smevals report`/`serve` is the experiment
+dashboard instead of archaeology across run dirs:
+  - from the Run's newest *.traj.json (grim-agent and vanilla-mini alike):
+    cost_usd, api_calls, steps, traj_items, format_errors, submitted.
+    format_errors keys off the structured `extra.interrupt_type` tag that
+    grim.adapter.toolcall_model._format_error stamps — no string matching.
+  - from grim-run.json + the Run's grimoire DB, scoped to this Run's session
+    id: runs_total, runs_shell, shell_escape_rate, runs_prior_reuse,
+    reuse_rate, scripts_written. SQL mirrors the `stats` seed
+    (src/grim/seeds/bodies.py) with `AND e.session_id = ?` scoping, so
+    escape/reuse mean the same thing everywhere.
+
+Observer contract: `required: false` in the grader, score is CONSTANTLY 1.0,
+and the exit code is always 0 — missing/degraded inputs are reported via
+metrics_ok=false plus notes, never as a failed Grade.
+Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import sqlite3
+import sys
+
+NOTES_MAX_CHARS = 300
+FORMAT_ERROR_TYPE = "FormatError"  # adapter/toolcall_model.py extra.interrupt_type
+SUBMITTED_STATUS = "Submitted"  # minisweagent exit_status on a clean finish
+STAMP_NAME = "grim-run.json"  # written by ../run-grim (and run-mini, with db: "")
+
+
+def latest_traj(run_dir: pathlib.Path) -> dict | None:
+    """Newest *.traj.json parsed, or None — a missing/corrupt trajectory is
+    degraded external input, not a crash."""
+    assert run_dir.is_absolute(), "smevals hands the Run dir as an absolute path"
+    trajs = sorted(run_dir.glob("*.traj.json"))
+    if not trajs:
+        return None
+    try:
+        data = json.loads(trajs[-1].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    assert not isinstance(data, bytes), "json.loads never yields bytes"
+    return data if isinstance(data, dict) else None
+
+
+def traj_metrics(traj: dict) -> dict[str, float | int | bool]:
+    """Cost/steps/format-error counters from a mini-format trajectory."""
+    assert isinstance(traj, dict), "caller passes a parsed trajectory"
+    info = traj.get("info") or {}
+    stats = info.get("model_stats") or {}
+    messages = traj.get("messages") or []
+    assert isinstance(messages, list), "mini trajectories keep messages as a list"
+    format_errors = sum(
+        1
+        for m in messages
+        if isinstance(m, dict) and (m.get("extra") or {}).get("interrupt_type") == FORMAT_ERROR_TYPE
+    )
+    return {
+        "cost_usd": float(stats.get("instance_cost", 0.0) or 0.0),
+        "api_calls": int(stats.get("api_calls", 0) or 0),
+        "steps": sum(1 for m in messages if isinstance(m, dict) and m.get("role") == "assistant"),
+        "traj_items": len(messages),
+        "format_errors": format_errors,
+        "submitted": info.get("exit_status") == SUBMITTED_STATUS,
+    }
+
+
+def traj_session(traj: dict) -> str:
+    """The session id the run actually used (runners inject it via
+    `-c environment.session_id=…`); '' on pre-instrumentation runs."""
+    assert isinstance(traj, dict), "caller passes a parsed trajectory"
+    env = ((traj.get("info") or {}).get("config") or {}).get("environment") or {}
+    session = env.get("session_id", "")
+    assert isinstance(session, str), "GrimEnvironmentConfig.session_id is a string"
+    return session
+
+
+def read_stamp(run_dir: pathlib.Path) -> dict | None:
+    """grim-run.json ({session_id, db, db_mode}) or None when absent/corrupt."""
+    assert run_dir.is_absolute(), "smevals hands the Run dir as an absolute path"
+    assert STAMP_NAME.endswith(".json"), "stamp is a json artifact"
+    try:
+        data = json.loads((run_dir / STAMP_NAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def db_metrics(db_path: str, session_id: str) -> dict[str, float | int] | None:
+    """Session-scoped library counters, mirroring the `stats` seed's SQL:
+    escape = runs of the `shell` script; reuse = runs of scripts authored in
+    a DIFFERENT session (seeds' NULL origin excluded). None when the DB
+    cannot be opened or queried (degraded, not fatal)."""
+    assert db_path, "caller skips empty db paths (baseline arm)"
+    assert session_id, "caller skips runs without a session id"
+    joined = (
+        "SELECT COUNT(*) FROM execution e "
+        "JOIN script_version sv ON sv.id = e.script_version_id "
+        "JOIN script s ON s.id = sv.script_id WHERE e.session_id = ? AND "
+    )
+    try:
+        # mode=ro so a grade can never mutate an experiment library.
+        # Ref: https://docs.python.org/3/library/sqlite3.html#sqlite3.connect
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            runs_total = conn.execute(
+                "SELECT COUNT(*) FROM execution WHERE session_id = ?", (session_id,)
+            ).fetchone()[0]
+            runs_shell = conn.execute(joined + "s.name = 'shell'", (session_id,)).fetchone()[0]
+            runs_reuse = conn.execute(
+                joined + "s.origin_session_id IS NOT NULL AND s.origin_session_id != e.session_id",
+                (session_id,),
+            ).fetchone()[0]
+            scripts_written = conn.execute(
+                "SELECT COUNT(*) FROM script WHERE origin_session_id = ?", (session_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return {
+        "runs_total": runs_total,
+        "runs_shell": runs_shell,
+        "shell_escape_rate": (runs_shell / runs_total) if runs_total else 0.0,
+        "runs_prior_reuse": runs_reuse,
+        "reuse_rate": (runs_reuse / runs_total) if runs_total else 0.0,
+        "scripts_written": scripts_written,
+    }
+
+
+def emit(metrics: dict[str, float | int | bool], notes: str) -> None:
+    """The observer's single JSON object. Score is CONSTANTLY 1.0 so this
+    check cannot flip a grade under any score aggregation."""
+    assert isinstance(metrics, dict) and metrics, "metrics must be a non-empty dict"
+    assert isinstance(notes, str), "notes must be a string"
+    print(json.dumps({"score": 1.0, "metrics": metrics, "notes": notes[:NOTES_MAX_CHARS]}))
+
+
+def main() -> int:
+    run_dir_env = os.environ.get("SMEVALS_RUN_DIR")
+    # VALIDATE config input — but stay an observer even then: report, exit 0.
+    if not run_dir_env:
+        emit({"metrics_ok": False}, "SMEVALS_RUN_DIR is not set")
+        return 0
+    run_dir = pathlib.Path(run_dir_env)
+    metrics: dict[str, float | int | bool] = {"metrics_ok": True}
+    problems: list[str] = []
+
+    traj = latest_traj(run_dir)
+    if traj is None:
+        metrics["metrics_ok"] = False
+        problems.append("no readable *.traj.json")
+    else:
+        metrics.update(traj_metrics(traj))
+
+    stamp = read_stamp(run_dir)
+    session = (traj_session(traj) if traj else "") or str((stamp or {}).get("session_id", ""))
+    db_path = str((stamp or {}).get("db", ""))
+    if stamp is None:
+        metrics["metrics_ok"] = False
+        problems.append("no grim-run.json (pre-instrumentation run?)")
+    elif not db_path:
+        problems.append("no-library arm — db metrics skipped")
+    elif not session:
+        metrics["metrics_ok"] = False
+        problems.append("no session id in traj or stamp")
+    else:
+        counters = db_metrics(db_path, session)
+        if counters is None:
+            metrics["metrics_ok"] = False
+            problems.append(f"db unreadable: {db_path}")
+        else:
+            metrics.update(counters)
+
+    summary = "; ".join(problems) if problems else (
+        f"steps={metrics.get('steps', 0)} cost=${metrics.get('cost_usd', 0):.4f} "
+        f"shell={metrics.get('runs_shell', 0)}/{metrics.get('runs_total', 0)} "
+        f"reuse={metrics.get('runs_prior_reuse', 0)}/{metrics.get('runs_total', 0)}"
+    )
+    emit(metrics, summary)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
