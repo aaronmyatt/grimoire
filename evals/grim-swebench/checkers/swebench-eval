@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""smevals Checker: evaluate the Run's patch with the official SWE-bench harness.
+
+The Run's output.txt IS the model_patch (see ../run-grim's stated deviation).
+This checker wraps it into a predictions file, hands it to the official
+dockerized evaluation harness — grading is never reimplemented here — and
+passes iff the harness report lists the instance in resolved_ids. Docker must
+be running; the harness itself is fetched ephemerally via uvx, so the grimoire
+project gains no dependency.
+Ref: https://www.swebench.com/SWE-bench/reference/harness/
+
+Contract (env in, one JSON object on stdout, exit 0 pass / 1 fail / 2 config
+error). Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+  - SMEVALS_RUN_DIR           absolute Run dir; output.txt is the patch
+  - SMEVALS_TASK_INSTANCE_ID  the SWE-bench instance to grade
+  - SMEVALS_TASK_DATASET      HF dataset id (default SWE-bench_Verified)
+  - SMEVALS_CHECK_TIMEOUT_S   harness subprocess budget (default 2400)
+  - SWEBENCH_NAMESPACE        docker image namespace; unset -> auto by arch
+                              ('' builds images locally — the arm64 default;
+                              'swebench' pulls x86_64 prebuilts)
+  - SWEBENCH_EVAL_CMD         harness launcher override (word-split; this is
+                              also the selftest's no-docker stub seam)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import pathlib
+import platform
+import shlex
+import subprocess
+import sys
+from typing import NamedTuple
+
+DEFAULT_DATASET = "princeton-nlp/SWE-bench_Verified"
+DEFAULT_TIMEOUT_S = 2400  # outer budget for the whole harness subprocess
+HARNESS_TEST_TIMEOUT_S = 1800  # harness-internal per-instance test timeout
+NOTES_TAIL_CHARS = 700
+MODEL_NAME = "grimoire"  # model_name_or_path; prefixes the harness report file
+PREDICTIONS_FILE = "predictions.jsonl"
+DEFAULT_EVAL_CMD = "uvx --from swebench python -m swebench.harness.run_evaluation"
+ARM_MACHINES = frozenset({"arm64", "aarch64"})
+
+
+class HarnessSpec(NamedTuple):
+    """One grade's harness invocation, bundled to stay within the 4-param
+    budget (root CLAUDE.md §1)."""
+
+    instance_id: str
+    dataset: str
+    timeout_s: int
+    namespace: str  # '' means build images locally
+    run_id: str
+
+
+def default_namespace() -> str:
+    """Arch-aware default: prebuilt x86_64 pulls where they run natively,
+    local builds on arm64 (upstream calls arm64 support experimental).
+    Ref: https://www.swebench.com/SWE-bench/guides/evaluation/"""
+    machine = platform.machine().lower()
+    assert machine, "platform.machine() is never empty on a real host"
+    namespace = "" if machine in ARM_MACHINES else "swebench"
+    assert namespace in ("", "swebench"), "auto namespace is one of the two known modes"
+    return namespace
+
+
+def read_patch(run_dir: pathlib.Path) -> str | None:
+    """output.txt's content, or None when missing/unreadable (config error —
+    a completed Run always has one)."""
+    assert run_dir.is_absolute(), "smevals hands the Run dir as an absolute path"
+    try:
+        text = (run_dir / "output.txt").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    assert isinstance(text, str), "read_text yields str"
+    return text
+
+
+def write_predictions(instance_id: str, patch: str) -> None:
+    """predictions.jsonl in the grade workspace (cwd), one line in the shape
+    the harness expects; retained as a Grade artifact.
+    Ref: https://www.swebench.com/SWE-bench/guides/evaluation/"""
+    assert instance_id, "instance id required"
+    assert patch.strip(), "caller short-circuits empty patches before docker"
+    row = {"instance_id": instance_id, "model_name_or_path": MODEL_NAME, "model_patch": patch}
+    pathlib.Path(PREDICTIONS_FILE).write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+
+def harness_argv(spec: HarnessSpec) -> list[str]:
+    """The full harness command line. SWEBENCH_EVAL_CMD word-splits so a stub
+    (selftest) or a pinned version (`uvx --from 'swebench==x.y'`) drops in."""
+    assert spec.instance_id and spec.run_id, "spec must be fully populated"
+    launcher = shlex.split(os.environ.get("SWEBENCH_EVAL_CMD") or DEFAULT_EVAL_CMD)
+    assert launcher, "harness launcher must be non-empty"
+    return launcher + [
+        "--dataset_name", spec.dataset,
+        "--predictions_path", PREDICTIONS_FILE,
+        "--instance_ids", spec.instance_id,
+        "--run_id", spec.run_id,
+        "--max_workers", "1",
+        "--namespace", spec.namespace,
+        "--timeout", str(HARNESS_TEST_TIMEOUT_S),
+    ]
+
+
+def run_harness(argv: list[str], timeout_s: int) -> tuple[int, str]:
+    """Run the harness in cwd; (exit_code, output tail). -1 = budget exceeded,
+    -2 = launcher missing. The report lands in cwd, kept as a Grade artifact."""
+    assert argv, "argv required"
+    assert timeout_s > 0, "timeout must be positive"
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        return -1, f"harness exceeded {timeout_s}s (first grade of an instance builds images)"
+    except FileNotFoundError as exc:
+        return -2, f"harness launcher not found: {exc}"
+    notes = (proc.stdout + proc.stderr)[-NOTES_TAIL_CHARS:].strip()
+    return proc.returncode, notes
+
+
+def parse_report(workdir: pathlib.Path, spec: HarnessSpec) -> bool | None:
+    """True/False = resolved per the harness report; None = no report at all
+    (the harness never got far enough — config/infra, not a grade). Looks for
+    the canonical <model>.<run_id>.json in cwd, then evaluation_results/."""
+    assert workdir.is_dir(), "grade workspace exists"
+    assert spec.instance_id, "instance id required"
+    candidates = [workdir / f"{MODEL_NAME}.{spec.run_id}.json"]
+    candidates += sorted(workdir.glob("evaluation_results/*.json"))
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and "resolved_ids" in data:
+            return spec.instance_id in data["resolved_ids"]
+    return None
+
+
+def emit(score: float, metrics: dict[str, int | bool], notes: str) -> None:
+    """The one JSON object smevals reads from a checker's stdout."""
+    assert score in (0.0, 1.0), "this grade is binary"
+    assert isinstance(notes, str), "notes must be a string"
+    print(json.dumps({"score": score, "metrics": metrics, "notes": notes}))
+
+
+def main() -> int:
+    run_dir = os.environ.get("SMEVALS_RUN_DIR")
+    instance_id = os.environ.get("SMEVALS_TASK_INSTANCE_ID")
+    # VALIDATE config input: a missing env var is a harness bug, not a model
+    # miss — exit 2 so it never masquerades as a failed Grade.
+    if not run_dir or not instance_id:
+        print(
+            "swebench-eval: SMEVALS_RUN_DIR and SMEVALS_TASK_INSTANCE_ID are required",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        timeout_s = int(os.environ.get("SMEVALS_CHECK_TIMEOUT_S", DEFAULT_TIMEOUT_S))
+    except ValueError:
+        print("swebench-eval: SMEVALS_CHECK_TIMEOUT_S must be an integer", file=sys.stderr)
+        return 2
+    patch = read_patch(pathlib.Path(run_dir))
+    if patch is None:
+        print(f"swebench-eval: {run_dir}/output.txt is missing", file=sys.stderr)
+        return 2
+    if not patch.strip():
+        emit(0.0, {"resolved": False, "empty_patch": True}, "empty model_patch — no docker started")
+        return 1
+
+    env_namespace = os.environ.get("SWEBENCH_NAMESPACE")
+    spec = HarnessSpec(
+        instance_id=instance_id,
+        dataset=os.environ.get("SMEVALS_TASK_DATASET") or DEFAULT_DATASET,
+        timeout_s=timeout_s,
+        namespace=env_namespace if env_namespace is not None else default_namespace(),
+        run_id=f"grim-{instance_id}",
+    )
+    write_predictions(instance_id, patch)
+    harness_exit, notes = run_harness(harness_argv(spec), timeout_s)
+    resolved = parse_report(pathlib.Path.cwd(), spec)
+    if resolved is None:
+        print(f"swebench-eval: no harness report (exit {harness_exit}) — {notes}", file=sys.stderr)
+        return 2
+    emit(1.0 if resolved else 0.0, {"resolved": resolved, "harness_exit": harness_exit}, notes)
+    return 0 if resolved else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
