@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# smevals Runner for grim-agent SWE-BENCH tasks (build plan Phase 8, benchmark
+# track). Same env-in contract as the sibling run-grims, with one DELIBERATE
+# deviation, stated loudly: stdout is NOT the agent's final answer text — it is
+# the model_patch (the workspace's staged git diff), because the patch is the
+# artifact the Grader evaluates with the official SWE-bench harness. The
+# agent's submitted summary goes to stderr as a breadcrumb instead.
+# Ref: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+#
+# Per task (tasks/*.yaml → SMEVALS_TASK_*): instance_id, repo (org/name),
+# base_commit, grim_group. The runner materializes a host checkout of the repo
+# at base_commit (bare-mirror cache + `git clone --shared`), launches
+# grim-agent there, and prints the resulting diff. Dependencies of the target
+# repo are NOT pre-installed — bootstrapping an env is the agent's job (and,
+# per the compounding thesis, its opportunity to bank a reusable script).
+#
+# DB isolation is the experiment's core variable AND a hard safety rule:
+# GRIM_DB is ALWAYS set explicitly — an eval never touches ~/.grimoire.
+# Precedence (first match wins):
+#   1. GRIM_EVAL_COLD=1        force the control condition: fresh DB per Run
+#   2. SMEVALS_TASK_GRIM_DB    per-task absolute override
+#   3. GRIM_EVAL_DB            operator export → one shared DB across ALL tasks
+#   4. SMEVALS_TASK_GRIM_GROUP → groups/<group>.db under this eval dir — the
+#      DEFAULT condition here: one library per repo, shared across that repo's
+#      chronologically-ordered instances (build plan Phase 8)
+#   5. (neither)               cold, same as 1.
+set -uo pipefail
+
+: "${SMEVALS_MODEL:?run-grim: SMEVALS_MODEL is required}"
+: "${SMEVALS_PROMPT:?run-grim: SMEVALS_PROMPT is required (the task needs a prompt)}"
+: "${SMEVALS_RUN_DIR:?run-grim: SMEVALS_RUN_DIR is required}"
+: "${SMEVALS_TASK_INSTANCE_ID:?run-grim: task must declare instance_id:}"
+: "${SMEVALS_TASK_REPO:?run-grim: task must declare repo: (org/name)}"
+: "${SMEVALS_TASK_BASE_COMMIT:?run-grim: task must declare base_commit:}"
+
+# BASH_SOURCE locates this eval dir regardless of smevals' working directory.
+# Ref: https://www.gnu.org/software/bash/manual/bash.html#index-BASH_005fSOURCE
+EVAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- workspace: bare-mirror cache + shared clone at base_commit --------------
+# The mirror is a pure local cache (gitignored): the first Run against a repo
+# pays one full `git clone --bare`; every Run after that gets a cheap
+# object-sharing checkout. `--shared` is safe here because the mirror is only
+# ever added to (fetch), never pruned, while workspaces exist.
+# Ref: https://git-scm.com/docs/git-clone#Documentation/git-clone.txt---shared
+CACHE_DIR="${GRIM_SWEBENCH_CACHE:-$EVAL_DIR/cache}"
+MIRROR="$CACHE_DIR/${SMEVALS_TASK_REPO//\//__}.git"
+if [ ! -d "$MIRROR" ]; then
+  echo "run-grim: caching bare mirror of $SMEVALS_TASK_REPO (first use, one-off cost)" >&2
+  mkdir -p "$CACHE_DIR"
+  if ! git clone --quiet --bare "https://github.com/$SMEVALS_TASK_REPO.git" "$MIRROR"; then
+    echo "run-grim: bare clone of $SMEVALS_TASK_REPO failed — infra failure" >&2
+    exit 1
+  fi
+fi
+
+WORKSPACE="$SMEVALS_RUN_DIR/workspace"
+if ! git clone --quiet --shared --no-checkout "$MIRROR" "$WORKSPACE"; then
+  echo "run-grim: workspace clone from $MIRROR failed — infra failure" >&2
+  exit 1
+fi
+checkout() {
+  git -C "$WORKSPACE" -c advice.detachedHead=false checkout -q "$SMEVALS_TASK_BASE_COMMIT"
+}
+if ! checkout; then
+  # One bounded refresh, then give up: the mirror may simply predate the
+  # instance's base commit (stale cache), never loop on network retries here.
+  git --git-dir="$MIRROR" fetch --quiet origin || true
+  if ! checkout; then
+    echo "run-grim: $SMEVALS_TASK_BASE_COMMIT not reachable in $MIRROR — infra failure" >&2
+    exit 1
+  fi
+fi
+# An identity so any git operation an agent script attempts (stash, commit)
+# works instead of dying on "tell me who you are".
+git -C "$WORKSPACE" config user.email "grim-eval@localhost"
+git -C "$WORKSPACE" config user.name "grim-eval"
+cd "$WORKSPACE" || exit 1
+
+# --- library, languages, and hard caps ---------------------------------------
+if [ "${GRIM_EVAL_COLD:-0}" = "1" ]; then
+  GRIM_DB="$SMEVALS_RUN_DIR/grimoire.db"; DB_MODE="cold (forced)"
+elif [ -n "${SMEVALS_TASK_GRIM_DB:-}" ]; then
+  GRIM_DB="$SMEVALS_TASK_GRIM_DB"; DB_MODE="task-override"
+elif [ -n "${GRIM_EVAL_DB:-}" ]; then
+  GRIM_DB="$GRIM_EVAL_DB"; DB_MODE="warm-shared"
+elif [ -n "${SMEVALS_TASK_GRIM_GROUP:-}" ]; then
+  mkdir -p "$EVAL_DIR/groups"
+  GRIM_DB="$EVAL_DIR/groups/$SMEVALS_TASK_GRIM_GROUP.db"; DB_MODE="grouped"
+else
+  GRIM_DB="$SMEVALS_RUN_DIR/grimoire.db"; DB_MODE="cold"
+fi
+export GRIM_DB
+export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run artifact
+# Language availability is pinned for the same isolation reason as GRIM_DB:
+# without this, the languages the agent may write leak from the operator's
+# ~/.grimoire config. Task key `grim_languages:` wins; baseline is python+bash.
+export GRIM_LANGUAGES="${SMEVALS_TASK_GRIM_LANGUAGES:-python,bash}"
+# Every agent run is bounded (CLAUDE.md §1: explicit max, always). Defaults
+# apply only when the operator hasn't exported their own; launcher.py maps
+# these to mini's step/cost limits (GRIM_STEP_LIMIT → agent.step_limit,
+# GRIM_COST_LIMIT → -l).
+: "${GRIM_STEP_LIMIT:=100}"
+: "${GRIM_COST_LIMIT:=3}"
+export GRIM_STEP_LIMIT GRIM_COST_LIMIT
+
+echo "run-grim: task=$SMEVALS_TASK instance=$SMEVALS_TASK_INSTANCE_ID model=$SMEVALS_MODEL" >&2
+echo "run-grim: db=$DB_MODE ($GRIM_DB) steps<=$GRIM_STEP_LIMIT cost<=\$$GRIM_COST_LIMIT" >&2
+
+# `-p` (print mode) is load-bearing: it runs unattended and keeps stdout clean
+# — though here the agent's answer is a breadcrumb, not the graded artifact.
+# GRIM_AGENT_CMD is left unquoted on purpose so a multi-word command
+# word-splits; this is a launcher, not grim's control plane.
+# shellcheck disable=SC2086
+out="$(${GRIM_AGENT_CMD:-grim-agent} -p -m "$SMEVALS_MODEL" -t "$SMEVALS_PROMPT")"
+ec=$?
+echo "run-grim: agent done exit=$ec answer_chars=${#out}" >&2
+if [ -n "$out" ]; then printf 'run-grim: agent summary: %.400s\n' "$out" >&2; fi
+
+# Exit non-zero ONLY for infrastructure failure. exit 2 is grim's missing
+# 'agent' extra (launcher.MISSING_EXTRA_EXIT_CODE). Unlike the sibling
+# runners, a limit-exhausted run (nonzero ec, no submission) is NOT infra:
+# whatever diff it left behind is a real, gradable outcome — as is an empty
+# diff (a "changed nothing" answer the Grader fails cheaply).
+if [ "$ec" -eq 2 ]; then
+  echo "run-grim: grim-agent is missing the 'agent' extra — infra failure" >&2
+  exit 1
+fi
+
+# --- the answer: the workspace diff ------------------------------------------
+# `add -A` stages new files too, so the diff carries them; pyc/pycache junk a
+# script run may have left behind is excluded via pathspec magic.
+# Ref: https://git-scm.com/docs/gitglossary#def_pathspec  (exclude + glob magic)
+git -C "$WORKSPACE" add -A >&2
+git -C "$WORKSPACE" diff --cached --no-color -- . \
+  ':(exclude,glob)**/__pycache__/**' ':(exclude,glob)**/*.pyc'
+exit 0

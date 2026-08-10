@@ -1,0 +1,13 @@
+name: default
+# One required check: hand the Run's patch (output.txt) to the official
+# SWE-bench evaluation harness in docker and pass iff the harness report lists
+# the instance as resolved. The first grade of an instance builds (arm64) or
+# pulls (x86_64) its docker image, which dominates the generous timeout; later
+# grades of the same instance reuse the cached image and run in minutes.
+# Grader schema: https://github.com/prime-radiant-inc/smevals  (`smevals docs`)
+checks:
+  - checker: ../checkers/swebench-eval
+    timeout_s: 2400
+    required: true
+scoring:
+  pass_threshold: 1.0

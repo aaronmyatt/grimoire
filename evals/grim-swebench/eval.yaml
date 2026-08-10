@@ -1,0 +1,13 @@
+name: grim-swebench
+description: >-
+  SWE-bench Verified eval for the grim-agent harness (build plan Phase 8,
+  benchmark track). Each task is a real GitHub issue against a host checkout
+  of the repo at the instance's base commit; the runner prints the workspace's
+  resulting git diff as the Run's answer, and the grader hands that patch to
+  the official SWE-bench docker harness — only a patch that turns the
+  instance's FAIL_TO_PASS tests green while keeping PASS_TO_PASS green counts.
+  Tasks are grouped per repo and ordered chronologically; by default each
+  task's library is the shared per-repo DB groups/<repo>.db (the compounding
+  condition), with GRIM_EVAL_COLD=1 forcing the cold control. Target-repo
+  dependencies are not pre-installed — environment bootstrap is the agent's
+  job (and its chance to bank a reusable script).

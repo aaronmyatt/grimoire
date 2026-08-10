@@ -15,3 +15,6 @@ evals/**/runs/
 evals/**/*.db
 evals/**/*.db-wal
 evals/**/*.db-shm
+
+# swebench repo mirrors are a pure local cache (evals/grim-swebench/run-grim)
+evals/**/cache/
