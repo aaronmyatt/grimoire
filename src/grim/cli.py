@@ -247,15 +247,9 @@ def _add_completion_parser(subparsers: _SubParsers) -> None:
     group.add_argument(
         "--uninstall", action="store_true", help="remove completion files and rc hooks"
     )
-    group.add_argument(
-        "--print-bash", action="store_true", help="print the bash completion source"
-    )
-    group.add_argument(
-        "--print-zsh", action="store_true", help="print the zsh completion source"
-    )
-    group.add_argument(
-        "--check", action="store_true", help="report completion install state"
-    )
+    group.add_argument("--print-bash", action="store_true", help="print the bash completion source")
+    group.add_argument("--print-zsh", action="store_true", help="print the zsh completion source")
+    group.add_argument("--check", action="store_true", help="report completion install state")
     group.add_argument(
         "--selftest",
         action="store_true",
