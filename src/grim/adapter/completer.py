@@ -97,16 +97,21 @@ class GrimCompleter(Completer):
 
 
 def install_grim_completer(completer: Completer | None = None) -> None:
-    """Attach the completer to mini's two prompt_toolkit sessions so `@`/`:`
+    """Attach the completer to mini's prompt_toolkit sessions so `@`/`:`
     completion works wherever the human types (initial task, follow-up prompt,
     interrupt comment). Mutating mini's own sessions keeps this additive — no
     fork. Safe without a TTY: prompt_toolkit simply shows nothing."""
     from minisweagent.agents.utils import prompt_user  # noqa: PLC0415 -- extra may be absent
 
     completer = completer or GrimCompleter()
-    # _multiline_prompt_session is mini's (underscored) session for the
-    # task/follow-up prompt; both are the documented input seam (prompt_user.py).
-    for session in (prompt_user.prompt_session, prompt_user._multiline_prompt_session):
+    # The documented input seam (prompt_user.py): single-line follow-up,
+    # multiline /m comment, and — once grim's self-heal has applied the
+    # submit-on-Enter patch — the initial task prompt session too.
+    sessions = [prompt_user.prompt_session, prompt_user._multiline_prompt_session]
+    task_session = getattr(prompt_user, "_task_prompt_session", None)
+    if task_session is not None:
+        sessions.append(task_session)
+    for session in sessions:
         session.completer = completer
         session.complete_while_typing = True
     assert prompt_user.prompt_session.completer is completer, "completer attached to the prompt"

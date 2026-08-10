@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import sqlite3
 import sys
@@ -22,7 +23,20 @@ from minisweagent.exceptions import Submitted
 from pydantic import BaseModel
 
 from grim import cli, db
+from grim.adapter import trace
 from grim.adapter.tools import SUBMIT_TOOL_NAME, tool_call_to_argv
+
+_ARGS_PREVIEW_LIMIT = 200
+
+
+def _tool_args_snippet(args: dict[str, Any]) -> str:
+    """A bounded JSON-ish preview of a tool call's args for the tool.<name>
+    span — never the full body/stdin (could be megabytes)."""
+    try:
+        text = json.dumps(args, default=str)
+    except (TypeError, ValueError):
+        return ""
+    return text if len(text) <= _ARGS_PREVIEW_LIMIT else text[:_ARGS_PREVIEW_LIMIT - 3] + "..."
 
 
 class GrimEnvironmentConfig(BaseModel):
@@ -53,6 +67,16 @@ class GrimEnvironment(LocalEnvironment):
         assert "tool" in action, "tool-calling only: an action must carry a 'tool'"
         tool = action["tool"]
         args = action.get("args", {})
+        with trace.span("tool." + tool, args=_tool_args_snippet(args)):
+            return self._execute(tool, args, cwd, timeout)
+        raise AssertionError("unreachable: _execute always returns or raises")
+
+    def _execute(
+        self, tool: str, args: dict[str, Any], cwd: str, timeout: int | None
+    ) -> dict[str, Any]:
+        """The original execute body, split out so execute() can time the
+        whole call in one span (submit raises Submitted; the span records
+        error=Submitted and the harness handles it as before)."""
         if tool == SUBMIT_TOOL_NAME:
             result = args.get("result", "")
             raise Submitted(

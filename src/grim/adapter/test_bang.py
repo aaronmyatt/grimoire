@@ -63,15 +63,26 @@ def test_bangs_beyond_the_cap_are_left_literal() -> None:
     assert f"<output of {slugs[-1]}>" not in result
 
 
-def test_install_wraps_both_sessions_idempotently(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_wraps_all_sessions_idempotently(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("minisweagent")
     from minisweagent.agents.utils import prompt_user
 
+    # grim-agent self-heals the submit-on-Enter patch into the venv; against a
+    # pristine minisweagent, synthesize the session so this branch is covered.
+    if not hasattr(prompt_user, "_task_prompt_session"):
+        monkeypatch.setattr(
+            prompt_user, "_task_prompt_session", prompt_user._multiline_prompt_session
+        )
+    sessions = [
+        prompt_user.prompt_session,
+        prompt_user._multiline_prompt_session,
+        prompt_user._task_prompt_session,
+    ]
+
     install_bang_expansion(lambda: "session-1")
-    first_prompt_wrapper = prompt_user.prompt_session.prompt
-    first_multiline_wrapper = prompt_user._multiline_prompt_session.prompt
+    first_wrappers = {id(s): s.prompt for s in sessions}
 
     install_bang_expansion(lambda: "session-1")  # repeat call must not double-wrap
 
-    assert prompt_user.prompt_session.prompt is first_prompt_wrapper
-    assert prompt_user._multiline_prompt_session.prompt is first_multiline_wrapper
+    for s in sessions:
+        assert s.prompt is first_wrappers[id(s)]

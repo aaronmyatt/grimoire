@@ -130,6 +130,13 @@ agent:
     {%- endfor %}
     </recent_library>
     {%- endif %}
+    {%- if grim_previous_session is defined and grim_previous_session %}
+
+    <previous_session>
+    Where the last run left off (warm-start context):
+    {{ grim_previous_session }}
+    </previous_session>
+    {%- endif %}
   step_limit: 0
   cost_limit: 3.
   # yolo: no per-action confirmation prompts. Submission still hands
