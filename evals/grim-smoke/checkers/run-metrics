@@ -10,7 +10,8 @@ dashboard instead of archaeology across run dirs:
     grim.adapter.toolcall_model._format_error stamps — no string matching.
   - from grim-run.json + the Run's grimoire DB, scoped to this Run's session
     id: runs_total, runs_shell, shell_escape_rate, runs_prior_reuse,
-    reuse_rate, scripts_written. SQL mirrors the `stats` seed
+    reuse_rate, scripts_written, plus per-language lean (writes_<lang> /
+    runs_<lang> — the language-sweep signal). SQL mirrors the `stats` seed
     (src/grim/seeds/bodies.py) with `AND e.session_id = ?` scoping, so
     escape/reuse mean the same thing everywhere.
 
@@ -92,38 +93,26 @@ def read_stamp(run_dir: pathlib.Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def db_metrics(db_path: str, session_id: str) -> dict[str, float | int] | None:
-    """Session-scoped library counters, mirroring the `stats` seed's SQL:
-    escape = runs of the `shell` script; reuse = runs of scripts authored in
-    a DIFFERENT session (seeds' NULL origin excluded). None when the DB
-    cannot be opened or queried (degraded, not fatal)."""
-    assert db_path, "caller skips empty db paths (baseline arm)"
-    assert session_id, "caller skips runs without a session id"
+def _counters(conn: sqlite3.Connection, session_id: str) -> dict[str, float | int]:
+    """The stats-seed counters, session-scoped (see db_metrics docstring)."""
+    assert session_id, "caller guarantees a session id"
     joined = (
         "SELECT COUNT(*) FROM execution e "
         "JOIN script_version sv ON sv.id = e.script_version_id "
         "JOIN script s ON s.id = sv.script_id WHERE e.session_id = ? AND "
     )
-    try:
-        # mode=ro so a grade can never mutate an experiment library.
-        # Ref: https://docs.python.org/3/library/sqlite3.html#sqlite3.connect
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        try:
-            runs_total = conn.execute(
-                "SELECT COUNT(*) FROM execution WHERE session_id = ?", (session_id,)
-            ).fetchone()[0]
-            runs_shell = conn.execute(joined + "s.name = 'shell'", (session_id,)).fetchone()[0]
-            runs_reuse = conn.execute(
-                joined + "s.origin_session_id IS NOT NULL AND s.origin_session_id != e.session_id",
-                (session_id,),
-            ).fetchone()[0]
-            scripts_written = conn.execute(
-                "SELECT COUNT(*) FROM script WHERE origin_session_id = ?", (session_id,)
-            ).fetchone()[0]
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        return None
+    runs_total = conn.execute(
+        "SELECT COUNT(*) FROM execution WHERE session_id = ?", (session_id,)
+    ).fetchone()[0]
+    runs_shell = conn.execute(joined + "s.name = 'shell'", (session_id,)).fetchone()[0]
+    runs_reuse = conn.execute(
+        joined + "s.origin_session_id IS NOT NULL AND s.origin_session_id != e.session_id",
+        (session_id,),
+    ).fetchone()[0]
+    scripts_written = conn.execute(
+        "SELECT COUNT(*) FROM script WHERE origin_session_id = ?", (session_id,)
+    ).fetchone()[0]
+    assert runs_shell <= runs_total and runs_reuse <= runs_total, "subsets of the total"
     return {
         "runs_total": runs_total,
         "runs_shell": runs_shell,
@@ -132,6 +121,50 @@ def db_metrics(db_path: str, session_id: str) -> dict[str, float | int] | None:
         "reuse_rate": (runs_reuse / runs_total) if runs_total else 0.0,
         "scripts_written": scripts_written,
     }
+
+
+def _lean(conn: sqlite3.Connection, session_id: str) -> dict[str, int]:
+    """Per-language activity this session — the language-sweep's lean signal:
+    writes_<lang> (scripts authored) and runs_<lang> (executions dispatched,
+    seed runs included — the `shell` seed shows up as runs_bash). Language
+    names come from grim's own catalog, so the dynamic keys stay well-formed
+    and can never collide with the fixed runs_total/runs_shell counters."""
+    assert session_id, "caller guarantees a session id"
+    writes = conn.execute(
+        "SELECT language, COUNT(*) FROM script WHERE origin_session_id = ? GROUP BY language",
+        (session_id,),
+    ).fetchall()
+    runs = conn.execute(
+        "SELECT s.language, COUNT(*) FROM execution e "
+        "JOIN script_version sv ON sv.id = e.script_version_id "
+        "JOIN script s ON s.id = sv.script_id WHERE e.session_id = ? GROUP BY s.language",
+        (session_id,),
+    ).fetchall()
+    lean = {f"writes_{language}": count for language, count in writes}
+    lean.update({f"runs_{language}": count for language, count in runs})
+    assert all(isinstance(v, int) for v in lean.values()), "lean values are counts"
+    return lean
+
+
+def db_metrics(db_path: str, session_id: str) -> dict[str, float | int] | None:
+    """Session-scoped library metrics: the stats-seed counters (escape = runs
+    of the `shell` script; reuse = runs of scripts authored in a DIFFERENT
+    session, seeds' NULL origin excluded) plus per-language lean counts.
+    None when the DB cannot be opened or queried (degraded, not fatal)."""
+    assert db_path, "caller skips empty db paths (baseline arm)"
+    assert session_id, "caller skips runs without a session id"
+    try:
+        # mode=ro so a grade can never mutate an experiment library.
+        # Ref: https://docs.python.org/3/library/sqlite3.html#sqlite3.connect
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            metrics = _counters(conn, session_id)
+            metrics.update(_lean(conn, session_id))
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return metrics
 
 
 def emit(metrics: dict[str, float | int | bool], notes: str) -> None:
