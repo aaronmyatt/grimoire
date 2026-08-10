@@ -35,3 +35,14 @@ mechanically.
   prelude — but each eval is deliberately self-contained (the same
   independence rule as slices), so extraction waits for the human's call
   as its own task.
+- **run-metrics observer checker, five identical copies.** Byte-identical
+  `checkers/run-metrics` (+ selftest) in all five evals — deliberate:
+  evals never reference each other's files, so the metric definitions
+  ship as copies. Drift risk is real (a definition change must touch all
+  five); a `diff` across the copies is the cheap audit until the human
+  decides on extraction as its own task.
+- **run-mini extends the run-grim preamble family.** grim-swebench's
+  baseline runner duplicates run-grim's env asserts, mirror/clone/
+  checkout, and patch-emission blocks (arms must not drift — the
+  comparison is agent vs agent). Any future sourced-prelude extraction
+  should cover it together with the entry above.
