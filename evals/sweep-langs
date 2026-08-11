@@ -27,6 +27,15 @@ set — with no cross-arm library contamination. `-n` is plain repetition
     evals/sweep-langs --preset screen --report-only
     evals/sweep-langs --arms python,bash --arms python,bash,jq --evals grim-smoke
 
+--combo/--combo-k generates every size-k combination of a slot list instead
+of hand-typing arms: a slot may be a `+`-joined atomic unit (e.g. tcl+expect)
+that always travels together, never splits across combinations.
+
+    evals/sweep-langs --combo bun --combo lua --combo sql --combo awk \
+      --combo tcl+expect --combo perl --combo-k 2   # all 15 pairs
+      # --combo-k 2,3 adds the 20 triples on top; escalating later just adds
+      # more arms into the same runs/ tree, nothing already graded reruns.
+
 Runs are sequential on purpose; parallelize only after one clean serial
 sweep proves there is no shared state. pyyaml rides PEP 723 + uv — no
 project dependency. Ref: https://docs.astral.sh/uv/guides/scripts/
@@ -35,6 +44,7 @@ project dependency. Ref: https://docs.astral.sh/uv/guides/scripts/
 from __future__ import annotations
 
 import argparse
+import itertools
 import os
 import pathlib
 import re
@@ -76,7 +86,7 @@ OVERNIGHT_ARMS = (
     *(f"{lang},bash" for lang in SOLO_LANGS),
     _BASE + ",jq,bun,sql,awk,ruby,perl,php,go,bc,duckdb",
 )
-MAX_ARMS = 32
+MAX_ARMS = 64  # headroom for a full k=2..6 combo sweep over a 6-slot family (57 arms)
 MAX_EVALS = 5
 N_MAX = 5  # repetitions cap — variance runs, not load tests
 DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
@@ -129,6 +139,23 @@ def arm_env(arm: str) -> dict[str, str]:
         "GRIM_EVAL_BASE_LANGUAGES": ",".join(base),
         "GRIM_EVAL_COLD": "1",
     }
+
+
+def combo_arms(slots: tuple[str, ...], ks: tuple[int, ...]) -> tuple[str, ...]:
+    """Every size-k combination of `slots`, for each k in `ks`, flattened
+    into plain arm strings. A slot may itself be a `+`-joined atomic unit
+    (e.g. `tcl+expect`) that always travels together — a combination picks
+    or skips the whole unit, never splits it. Tokens within a generated arm
+    are sorted for a canonical string (stable regardless of slot order)."""
+    assert len(slots) >= 2, "need at least 2 slots to combine"
+    assert all(2 <= k <= len(slots) for k in ks), "each k must be 2..len(slots)"
+    arms = [
+        ",".join(sorted({tok for slot in combo for tok in slot.split("+") if tok}))
+        for k in ks
+        for combo in itertools.combinations(slots, k)
+    ]
+    assert len(arms) == len(set(arms)), "combinations of distinct slots never collide"
+    return tuple(arms)
 
 
 def ensure_config(eval_dir: pathlib.Path, slug: str) -> None:
@@ -326,6 +353,14 @@ def parse_args(argv: list[str] | None) -> Options:
         choices=["screen", "overnight"],
         help="screen: 10 arms; overnight: 26 arms — controls + each language solo and +bash + pool",
     )
+    parser.add_argument(
+        "--combo", action="append", default=[],
+        help="one slot (may be a +joined atomic unit, e.g. tcl+expect); repeatable, needs --combo-k",
+    )
+    parser.add_argument(
+        "--combo-k", default="",
+        help="comma-joined arity sizes to generate from --combo slots, e.g. 2 or 2,3",
+    )
     parser.add_argument("--evals", default=",".join(SCREEN_EVALS))
     parser.add_argument("-m", "--model", default=DEFAULT_MODEL)
     parser.add_argument("-n", type=int, default=1, help="repetitions per arm x eval (1..%d)" % N_MAX)
@@ -333,10 +368,24 @@ def parse_args(argv: list[str] | None) -> Options:
     parser.add_argument("--report-only", action="store_true")
     args = parser.parse_args(argv)
     presets = {"screen": SCREEN_ARMS, "overnight": OVERNIGHT_ARMS}
-    arms = tuple(args.arms) + presets.get(args.preset or "", ())
+    for slot in args.combo:
+        if not _ARM_RE.match(slot.replace("+", ",")):
+            parser.error(f"malformed --combo slot: {slot!r}")
+    try:
+        combo_ks = tuple(int(k) for k in args.combo_k.split(",") if k.strip())
+    except ValueError:
+        parser.error(f"--combo-k must be comma-joined integers, got {args.combo_k!r}")
+    if args.combo and not combo_ks:
+        parser.error("--combo needs --combo-k (e.g. --combo-k 2)")
+    if combo_ks and len(args.combo) < 2:
+        parser.error("--combo needs at least 2 slots")
+    if combo_ks and not all(2 <= k <= len(args.combo) for k in combo_ks):
+        parser.error(f"--combo-k values must be 2..{len(args.combo)}")
+    generated = combo_arms(tuple(args.combo), combo_ks) if combo_ks else ()
+    arms = tuple(args.arms) + presets.get(args.preset or "", ()) + generated
     evals = tuple(e.strip() for e in args.evals.split(",") if e.strip())
     if not args.report_only and not arms:
-        parser.error("no arms: pass --arms a,b (repeatable) or --preset screen")
+        parser.error("no arms: pass --arms a,b (repeatable), --preset screen, or --combo/--combo-k")
     if not (0 < len(evals) <= MAX_EVALS) or (arms and len(arms) > MAX_ARMS):
         parser.error(f"bounds: 1..{MAX_EVALS} evals, <= {MAX_ARMS} arms")
     if not (1 <= args.n <= N_MAX):
