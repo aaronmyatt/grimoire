@@ -103,6 +103,7 @@ class RunRow(NamedTuple):
     eval_name: str
     passed: bool
     metrics: dict[str, Any]
+    duration_s: float
 
 
 def arm_slug(arm: str) -> str:
@@ -198,6 +199,23 @@ def _metrics_of(grade: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _run_duration(grade_path: pathlib.Path) -> float:
+    """Wall-clock seconds for this Run, from the sibling run.yaml (written by
+    smevals for every Run regardless of grading — grade_path.parents[2] is
+    the Run's own <ts> directory). 0.0 when missing/unreadable, matching
+    collect_rows' tolerance for partial data."""
+    run_yaml = grade_path.parents[2] / "run.yaml"
+    try:
+        data = yaml.safe_load(run_yaml.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return 0.0
+    if not isinstance(data, dict):
+        return 0.0
+    duration = float(data.get("duration_seconds", 0.0) or 0.0)
+    assert duration >= 0, "a wall-clock duration is never negative"
+    return duration
+
+
 def collect_rows(evals: tuple[str, ...]) -> list[RunRow]:
     """Every graded L-* run under the given evals, flattened."""
     assert evals, "at least one eval"
@@ -221,8 +239,18 @@ def collect_rows(evals: tuple[str, ...]) -> list[RunRow]:
                 eval_name=eval_name,
                 passed=grade.get("outcome") == "pass",
                 metrics=_metrics_of(grade),
+                duration_s=_run_duration(grade_path),
             ))
     return rows
+
+
+def _fmt_duration(total_s: float) -> str:
+    """`125.4` -> `2m05s`; under a minute -> `48s`. Whole seconds only — a
+    scan-friendly summary, not a stopwatch."""
+    assert total_s >= 0, "duration is never negative"
+    total = round(total_s)
+    minutes, seconds = divmod(total, 60)
+    return f"{minutes}m{seconds:02d}s" if minutes else f"{seconds}s"
 
 
 def _lean_summary(lean_sums: dict[str, int]) -> str:
@@ -261,6 +289,8 @@ def summarize(rows: list[RunRow]) -> list[dict[str, Any]]:
             "cost_mean": cost / n, "steps_mean": steps / n,
             "escape_pct": (100.0 * shell / runs_total) if runs_total else 0.0,
             "fmt_errors": sum(int(r.metrics.get("format_errors", 0)) for r in members),
+            "duration_total_s": sum(r.duration_s for r in members),
+            "duration_mean_s": sum(r.duration_s for r in members) / n,
             "lean": _lean_summary(lean),
             "by_eval": " ".join(
                 f"{e.removeprefix('grim-')}:{sum(v)}/{len(v)}" for e, v in sorted(by_eval.items())
@@ -276,13 +306,13 @@ def render(aggregates: list[dict[str, Any]]) -> str:
     if not aggregates:
         return "no graded L-* runs found — run a sweep first (or check --evals)"
     head = (f"{'arm':38} {'model':28} {'pass':>9} {'cost$':>7} {'steps':>6} "
-            f"{'esc%':>5} {'fmtE':>4}  {'lean(writes)':18} per-eval")
+            f"{'esc%':>5} {'fmtE':>4} {'wall':>8}  {'lean(writes)':18} per-eval")
     lines = [head, "-" * len(head)]
     for a in aggregates:
         lines.append(
             f"{a['arm']:38} {a['model']:28} {a['passes']:>3}/{a['runs']:<3}{a['pass_pct']:>4.0f}% "
             f"{a['cost_mean']:>7.4f} {a['steps_mean']:>6.1f} {a['escape_pct']:>5.1f} "
-            f"{a['fmt_errors']:>4}  {a['lean']:18} {a['by_eval']}"
+            f"{a['fmt_errors']:>4} {_fmt_duration(a['duration_total_s']):>8}  {a['lean']:18} {a['by_eval']}"
         )
     return "\n".join(lines)
 
