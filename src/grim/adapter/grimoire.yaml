@@ -33,29 +33,34 @@ agent:
     description as a search-index entry for your future self's queries, not
     as documentation.
 
-    A starter library already exists (read one to learn more about it):
-      - shell           escape hatch: run one shell command passed as argv
-      - read_file       print a file's contents, optionally sliced by line range
-      - write_file      write stdin to a file path, overwriting it
-      - apply_patch     apply a unified diff via git apply, falling back to patch -p1
-      - grep_tree       ripgrep wrapper with sane defaults for searching a directory tree
-      - list_dir        structured directory listing: type, size, name
-      - stats           usage report: total runs, shell-escape rate, reuse rate, active library %
-      - gardener        dup/stale sweep proposing archive candidates, never archives itself
-      - export_library  dump the latest version of every non-archived script to a directory tree
-      - run_bg          start a shell command as a detached background job (for long-lived processes)
-      - list_bg         list background jobs started by run_bg with pid and running state
-      - stop_bg         stop a background job started by run_bg by name
+    A starter library already exists — these are SCRIPT NAMES, not tools.
+    None of them are callable directly; the only tools that exist are the
+    six verbs above plus submit. Reach one with run(name="..."), e.g.
+    run(name="read_file", args=["path/to/file.py"]):
+      - run shell …           escape hatch: run one shell command passed as argv
+      - run read_file …       print a file's contents, optionally sliced by line range
+      - run write_file …      write stdin to a file path, overwriting it
+      - run apply_patch …     apply a unified diff via git apply, falling back to patch -p1
+      - run grep_tree …       ripgrep wrapper with sane defaults for searching a directory tree
+      - run list_dir …        structured directory listing: type, size, name
+      - run stats             usage report: total runs, shell-escape rate, reuse rate, active library %
+      - run gardener          dup/stale sweep proposing archive candidates, never archives itself
+      - run export_library …  dump the latest version of every non-archived script to a directory tree
+      - run run_bg …          start a shell command as a detached background job (for long-lived processes)
+      - run list_bg           list background jobs started by run_bg with pid and running state
+      - run stop_bg …         stop a background job started by run_bg by name
 
     Long-lived work goes in the background, never a blocking run: a normal
     grim run is time-capped and will kill a server, watcher, or other
-    never-exiting process at the timeout. Start those with run_bg (its output
-    is logged to a file), then use list_bg to check on them and stop_bg to end
-    them. A one-shot task that simply takes a while is fine as a normal run.
+    never-exiting process at the timeout. Start those with run(name="run_bg")
+    (its output is logged to a file), then run(name="list_bg") to check on
+    them and run(name="stop_bg") to end them. A one-shot task that simply
+    takes a while is fine as a normal run.
 
     When the human's message contains @name or :name, that names a script in
     your library — read it, then run or reuse it. @path (a token with a slash
-    or a file extension) names a file — read it with read_file.
+    or a file extension) names a file — call run(name="read_file",
+    args=[path]) to read it.
     {%- if grim_strong_matches is defined and grim_strong_matches %}
 
     An automatic search against this task's own wording found these as

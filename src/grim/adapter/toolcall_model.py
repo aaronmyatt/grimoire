@@ -147,7 +147,9 @@ class GrimToolcallModel(LitellmModel):
         name = tool_call.function.name
         if name not in _TOOL_NAMES:
             raise self._format_error(
-                f"Unknown tool {name!r}. Available: {sorted(_TOOL_NAMES)}.", finish_reason
+                f"Unknown tool {name!r}. Available: {sorted(_TOOL_NAMES)}. If you meant to run "
+                f"a library script (not a built-in tool), call run(name={name!r}) instead.",
+                finish_reason,
             )
         try:
             args = json.loads(tool_call.function.arguments)

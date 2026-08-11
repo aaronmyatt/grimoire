@@ -164,7 +164,11 @@ GRIM_TOOLS: list[dict[str, Any]] = [
         "The body is the full script source.",
         {
             "name": {**_STR, "description": "slug, ^[a-z][a-z0-9_]{2,63}$"},
-            "lang": {"type": "string", "enum": lang_enum()},
+            "lang": {
+                "type": "string",
+                "enum": lang_enum(),
+                "description": "REQUIRED — always set this, even when only one language is enabled",
+            },
             "desc": {**_STR, "description": "search-index description"},
             "body": {**_STR, "description": "full script source"},
             "parent": {**_STR, "description": "fork lineage: parent script name[@version]"},

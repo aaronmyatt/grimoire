@@ -82,6 +82,17 @@ def test_unknown_tool_raises_format_error() -> None:
         _model()._parse_actions(_response([_tool_call("bash", {"command": "ls"})]))
 
 
+def test_unknown_tool_message_hints_at_run() -> None:
+    # A model calling a library-script name directly (the dominant real-world
+    # format error, e.g. "read_file") should be pointed at run(), by name, so
+    # it self-corrects on the very next turn instead of guessing again.
+    with pytest.raises(FormatError) as exc:
+        _model()._parse_actions(_response([_tool_call("read_file", {"path": "x.py"})]))
+    content = exc.value.messages[0]["content"]
+    assert "Unknown tool 'read_file'" in content
+    assert "run(name='read_file')" in content
+
+
 def test_missing_required_arg_raises_format_error() -> None:
     # write without body — the required-args check must catch it.
     with pytest.raises(FormatError):
