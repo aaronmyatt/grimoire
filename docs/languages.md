@@ -2,7 +2,7 @@
 
 Languages considered as extensions to the grim CLI and agent harness:
 janet, racket, hy, nim, ruby, bun (node), php, go, perl, jq, sql, awk,
-osascript, lua/luajit, fennel, zig, duckdb + prql, typst, bc/dc.
+osascript, lua/luajit, fennel, zig, duckdb + prql, typst, bc/dc, tcl/expect.
 
 All of them are **off by default**. `grim write --lang` accepts only
 `python` and `bash` until you opt in, and the agent's tool schema only
@@ -91,6 +91,8 @@ Each language dispatches through `exec/dispatch.py`'s runner catalog:
 | typst      | `typst compile FILE` |
 | bc         | `bc FILE` |
 | dc         | `dc FILE` |
+| tcl        | `tclsh FILE` |
+| expect     | `expect FILE` |
 
 Script args passed to `grim run NAME -- arg...` are appended after the
 runner's command, like the builtin languages.

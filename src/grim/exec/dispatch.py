@@ -165,6 +165,19 @@ _EXTENDED_RUNNERS: dict[str, Runner] = {
     ),
     "bc": Runner(".bc", _argv("bc"), ["bc", "--version"], tool="bc"),
     "dc": Runner(".dc", _argv("dc"), ["dc", "--version"], tool="dc"),
+    # tclsh has no --version flag; `puts [info patchlevel]` piped over its own
+    # stdin (via bash -c) reports it without depending on the caller's stdin,
+    # which _env_fingerprint never sets. Ref: https://www.tcl-lang.org/man/tcl8.6/TclCmd/info.htm
+    "tcl": Runner(
+        ".tcl",
+        _argv("tclsh"),
+        ["bash", "-c", "echo 'puts [info patchlevel]' | tclsh"],
+        tool="tclsh",
+    ),
+    # expect(1) automates interactive programs by scripting a pty; a plain
+    # `expect FILE` (no -f needed) runs it same as any other file-argv runner.
+    # Ref: https://linux.die.net/man/1/expect
+    "expect": Runner(".exp", _argv("expect"), ["expect", "-v"], tool="expect"),
 }
 
 _ALL_RUNNERS: dict[str, Runner] = {**_BUILTIN_RUNNERS, **_EXTENDED_RUNNERS}

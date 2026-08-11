@@ -207,6 +207,24 @@ def test_osascript_runs_on_darwin() -> None:
     assert result.stdout.strip() == "hi"
 
 
+@pytest.mark.skipif(shutil.which("tclsh") is None, reason="tclsh not installed")
+def test_tcl_script_runs_for_real() -> None:
+    sv = ScriptVersion(language="tcl", body='puts "hi-tcl"')
+    result = dispatch(sv, _request())
+    assert result.exit_code == 0
+    assert "hi-tcl" in result.stdout
+    assert result.env_fingerprint.startswith("bash:")
+
+
+@pytest.mark.skipif(shutil.which("expect") is None, reason="expect not installed")
+def test_expect_script_runs_for_real() -> None:
+    sv = ScriptVersion(language="expect", body='puts "hi-expect"')
+    result = dispatch(sv, _request())
+    assert result.exit_code == 0
+    assert "hi-expect" in result.stdout
+    assert result.env_fingerprint.startswith("expect:")
+
+
 def test_python_runner_never_attaches_to_grimoires_own_project(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
