@@ -23,3 +23,6 @@ surface.
 - `write`/`update` never skip the slug lint, mandatory-description check,
   or the FTS similarity nudge — those are the anti-duplication mechanism
   the build plan's §4 and §6 depend on.
+- `write_script(..., enforce_language_gate=False)` bypasses only the
+  env-derived writable-set check (for `grim init` seeding); the language
+  must still exist in the runner catalog, and every other validation runs.

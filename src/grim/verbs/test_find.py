@@ -72,6 +72,19 @@ def test_find_scripts_no_match_returns_empty(
     assert find_scripts(conn, "completely unrelated gibberish zzz") == []
 
 
+def test_find_scripts_includes_seeded_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seeds are ordinary library citizens: find must never grow a seed
+    filter (the adapter's recall exclusion is deliberate; this is not)."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "apply_patch", "patch or edit a file by applying a unified diff")
+    conn.execute("UPDATE script SET seeded = 1 WHERE name = 'apply_patch'")
+    conn.commit()
+    results = find_scripts(conn, "patch a file")
+    assert [r["name"] for r in results] == ["apply_patch"]
+
+
 def test_cmd_find_shows_last_used_dash_for_never_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

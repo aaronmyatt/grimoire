@@ -136,3 +136,31 @@ def test_write_script_rejects_disabled_extended_language(
 
     with pytest.raises(ValueError, match="unsupported language"):
         write_script(conn, _request(language="ruby", body="puts 'hi'"))
+
+
+def test_write_script_ungated_bypasses_writable_set_but_not_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for the silent seed drop: seeding writes with the gate off
+    must land even when the env toggles exclude the seed's language."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    monkeypatch.delenv("GRIM_LANGUAGES", raising=False)  # ruby not writable
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "")  # builtins removed too
+
+    result = write_script(
+        conn,
+        _request(name="ruby_seed", language="ruby", body="puts 'hi'"),
+        enforce_language_gate=False,
+    )
+
+    assert result.version == 1
+    row = conn.execute("SELECT language FROM script WHERE id = ?", (result.script_id,)).fetchone()
+    assert row["language"] == "ruby"
+
+
+def test_write_script_ungated_still_rejects_unknown_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="runner catalog"):
+        write_script(conn, _request(language="javascript"), enforce_language_gate=False)

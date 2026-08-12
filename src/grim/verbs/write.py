@@ -35,13 +35,29 @@ class WriteResult:
     similar: list[tuple[str, float]]
 
 
-def write_script(conn: sqlite3.Connection, request: WriteRequest) -> WriteResult:
+def write_script(
+    conn: sqlite3.Connection, request: WriteRequest, *, enforce_language_gate: bool = True
+) -> WriteResult:
+    """Validate and insert a new script + version 1.
+
+    `enforce_language_gate=False` exists for human-initiated seeding
+    (`grim init` via seeds/loader.py): the env-derived writable set
+    (GRIM_LANGUAGES / GRIM_BASE_LANGUAGES) is an agent-experiment knob and
+    must not decide what the stdlib contains. Ungated writes still stay
+    inside the full runner catalog, and the toggles keep gating writing
+    only, never execution (docs/languages.md).
+    """
     _shared.validate_slug(request.name)
     if not request.description.strip():
         raise ValueError("description is required")
-    if request.language not in dispatch.supported_languages():
+    if enforce_language_gate and request.language not in dispatch.supported_languages():
         supported = ", ".join(sorted(dispatch.supported_languages()))
         raise ValueError(f"unsupported language {request.language!r} — supported: {supported}")
+    # language_tool() returns '' for a language outside the runner catalog
+    # (exec/dispatch.py) — the floor an UNGATED write still obeys: seeding
+    # bypasses the writable-set knob, never the catalog.
+    if not dispatch.language_tool(request.language):
+        raise ValueError(f"unknown language {request.language!r} — not in the runner catalog")
     lint_error = _shared.lint(request.language, request.body)
     if lint_error:
         raise ValueError(lint_error)
