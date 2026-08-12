@@ -49,6 +49,38 @@ with open(path, "w", encoding="utf-8") as f:
 print(f"wrote {len(content)} bytes to {path}")
 '''
 
+_EDIT_FILE = '''"""edit_file — edit a file in place by exact match: replace ONE occurrence
+of OLD text with NEW text. Usage: edit_file PATH, with stdin = OLD lines,
+a line containing exactly ---GRIM-EDIT---, then NEW lines. Zero or many
+matches fail loudly with the count — extend OLD until it is unique."""
+import sys
+
+DELIMITER = "---GRIM-EDIT---"
+
+path = sys.argv[1]
+parts = sys.stdin.read().split("\\n" + DELIMITER + "\\n")
+if len(parts) != 2:
+    print(f"stdin needs exactly one {DELIMITER} line between OLD and NEW", file=sys.stderr)
+    sys.exit(1)
+old, new = parts
+if not old:
+    print("OLD text is empty — nothing to match", file=sys.stderr)
+    sys.exit(1)
+with open(path, encoding="utf-8") as f:
+    content = f.read()
+count = content.count(old)
+if count != 1:
+    print(
+        f"found {count} matches for OLD in {path} — need exactly 1; "
+        "include surrounding lines to make OLD unique",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+with open(path, "w", encoding="utf-8") as f:
+    f.write(content.replace(old, new, 1))
+print(f"edited {path}: replaced 1 occurrence")
+'''
+
 _APPLY_PATCH = '''"""apply_patch — apply a unified diff (stdin) via `git apply`, falling
 back to `patch -p1` if that fails or git isn't available."""
 import subprocess
@@ -337,37 +369,43 @@ SEEDS: list[SeedSpec] = [
     SeedSpec(
         name="shell",
         language="python",
-        description="escape hatch: run one shell command passed as argv",
+        description="run any shell command — the escape hatch when no script fits yet",
         body=_SHELL,
     ),
     SeedSpec(
         name="read_file",
         language="python",
-        description="print a file's contents, optionally sliced by line range",
+        description="read a file: print its text or source code, whole or by line range",
         body=_READ_FILE,
     ),
     SeedSpec(
         name="write_file",
         language="python",
-        description="write stdin to a file path, overwriting it",
+        description="create or overwrite a file: writes stdin to a path",
         body=_WRITE_FILE,
+    ),
+    SeedSpec(
+        name="edit_file",
+        language="python",
+        description="edit a file in place: replace one exact match of old text with new text",
+        body=_EDIT_FILE,
     ),
     SeedSpec(
         name="apply_patch",
         language="python",
-        description="apply a unified diff via git apply, falling back to patch -p1",
+        description="patch, edit or fix files by applying a unified diff (git apply or patch -p1)",
         body=_APPLY_PATCH,
     ),
     SeedSpec(
         name="grep_tree",
         language="python",
-        description="ripgrep wrapper with sane defaults for searching a directory tree",
+        description="search the codebase: find text or a pattern across files (ripgrep)",
         body=_GREP_TREE,
     ),
     SeedSpec(
         name="list_dir",
         language="python",
-        description="structured directory listing: type, size, name",
+        description="list files in a directory: type, size and name, for exploring the workspace",
         body=_LIST_DIR,
     ),
     SeedSpec(

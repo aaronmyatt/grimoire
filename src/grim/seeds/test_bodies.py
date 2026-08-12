@@ -71,6 +71,55 @@ def test_write_file_writes_stdin_to_path(tmp_path: Path) -> None:
     assert f"wrote {len(content)} bytes" in result.stdout
 
 
+def _edit_stdin(old: str, new: str) -> str:
+    return f"{old}\n---GRIM-EDIT---\n{new}"
+
+
+def test_edit_file_replaces_a_single_exact_match(tmp_path: Path) -> None:
+    target = tmp_path / "code.py"
+    target.write_text("def greet():\n    return 'hello'\n")
+
+    result = _run(
+        "edit_file", argv=[str(target)], stdin=_edit_stdin("return 'hello'", "return 'goodbye'")
+    )
+
+    assert result.exit_code == 0
+    assert "replaced 1 occurrence" in result.stdout
+    assert target.read_text() == "def greet():\n    return 'goodbye'\n"
+
+
+def test_edit_file_rejects_zero_matches_with_count(tmp_path: Path) -> None:
+    target = tmp_path / "code.py"
+    target.write_text("def greet():\n    return 'hello'\n")
+
+    result = _run("edit_file", argv=[str(target)], stdin=_edit_stdin("no such text", "new"))
+
+    assert result.exit_code == 1
+    assert "found 0 matches" in result.stderr
+    assert target.read_text() == "def greet():\n    return 'hello'\n"  # untouched
+
+
+def test_edit_file_rejects_multiple_matches_with_count(tmp_path: Path) -> None:
+    target = tmp_path / "code.py"
+    target.write_text("x = 1\nx = 1\n")
+
+    result = _run("edit_file", argv=[str(target)], stdin=_edit_stdin("x = 1", "x = 2"))
+
+    assert result.exit_code == 1
+    assert "found 2 matches" in result.stderr
+    assert target.read_text() == "x = 1\nx = 1\n"  # untouched
+
+
+def test_edit_file_rejects_stdin_without_delimiter(tmp_path: Path) -> None:
+    target = tmp_path / "code.py"
+    target.write_text("x = 1\n")
+
+    result = _run("edit_file", argv=[str(target)], stdin="just some text, no delimiter")
+
+    assert result.exit_code == 1
+    assert "---GRIM-EDIT---" in result.stderr
+
+
 def test_apply_patch_applies_a_unified_diff(tmp_path: Path) -> None:
     (tmp_path / "greeting.txt").write_text("hello\n")
     patch_text = "--- a/greeting.txt\n+++ b/greeting.txt\n@@ -1 +1 @@\n-hello\n+hello world\n"
