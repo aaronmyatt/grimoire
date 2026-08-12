@@ -23,6 +23,11 @@ TIMEOUT_EXIT_CODE = 124
 # while draining output before falling back to a direct kill(). SIGKILL makes
 # this near-instant; the bound only guards a pathological unkillable descendant.
 _REAP_TIMEOUT_S = 5.0
+# Harness-internal system calls are always fast; exceeding these bounds means
+# the platform is unhealthy, and that must fail loudly, never be absorbed
+# into a script's wall time (TigerStyle: assert the negative space).
+_SPAWN_BUDGET_MS = 1_000
+_VERSION_PROBE_TIMEOUT_S = 5.0
 
 # Env var carrying the extended languages the user enabled (comma-joined).
 # config.py seeds it from ~/.grimoire/config.toml's `[languages]` table; a
@@ -268,9 +273,22 @@ def _env_fingerprint(version_argv: list[str]) -> str:
 
     Not persisted here (stateless invariant); the caller is responsible for
     storing it on the execution row so Phase 4's gardener can use it for
-    staleness triage.
+    staleness triage. The probe is a harness-internal system call, so it is
+    hard-bounded: DEVNULL stdin (a probe must never block reading OUR fd —
+    the 120s seed-hang class) and an explicit timeout, marker string on
+    expiry (external binary => validate, never assert).
     """
-    result = subprocess.run(version_argv, capture_output=True, text=True, check=False)
+    try:
+        result = subprocess.run(
+            version_argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            timeout=_VERSION_PROBE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return f"{version_argv[0]}:version-probe-timed-out"
     output = result.stdout or result.stderr
     first_line = output.splitlines()[0] if output else ""
     return f"{version_argv[0]}:{first_line}"
@@ -336,6 +354,34 @@ def _kill_group(proc: subprocess.Popen[str]) -> tuple[str, str]:
     return stdout or "", stderr or ""
 
 
+def _stdin_is_tty() -> bool:
+    """True only when the process stdin is a live interactive terminal.
+    Tolerates the harness's StringIO swap (isatty() -> False) and a closed
+    or absent sys.stdin (detached daemons) — both mean "not interactive".
+    Ref: https://docs.python.org/3/library/io.html#io.IOBase.isatty
+    """
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except ValueError:  # isatty() on a closed file
+        return False
+
+
+def _child_stdin(stdin: str | None) -> int | None:
+    """What the child's stdin fd should be. Negative space (the 2026-08-12
+    seed hangs): a script that reads stdin must always reach EOF — handing
+    it our own non-tty fd (an agent pipe that never closes) blocks
+    sys.stdin.read() until the timeout. PIPE when we have bytes to feed,
+    inherit only from a real terminal (a human provides the EOF), DEVNULL
+    (instant EOF) otherwise.
+    Ref: https://docs.python.org/3/library/subprocess.html#subprocess.DEVNULL
+    """
+    if stdin is not None:
+        return subprocess.PIPE
+    if _stdin_is_tty():
+        return None  # interactive CLI: the human types, Ctrl-D ends
+    return subprocess.DEVNULL
+
+
 def _run(command: list[str], stdin: str | None, cwd: str | None, timeout: float) -> ExecutionResult:
     """Run `command` in its OWN process group (start_new_session) so a timeout
     or a Ctrl-C can take down the whole job tree. subprocess.run only SIGKILLs
@@ -346,10 +392,19 @@ def _run(command: list[str], stdin: str | None, cwd: str | None, timeout: float)
     Ref: https://docs.python.org/3/library/subprocess.html#subprocess.Popen
     """
     assert timeout > 0, "timeout must be positive"
+    child_stdin = _child_stdin(stdin)
+    # Re-derived independently of _child_stdin's branches so any future edit
+    # that reintroduces fd inheritance outside a tty fails loudly right here.
+    assert child_stdin is not None or _stdin_is_tty() is False, (
+        "stdin fd policy violated: inherit only from an interactive tty"
+    )
+    assert child_stdin is not None or stdin is None, (
+        "provided stdin must travel via PIPE, never be dropped"
+    )
     started = time.monotonic()
     proc = subprocess.Popen(
         command,
-        stdin=subprocess.PIPE if stdin is not None else None,
+        stdin=child_stdin,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -357,6 +412,11 @@ def _run(command: list[str], stdin: str | None, cwd: str | None, timeout: float)
         errors="replace",
         cwd=cwd,
         start_new_session=True,
+    )
+    spawn_ms = (time.monotonic() - started) * 1000
+    assert spawn_ms < _SPAWN_BUDGET_MS, (
+        f"process spawn took {spawn_ms:.0f}ms (budget {_SPAWN_BUDGET_MS}ms) — spawning is a fast "
+        "system call; a slow spawn means the platform is unhealthy, not the script"
     )
     try:
         stdout, stderr = proc.communicate(input=stdin, timeout=timeout)

@@ -77,6 +77,30 @@ def test_bash_receives_stdin() -> None:
     assert result.stdout == "piped in"
 
 
+def test_stdin_reader_with_no_stdin_gets_instant_eof_not_a_hang() -> None:
+    # Regression (2026-08-12): with stdin=None the child used to inherit the
+    # caller's fd 0; under an agent harness that fd is a never-closing pipe,
+    # so `cat`/sys.stdin.read() blocked until the timeout killed it (exit
+    # 124, exactly 120_000ms in the eval DBs). No stdin now means DEVNULL:
+    # immediate EOF, clean exit, milliseconds not minutes.
+    sv = ScriptVersion(language="bash", body="cat; echo done")
+    started = time.monotonic()
+    result = dispatch(sv, _request(stdin=None))
+    elapsed = time.monotonic() - started
+    assert result.exit_code == 0, "EOF on empty stdin is success, not a timeout kill"
+    assert result.stdout.strip() == "done"
+    assert elapsed < TIMEOUT_KILL_BOUND_S, "an empty-stdin read must return instantly"
+
+
+def test_python_stdin_reader_with_no_stdin_reads_empty() -> None:
+    # Same regression as above, through the python runner: sys.stdin.read()
+    # on DEVNULL yields "" immediately.
+    sv = ScriptVersion(language="python", body="import sys; print(len(sys.stdin.read()))")
+    result = dispatch(sv, _request(stdin=None, timeout=PYTHON_TIMEOUT_S))
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "0"
+
+
 def test_bash_respects_cwd(tmp_path: object) -> None:
     sv = ScriptVersion(language="bash", body="pwd")
     result = dispatch(sv, _request(cwd=str(tmp_path)))

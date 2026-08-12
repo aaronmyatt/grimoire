@@ -34,3 +34,8 @@ agent (build plan D8, D9, §4).
   records exit code 124; never hangs the caller. A `KeyboardInterrupt`
   during a run kills the same group and re-raises, so the harness's
   two-press Ctrl-C (cancel the run, then exit) stays intact.
+- A child that reads stdin always reaches EOF: provided stdin travels via
+  PIPE; no stdin means DEVNULL (instant EOF); the caller's fd is inherited
+  only when it is a real interactive tty. Harness-internal system calls
+  (spawn, version probe) are hard-bounded and fail loudly when exceeded —
+  a slow platform is never absorbed into a script's wall time.
