@@ -219,11 +219,31 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
     )
 
 
+def _resolve_stdin(stdin_file: str | None) -> str | None:
+    """The script's stdin, by precedence: --stdin-file wins; otherwise a
+    piped/redirected (non-tty) stdin is read eagerly and fed through. That
+    second leg is how the adapter's run tool delivers its `stdin` argument —
+    environment._invoke parks it in sys.stdin, which a subprocess can never
+    see at the fd level, so it was silently dropped and stdin-reading seeds
+    hung to the timeout (the 2026-08-12 regression). An interactive tty
+    returns None so dispatch leaves the terminal attached for the human.
+    Ref: https://docs.python.org/3/library/sys.html#sys.stdin
+    """
+    if stdin_file:
+        return Path(stdin_file).read_text()
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return None
+        return sys.stdin.read()
+    except ValueError:  # closed stdin (detached daemon) — nothing to feed
+        return None
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
         name, version = _shared.parse_name_version(args.name)
-        stdin = Path(args.stdin_file).read_text() if args.stdin_file else None
+        stdin = _resolve_stdin(args.stdin_file)
         timeout = resolve_timeout(args.timeout, os.environ.get(_TIMEOUT_ENV))
         if args.timeout and args.timeout > MAX_TIMEOUT_S:
             print(

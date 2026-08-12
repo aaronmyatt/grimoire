@@ -26,3 +26,7 @@ surface.
 - `write_script(..., enforce_language_gate=False)` bypasses only the
   env-derived writable-set check (for `grim init` seeding); the language
   must still exist in the runner catalog, and every other validation runs.
+- `run` feeds the script's stdin by precedence: `--stdin-file`, then a
+  piped/redirected (non-tty) sys.stdin read eagerly — the leg the adapter's
+  run-tool `stdin` argument travels — and an interactive tty passes None.
+  Tool-provided stdin is never silently dropped.

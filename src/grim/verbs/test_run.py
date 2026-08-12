@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import io
 import os
 import sqlite3
 from pathlib import Path
@@ -16,10 +18,17 @@ from grim.verbs.run import (
     MAX_TIMEOUT_S,
     CallDepthExceeded,
     RunRequest,
+    _resolve_stdin,
+    cmd_run,
     resolve_timeout,
     run_script,
 )
 from grim.verbs.write import WriteRequest, write_script
+
+
+class _FakeTty(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 def _migrated_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
@@ -56,6 +65,54 @@ def _request(**overrides: object) -> RunRequest:
     }
     fields.update(overrides)
     return RunRequest(**fields)  # type: ignore[arg-type]
+
+
+def test_resolve_stdin_prefers_stdin_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stdin_path = tmp_path / "in.txt"
+    stdin_path.write_text("from file")
+    monkeypatch.setattr("sys.stdin", io.StringIO("from pipe"))
+    assert _resolve_stdin(str(stdin_path)) == "from file"
+
+
+def test_resolve_stdin_reads_a_piped_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression (2026-08-12): the adapter's run tool parks its `stdin`
+    # argument in sys.stdin (environment._invoke); cmd_run used to ignore it,
+    # so dispatch got None and the script hung on the caller's fd until the
+    # timeout. A non-tty stdin must be read and fed through.
+    monkeypatch.setattr("sys.stdin", io.StringIO("tool stdin"))
+    assert _resolve_stdin(None) == "tool stdin"
+
+
+def test_resolve_stdin_leaves_an_interactive_tty_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("sys.stdin", _FakeTty("typed later"))
+    assert _resolve_stdin(None) is None
+
+
+def test_resolve_stdin_tolerates_closed_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    closed = io.StringIO()
+    closed.close()
+    monkeypatch.setattr("sys.stdin", closed)
+    assert _resolve_stdin(None) is None
+
+
+def test_cmd_run_feeds_piped_stdin_to_the_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """End-to-end regression for the 120s seed hangs: a stdin-reading script
+    invoked through cmd_run with a piped stdin must receive it and finish
+    immediately — not block on an inherited fd until the timeout."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn, body="import sys; print(sys.stdin.read().upper())")
+    conn.close()
+    monkeypatch.setattr("sys.stdin", io.StringIO("piped text"))
+    args = argparse.Namespace(name="foo_bar", args=[], timeout=None, stdin_file=None)
+
+    exit_code = cmd_run(args)
+
+    assert exit_code == 0
+    assert "PIPED TEXT" in capsys.readouterr().out
 
 
 def test_run_script_propagates_exit_code(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
