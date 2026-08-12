@@ -10,8 +10,12 @@ dist/
 build/
 *.egg-info/
 
-# smevals writes Run records here; eval-scoped grimoire libraries are throwaway
+# smevals writes Run records here; eval-scoped grimoire libraries are throwaway.
+# runs-* covers archived eras (e.g. runs-era1-confounded, parked when the
+# 2026-08-12 harness fixes reset the baseline) — same throwaway data, and the
+# formatters/linters must never descend into agent-written run artifacts.
 evals/**/runs/
+evals/**/runs-*/
 evals/**/*.db
 evals/**/*.db-wal
 evals/**/*.db-shm
