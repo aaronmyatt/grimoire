@@ -41,12 +41,13 @@ agent:
     None of them are callable directly; the only tools that exist are the
     six verbs above plus submit. Reach one with run(name="..."), e.g.
     run(name="read_file", args=["path/to/file.py"]):
-      - run shell …           escape hatch: run one shell command passed as argv
-      - run read_file …       print a file's contents, optionally sliced by line range
-      - run write_file …      write stdin to a file path, overwriting it
-      - run apply_patch …     apply a unified diff via git apply, falling back to patch -p1
-      - run grep_tree …       ripgrep wrapper with sane defaults for searching a directory tree
-      - run list_dir …        structured directory listing: type, size, name
+      - run shell …           run any shell command — the escape hatch when no script fits yet
+      - run read_file …       read a file: print its text or source code, whole or by line range
+      - run write_file …      create or overwrite a file: writes stdin to a path
+      - run edit_file …       edit a file in place: replace one exact match of old text with new text
+      - run apply_patch …     patch, edit or fix files by applying a unified diff (git apply or patch -p1)
+      - run grep_tree …       search the codebase: find text or a pattern across files (ripgrep)
+      - run list_dir …        list files in a directory: type, size and name, for exploring the workspace
       - run stats             usage report: total runs, shell-escape rate, reuse rate, active library %
       - run gardener          dup/stale sweep proposing archive candidates, never archives itself
       - run export_library …  dump the latest version of every non-archived script to a directory tree
