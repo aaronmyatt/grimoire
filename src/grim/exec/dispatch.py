@@ -395,7 +395,7 @@ def _run(command: list[str], stdin: str | None, cwd: str | None, timeout: float)
     child_stdin = _child_stdin(stdin)
     # Re-derived independently of _child_stdin's branches so any future edit
     # that reintroduces fd inheritance outside a tty fails loudly right here.
-    assert child_stdin is not None or _stdin_is_tty() is False, (
+    assert child_stdin is not None or _stdin_is_tty() is True, (
         "stdin fd policy violated: inherit only from an interactive tty"
     )
     assert child_stdin is not None or stdin is None, (

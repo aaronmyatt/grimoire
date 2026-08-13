@@ -101,6 +101,23 @@ def test_python_stdin_reader_with_no_stdin_reads_empty() -> None:
     assert result.stdout.strip() == "0"
 
 
+def test_interactive_tty_with_no_stdin_inherits_fd_not_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (2026-08-13): _run's fd-policy assert was inverted
+    # (`_stdin_is_tty() is False`), so the one legitimate inherit case — a
+    # human at a real terminal with nothing piped — crashed every interactive
+    # `grim run`. CI never runs on a tty, so only a monkeypatched tty check
+    # can pin this branch. The script must not read stdin: with inherit the
+    # child gets pytest's real fd 0, and reading it would hang.
+    # Ref: https://docs.pytest.org/en/stable/how-to/monkeypatch.html
+    monkeypatch.setattr("grim.exec.dispatch._stdin_is_tty", lambda: True)
+    sv = ScriptVersion(language="bash", body="echo interactive")
+    result = dispatch(sv, _request(stdin=None))
+    assert result.exit_code == 0, "inherit-from-tty is the allowed branch, not a violation"
+    assert result.stdout.strip() == "interactive"
+
+
 def test_bash_respects_cwd(tmp_path: object) -> None:
     sv = ScriptVersion(language="bash", body="pwd")
     result = dispatch(sv, _request(cwd=str(tmp_path)))
