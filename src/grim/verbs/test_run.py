@@ -97,6 +97,25 @@ def test_resolve_stdin_tolerates_closed_stdin(monkeypatch: pytest.MonkeyPatch) -
     assert _resolve_stdin(None) is None
 
 
+def test_cmd_run_missing_script_nudges_find_then_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing script must answer with the authoring loop — search the
+    library, then write the tool — not a bare not-found (companion to the
+    adapter's library fallthrough, where bare tool calls land here)."""
+    _migrated_conn(tmp_path, monkeypatch).close()
+    monkeypatch.setattr("sys.stdin", _FakeTty(""))
+    args = argparse.Namespace(name="summarise_logs", args=[], timeout=None, stdin_file=None)
+
+    exit_code = cmd_run(args)
+
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "not found" in err
+    assert "find('...')" in err
+    assert "write(name='summarise_logs'" in err
+
+
 def test_cmd_run_feeds_piped_stdin_to_the_script(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

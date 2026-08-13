@@ -268,6 +268,16 @@ def cmd_run(args: argparse.Namespace) -> int:
             result = run_script(conn, request)
         except (LookupError, CallDepthExceeded) as exc:
             print(f"error: {exc}", file=sys.stderr)
+            if isinstance(exc, LookupError):
+                # The authoring nudge: a missing script is an invitation, not
+                # a dead end — the library grows one write at a time.
+                print(
+                    f"hint: no script named {name!r} exists yet. find('...') searches the "
+                    f"library for something close; if nothing fits, write it — "
+                    f"write(name={name!r}, lang=..., desc=..., body=...) — and it becomes a "
+                    "reusable tool you (and future sessions) can run by name.",
+                    file=sys.stderr,
+                )
             return 1
         print(result.observation)
         return result.exit_code
