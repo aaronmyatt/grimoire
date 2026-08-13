@@ -39,7 +39,10 @@ HARNESS_TEST_TIMEOUT_S = 1800  # harness-internal per-instance test timeout
 NOTES_TAIL_CHARS = 700
 MODEL_NAME = "grimoire"  # model_name_or_path; prefixes the harness report file
 PREDICTIONS_FILE = "predictions.jsonl"
-DEFAULT_EVAL_CMD = "uvx --from swebench python -m swebench.harness.run_evaluation"
+# --python pinned: an unpinned uvx can resolve against the Command Line Tools
+# python3.9, where swebench's PEP 604 annotations (`list | None`) fail at
+# import. 3.14 matches the repo's own runtime.
+DEFAULT_EVAL_CMD = "uvx --python 3.14 --from swebench python -m swebench.harness.run_evaluation"
 ARM_MACHINES = frozenset({"arm64", "aarch64"})
 
 
