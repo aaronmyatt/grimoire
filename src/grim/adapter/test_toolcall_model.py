@@ -77,20 +77,48 @@ def test_no_tool_calls_raises_format_error() -> None:
         _model()._parse_actions(_response([]))
 
 
-def test_unknown_tool_raises_format_error() -> None:
-    with pytest.raises(FormatError):
-        _model()._parse_actions(_response([_tool_call("bash", {"command": "ls"})]))
+def test_unknown_tool_falls_through_to_a_script_run() -> None:
+    # Library fallthrough (the dominant real-world "format error" before it
+    # became a feature): a model calling a script name directly, with an
+    # invented schema, lowers to run(name=...) with scalar values as argv.
+    actions = _model()._parse_actions(_response([_tool_call("read_file", {"path": "x.py"})]))
+    assert len(actions) == 1
+    assert actions[0]["tool"] == "run"
+    assert actions[0]["args"] == {"name": "read_file", "args": ["x.py"]}
 
 
-def test_unknown_tool_message_hints_at_run() -> None:
-    # A model calling a library-script name directly (the dominant real-world
-    # format error, e.g. "read_file") should be pointed at run(), by name, so
-    # it self-corrects on the very next turn instead of guessing again.
+def test_fallthrough_scalars_become_argv_in_call_order() -> None:
+    actions = _model()._parse_actions(
+        _response([_tool_call("read_file", {"path": "x.py", "start": 2, "end": 5})])
+    )
+    assert actions[0]["args"] == {"name": "read_file", "args": ["x.py", "2", "5"]}
+
+
+def test_fallthrough_passes_run_keys_through() -> None:
+    actions = _model()._parse_actions(
+        _response([_tool_call("apply_patch", {"stdin": "diff text", "args": ["-v"]})])
+    )
+    assert actions[0]["args"] == {"name": "apply_patch", "args": ["-v"], "stdin": "diff text"}
+
+
+def test_fallthrough_with_no_arguments_is_a_bare_run() -> None:
+    actions = _model()._parse_actions(_response([_tool_call("stats", {})]))
+    assert actions[0]["args"] == {"name": "stats"}
+
+
+def test_fallthrough_bool_lowers_as_shell_style_literal() -> None:
+    actions = _model()._parse_actions(_response([_tool_call("list_bg", {"verbose": True})]))
+    assert actions[0]["args"] == {"name": "list_bg", "args": ["true"]}
+
+
+def test_fallthrough_rejects_non_scalar_arguments() -> None:
+    # A nested object gives no honest argv ordering — precise FormatError,
+    # pointing at the explicit run() form, never a guessed execution.
     with pytest.raises(FormatError) as exc:
-        _model()._parse_actions(_response([_tool_call("read_file", {"path": "x.py"})]))
+        _model()._parse_actions(_response([_tool_call("edit_file", {"config": {"path": "x.py"}})]))
     content = exc.value.messages[0]["content"]
-    assert "Unknown tool 'read_file'" in content
-    assert "run(name='read_file')" in content
+    assert "Unknown tool 'edit_file'" in content
+    assert "run(name='edit_file'" in content
 
 
 def test_missing_required_arg_raises_format_error() -> None:

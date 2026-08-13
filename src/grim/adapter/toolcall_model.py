@@ -145,12 +145,6 @@ class GrimToolcallModel(LitellmModel):
 
     def _parse_one(self, tool_call: Any, finish_reason: Any) -> dict[str, Any]:
         name = tool_call.function.name
-        if name not in _TOOL_NAMES:
-            raise self._format_error(
-                f"Unknown tool {name!r}. Available: {sorted(_TOOL_NAMES)}. If you meant to run "
-                f"a library script (not a built-in tool), call run(name={name!r}) instead.",
-                finish_reason,
-            )
         try:
             args = json.loads(tool_call.function.arguments)
         except json.JSONDecodeError as e:
@@ -161,6 +155,11 @@ class GrimToolcallModel(LitellmModel):
             raise self._format_error(
                 f"Tool {name!r} arguments must be a JSON object.", finish_reason
             )
+        if name not in _TOOL_NAMES:
+            # Library fallthrough: scripts are callable by name. The call is
+            # lowered to run(name=<tool>) and then validated exactly like an
+            # explicit run call below — never executed unvalidated.
+            name, args = self._lower_script_call(name, args, finish_reason)
         missing = [key for key in _REQUIRED[name] if key not in args]
         if missing:
             raise self._format_error(
@@ -183,6 +182,40 @@ class GrimToolcallModel(LitellmModel):
             "tool_call_id": tool_call.id,
             "command": render_command(name, args),
         }
+
+    def _lower_script_call(
+        self, script: str, args: dict[str, Any], finish_reason: Any
+    ) -> tuple[str, dict[str, Any]]:
+        """Lower a script-named tool call to run(name=script) — the library
+        IS the tool namespace, so an unknown tool name falls through to it.
+        run's own keys (`args`/`stdin`/`timeout`/`head`/`tail`) pass through;
+        every other scalar value becomes one argv entry in call order, so an
+        invented schema like read_file(path="f.py", start=2) lowers to
+        run(name="read_file", args=["f.py", "2"]). A non-scalar value means
+        the argv shape cannot be guessed — precise FormatError instead."""
+        assert script not in _TOOL_NAMES, "known tools are never lowered"
+        lowered: dict[str, Any] = {"name": script}
+        argv = [str(v) for v in args["args"]] if isinstance(args.get("args"), list) else []
+        for key, value in args.items():
+            if key == "args":
+                continue
+            if key in ("stdin", "timeout", "head", "tail"):
+                lowered[key] = value
+            elif isinstance(value, bool):  # before int/float: bool is an int subclass
+                argv.append("true" if value else "false")
+            elif isinstance(value, (str, int, float)):
+                argv.append(str(value))
+            else:
+                raise self._format_error(
+                    f"Unknown tool {script!r}: argument {key!r} is not a scalar, so the call "
+                    f"cannot be lowered to a script run. Available tools: {sorted(_TOOL_NAMES)}; "
+                    f"to run the library script, call run(name={script!r}, args=[...]).",
+                    finish_reason,
+                )
+        if argv:
+            lowered["args"] = argv
+        assert lowered["name"] == script, "lowering never renames the script"
+        return "run", lowered
 
     def _format_error(self, error: str, finish_reason: Any) -> FormatError:
         content = Template(self.config.format_error_template, undefined=StrictUndefined).render(

@@ -157,19 +157,16 @@ def test_templates_render_enabled_languages() -> None:
         assert "jq" not in fallback, name
 
 
-def test_seed_list_reads_as_run_calls_not_bare_tool_names() -> None:
-    # Regression: the seed list used to render as bare `name    desc` lines
-    # (indistinguishable from a tool manifest) and told the model to "read it
-    # with read_file" as if read_file were a callable verb. Both were the
-    # direct, evidenced cause of 82.6% of all observed FormatErrors (a model
-    # calling e.g. {"tool": "read_file", ...} — not in GRIM_TOOLS) across a
-    # 416-run trajectory scan. The template must instead show every seed as
-    # a run() call, name the closed tool set explicitly, and give one
-    # worked example — never point at a bare script name as if it were one.
+def test_seed_list_reads_as_run_calls_and_documents_fallthrough() -> None:
+    # The seed list must render each seed as a run() invocation with one
+    # worked example (run() stays the canonical form), and the template must
+    # document library fallthrough — since a5dc20d a bare script-name tool
+    # call is a supported alias for run(name=...), not a FormatError, so the
+    # prompt teaching "not callable directly" would contradict the adapter.
     template = yaml.safe_load(GRIMOIRE_YAML.read_text())["agent"]["system_template"]
-    for seed in ("shell", "read_file", "write_file", "list_dir", "run_bg", "list_bg", "stop_bg"):
+    for seed in ("shell", "read_file", "write_file", "edit_file", "list_dir", "run_bg", "stop_bg"):
         assert f"run {seed}" in template, f"{seed} must be shown invoked via run"
-    assert "not tools" in template
+    assert "falls through to run" in template
     assert 'run(name="read_file"' in template
 
 

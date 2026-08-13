@@ -129,9 +129,13 @@ D6 revised → native tool-calling).
   extend that lineage; the flag is stripped before dispatch (`_take_flag`).
 
 ## Invariants
-- The model may only call the tools in `GRIM_TOOLS`; `GrimToolcallModel`
-  rejects anything else (unknown tool, missing/invalid args) with a
-  `FormatError` — an action never falls through to unvalidated execution.
+- Known tools validate against their `GRIM_TOOLS` schemas. An unknown
+  tool NAME is library fallthrough: `_lower_script_call` rewrites it to
+  `run(name=<tool>)` (run's own keys pass through; other scalar values
+  become argv in call order) and the result is validated exactly like an
+  explicit run call. Malformed input (non-JSON args, non-scalar lowering
+  values, missing/invalid args on known tools) still raises `FormatError`
+  — an action never reaches execution unvalidated.
 - Task completion is *only* the `submit` tool call, which raises
   `Submitted` with the model's `result`. There is no output-sentinel scan
   — a script may freely print any text, including old sentinels.
