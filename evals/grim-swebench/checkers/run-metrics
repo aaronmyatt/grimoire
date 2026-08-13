@@ -26,8 +26,10 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import sys
+import tempfile
 
 NOTES_MAX_CHARS = 300
 FORMAT_ERROR_TYPE = "FormatError"  # adapter/toolcall_model.py extra.interrupt_type
@@ -154,17 +156,46 @@ def db_metrics(db_path: str, session_id: str) -> dict[str, float | int] | None:
     assert db_path, "caller skips empty db paths (baseline arm)"
     assert session_id, "caller skips runs without a session id"
     try:
-        # mode=ro so a grade can never mutate an experiment library.
-        # Ref: https://docs.python.org/3/library/sqlite3.html#sqlite3.connect
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn, cleanup = _connect_readonly(db_path)
         try:
             metrics = _counters(conn, session_id)
             metrics.update(_lean(conn, session_id))
         finally:
             conn.close()
-    except sqlite3.Error:
+            cleanup()
+    except (sqlite3.Error, OSError):
         return None
     return metrics
+
+
+def _connect_readonly(db_path: str) -> "tuple[sqlite3.Connection, object]":
+    """(connection, cleanup) opened without ever writing the experiment
+    library. mode=ro first; a checkpointed WAL database with no live -shm
+    cannot be opened read-only (SQLite would need to create the shm), so
+    fall back to copying db + sidecars to a private temp dir and opening
+    the COPY read-write — mutating a throwaway copy keeps the invariant.
+    Ref: https://www.sqlite.org/wal.html#read_only_databases"""
+    assert db_path, "caller validates the path"
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        # Probe read: opening is lazy — a checkpointed WAL db "connects" fine
+        # in ro and only fails (shm creation) at the FIRST read, so the
+        # fallback must key off a real query, not the connect call.
+        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+        return conn, (lambda: None)
+    except sqlite3.Error:
+        if conn is not None:
+            conn.close()
+        tmp_dir = tempfile.mkdtemp(prefix="run-metrics-db-")
+        copy_path = pathlib.Path(tmp_dir) / "db.sqlite"
+        shutil.copy(db_path, copy_path)
+        for suffix in ("-wal", "-shm"):
+            sidecar = pathlib.Path(db_path + suffix)
+            if sidecar.is_file():
+                shutil.copy(sidecar, str(copy_path) + suffix)
+        assert copy_path.is_file(), "fallback copy must exist before opening"
+        return sqlite3.connect(copy_path), (lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
 
 
 def emit(metrics: dict[str, float | int | bool], notes: str) -> None:
