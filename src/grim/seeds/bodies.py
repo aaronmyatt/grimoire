@@ -16,11 +16,28 @@ class SeedSpec:
     body: str
 
 
-_SHELL = '''"""shell — escape hatch: run one shell command. Usage: shell COMMAND..."""
+_SHELL = '''"""shell — escape hatch: run one shell command. Three call shapes:
+one arg = a full command line (pipes/redirects work); several args = argv
+words rejoined with quoting preserved (a word with spaces stays one word;
+shell operators like | are literal in this shape); no args = the command
+is read from stdin — the quoting-proof route for multi-line commands.
+Usage: shell COMMAND..."""
+import shlex
 import subprocess
 import sys
 
-command = " ".join(sys.argv[1:])
+if len(sys.argv) == 2:
+    command = sys.argv[1]
+elif len(sys.argv) > 2:
+    # shlex.join quotes each word so the shell re-tokenizes to exactly this
+    # argv — never the old naive " ".join that dissolved word boundaries.
+    # Ref: https://docs.python.org/3/library/shlex.html#shlex.join
+    command = shlex.join(sys.argv[1:])
+else:
+    command = sys.stdin.read()
+if not command.strip():
+    print("usage: shell COMMAND...  (or pipe the command via stdin)", file=sys.stderr)
+    sys.exit(2)
 result = subprocess.run(command, shell=True)
 sys.exit(result.returncode)
 '''
@@ -30,6 +47,9 @@ Usage: read_file PATH [START] [END] (1-indexed, inclusive; END omitted = EOF)
 """
 import sys
 
+if not 2 <= len(sys.argv) <= 4:
+    print("usage: read_file PATH [START] [END]", file=sys.stderr)
+    sys.exit(2)
 path = sys.argv[1]
 start = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 with open(path, encoding="utf-8") as f:
@@ -42,6 +62,9 @@ for i, line in enumerate(lines[start - 1 : end], start=start):
 _WRITE_FILE = '''"""write_file — write stdin to a file path. Usage: write_file PATH"""
 import sys
 
+if len(sys.argv) != 2:
+    print("usage: write_file PATH  (stdin: content)", file=sys.stderr)
+    sys.exit(2)
 path = sys.argv[1]
 content = sys.stdin.read()
 with open(path, "w", encoding="utf-8") as f:
@@ -57,6 +80,9 @@ import sys
 
 DELIMITER = "---GRIM-EDIT---"
 
+if len(sys.argv) != 2:
+    print(f"usage: edit_file PATH  (stdin: OLD, {DELIMITER}, NEW)", file=sys.stderr)
+    sys.exit(2)
 path = sys.argv[1]
 parts = sys.stdin.read().split("\\n" + DELIMITER + "\\n")
 if len(parts) != 2:
@@ -86,6 +112,9 @@ back to `patch -p1` if that fails or git isn't available."""
 import subprocess
 import sys
 
+if len(sys.argv) != 1:
+    print("usage: apply_patch  (stdin: unified diff, no arguments)", file=sys.stderr)
+    sys.exit(2)
 patch_text = sys.stdin.read()
 
 result = subprocess.run(
@@ -110,6 +139,9 @@ _GREP_TREE = '''"""grep_tree — ripgrep wrapper with sane defaults (line number
 import subprocess
 import sys
 
+if not 2 <= len(sys.argv) <= 3:
+    print("usage: grep_tree PATTERN [PATH]", file=sys.stderr)
+    sys.exit(2)
 pattern = sys.argv[1]
 path = sys.argv[2] if len(sys.argv) > 2 else "."
 result = subprocess.run(["rg", "--line-number", "--no-heading", pattern, path])
@@ -121,6 +153,9 @@ Usage: list_dir [PATH]"""
 import sys
 from pathlib import Path
 
+if len(sys.argv) > 2:
+    print("usage: list_dir [PATH]", file=sys.stderr)
+    sys.exit(2)
 path = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
 for entry in sorted(path.iterdir(), key=lambda p: p.name):
     kind = "dir" if entry.is_dir() else "file"
@@ -134,8 +169,12 @@ this runs as an isolated subprocess with no access to grim's
 in-process connection, same as every script (D8)."""
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
+if len(sys.argv) != 1:
+    print("usage: stats  (no arguments)", file=sys.stderr)
+    sys.exit(2)
 db_path = os.environ.get("GRIM_DB") or str(Path.home() / ".grimoire" / "grimoire.db")
 conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
@@ -179,8 +218,12 @@ _GARDENER = '''"""gardener — dup/stale sweep. Reports candidates for archiving
 archives anything itself (a human reviews and acts separately)."""
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
+if len(sys.argv) != 1:
+    print("usage: gardener  (no arguments)", file=sys.stderr)
+    sys.exit(2)
 db_path = os.environ.get("GRIM_DB") or str(Path.home() / ".grimoire" / "grimoire.db")
 conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
@@ -219,6 +262,9 @@ import sqlite3
 import sys
 from pathlib import Path
 
+if len(sys.argv) > 2:
+    print("usage: export_library [DIR]", file=sys.stderr)
+    sys.exit(2)
 out_dir = Path(sys.argv[1] if len(sys.argv) > 1 else "grimoire-export")
 db_path = os.environ.get("GRIM_DB") or str(Path.home() / ".grimoire" / "grimoire.db")
 conn = sqlite3.connect(db_path)
@@ -282,7 +328,10 @@ if len(sys.argv) < 3:
     sys.exit(2)
 
 name = sys.argv[1]
-command = " ".join(sys.argv[2:])
+# One command arg = a full command line, run verbatim; several = argv words
+# rejoined with quoting preserved (same shape rules as the shell seed).
+# Ref: https://docs.python.org/3/library/shlex.html#shlex.join
+command = sys.argv[2] if len(sys.argv) == 3 else shlex.join(sys.argv[2:])
 run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
 run_dir.mkdir(parents=True, exist_ok=True)
 log_path = run_dir / f"{name}.log"
@@ -311,6 +360,9 @@ import os
 import sys
 from pathlib import Path
 
+if len(sys.argv) != 1:
+    print("usage: list_bg  (no arguments)", file=sys.stderr)
+    sys.exit(2)
 run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
 pid_files = sorted(run_dir.glob("*.pid")) if run_dir.is_dir() else []
 if not pid_files:
@@ -342,7 +394,7 @@ import signal
 import sys
 from pathlib import Path
 
-if len(sys.argv) < 2:
+if len(sys.argv) != 2:
     print("usage: stop_bg NAME", file=sys.stderr)
     sys.exit(2)
 

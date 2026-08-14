@@ -6,6 +6,7 @@ dispatched exactly the way `grim run` would (exec.dispatch), not just
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,8 @@ from grim.exec.dispatch import ExecutionRequest, ExecutionResult, ScriptVersion,
 from grim.seeds.bodies import SEEDS
 
 _TIMEOUT_S = 10.0
+# The strict-argv convention: a wrong invocation exits 2 with a usage line.
+_USAGE_EXIT_CODE = 2
 
 
 def _seed_body(name: str) -> str:
@@ -39,6 +42,58 @@ def test_shell_propagates_exit_code() -> None:
     expected_exit_code = 3
     result = _run("shell", argv=[f"exit {expected_exit_code}"])
     assert result.exit_code == expected_exit_code
+
+
+def test_shell_multi_element_argv_preserves_word_boundaries(tmp_path: Path) -> None:
+    """Regression: the old naive " ".join dissolved a spaced path into two
+    words, so this exact call used to fail with 'No such file'."""
+    target = tmp_path / "has space.txt"
+    target.write_text("payload")
+    result = _run("shell", argv=["cat", str(target)])
+    assert result.exit_code == 0
+    assert result.stdout == "payload"
+
+
+def test_shell_runs_stdin_body_when_no_argv() -> None:
+    result = _run("shell", stdin="echo one\necho two\n")
+    assert result.exit_code == 0
+    assert result.stdout == "one\ntwo\n"
+
+
+def test_shell_empty_invocation_exits_with_usage() -> None:
+    result = _run("shell")
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "usage:" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("name", "argv"),
+    [
+        ("read_file", ["a.txt", "1", "2", "junk"]),
+        ("read_file", []),
+        ("write_file", ["a.txt", "junk"]),
+        ("write_file", []),
+        ("edit_file", ["a.txt", "junk"]),
+        ("edit_file", []),
+        ("apply_patch", ["junk"]),
+        ("grep_tree", ["pattern", ".", "junk"]),
+        ("grep_tree", []),
+        ("list_dir", [".", "junk"]),
+        ("stats", ["junk"]),
+        ("gardener", ["junk"]),
+        ("export_library", ["dir", "junk"]),
+        ("list_bg", ["junk"]),
+        ("stop_bg", ["job", "junk"]),
+        ("stop_bg", []),
+    ],
+)
+def test_wrong_arity_is_rejected_with_usage(name: str, argv: list[str]) -> None:
+    """The strict-argv convention: every fixed-arity seed rejects missing or
+    unexpected extra argv loudly (exit 2 + usage) instead of silently
+    ignoring it — a wrong invocation must never look like a success."""
+    result = _run(name, argv=argv)
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "usage:" in result.stderr
 
 
 def test_read_file_prints_whole_file(tmp_path: Path) -> None:
@@ -314,6 +369,26 @@ def test_run_bg_then_list_then_stop_lifecycle(
     assert stopped.exit_code == 0
     assert "job1" in stopped.stdout
     assert not (run_dir / "job1.pid").is_file()  # pid file removed on stop
+
+
+def test_run_bg_multi_element_argv_preserves_word_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: run_bg had the same naive " ".join as the shell seed, so a
+    spaced path split into two words. The touch target appearing on disk
+    proves the command line survived re-tokenization intact."""
+    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
+    target = tmp_path / "has space.txt"
+
+    started = _run("run_bg", argv=["job2", "touch", str(target)])
+    assert started.exit_code == 0
+
+    # The job is detached, so its side effect lands asynchronously; poll with
+    # a hard deadline (bounded loop, not a fixed sleep) for the file to appear.
+    deadline = time.monotonic() + _TIMEOUT_S
+    while not target.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert target.exists(), "backgrounded touch never created its spaced-path target"
 
 
 def test_stop_bg_reports_unknown_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
