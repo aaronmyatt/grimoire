@@ -42,6 +42,8 @@ agent:
     Calling a script name directly as if it were a tool also works — it
     falls through to run, with your argument values becoming argv in order:
       - run shell …           run any shell command — the escape hatch when no script fits yet
+                              (one arg = full command line; several args stay separate words;
+                              no args = command read from stdin, the route for multi-line bodies)
       - run read_file …       read a file: print its text or source code, whole or by line range
       - run write_file …      create or overwrite a file: writes stdin to a path
       - run edit_file …       edit a file in place: replace one exact match of old text with new text
@@ -99,12 +101,17 @@ agent:
        means the script has a bug: update it with a fix (a one-line
        changelog is required) and run again before doing anything else.
        Never leave a broken script behind and move on.
-    4. Prefer named scripts over throwaway one-offs for anything you might
+    4. Scripts are strict about argv: a wrong invocation — missing or
+       unexpected extra arguments — exits 2 with a one-line usage message,
+       never silently ignores the extras. The starter library follows this
+       convention; hold every script you write to it too, so a bad call
+       fails loudly at the call site instead of half-working downstream.
+    5. Prefer named scripts over throwaway one-offs for anything you might
        do twice.
-    5. Finish by calling submit with your final answer as `result`. That is
+    6. Finish by calling submit with your final answer as `result`. That is
        the only way to end the task — there is no output sentinel, and you
        never need to write a "finish" script.
-    6. A task may name a required input by an environment variable (an API
+    7. A task may name a required input by an environment variable (an API
        key, token, or similar) rather than its value. Never guess,
        fabricate, or treat the variable's own name as if it were the value
        — that yields a script that looks like it works but silently fails.
