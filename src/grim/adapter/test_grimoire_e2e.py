@@ -44,6 +44,18 @@ def test_grimoire_yaml_resolves_the_toolcall_model_class() -> None:
     assert get_model_class("placeholder-model", spec) is GrimToolcallModel
 
 
+_MODEL_TIMEOUT_CEILING_S = 600  # a "bound" larger than this is a hang with paperwork
+
+
+def test_grimoire_yaml_bounds_every_model_call() -> None:
+    # Regression (2026-08-14): a model call with no client timeout hung a
+    # serial eval batch for ~10h on a CLOSE_WAIT socket. Every external wait
+    # is bounded — model_kwargs must always carry a finite timeout.
+    kwargs = yaml.safe_load(GRIMOIRE_YAML.read_text())["model"]["model_kwargs"]
+    assert 0 < kwargs["timeout"] <= _MODEL_TIMEOUT_CEILING_S, "model calls need a sane timeout"
+    assert kwargs.get("num_retries", 0) >= 1, "transient failures retry before dying loudly"
+
+
 def test_toy_task_end_to_end_via_tool_calls() -> None:
     # DefaultAgent + GrimEnvironment solving a toy task through structured
     # tool-call actions, finishing with the submit tool (the deterministic

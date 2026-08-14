@@ -188,3 +188,12 @@ model:
     </output>
   model_kwargs:
     drop_params: true
+    # No unbounded external wait, ever (same negative-space rule as the
+    # dispatch stdin/timeout policy): a dropped connection once hung a
+    # serial eval batch for 10 hours in a CLOSE_WAIT read. 180s is 10-20x
+    # the slowest observed model call; litellm retries transient failures
+    # (including timeouts) before the error surfaces and kills the run
+    # loudly — an infra-failed run, never a wedged batch.
+    # Ref: https://docs.litellm.ai/docs/completion/input
+    timeout: 180
+    num_retries: 2
