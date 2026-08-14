@@ -147,9 +147,33 @@ fi
 
 # --- the answer: the workspace diff ------------------------------------------
 # `add -A` stages new files too, so the diff carries them; pyc/pycache junk a
-# script run may have left behind is excluded via pathspec magic.
+# script run may have left behind is excluded via pathspec magic. Venv dirs are
+# excluded too: an agent-created .venv drags ~200k lines of binaries/symlinks
+# into the patch, which the SWE-bench harness fallback chain (git apply →
+# git apply --reject → patch --batch --fuzz=5) mis-handles — GNU patch sees the
+# half-applied hunks as "previously applied", assumes -R, and REVERTS the real
+# fix while exiting 0 (observed 2026-08-14, runs 005-010).
 # Ref: https://git-scm.com/docs/gitglossary#def_pathspec  (exclude + glob magic)
+# Ref: https://www.gnu.org/software/diffutils/manual/html_node/Reversed-Patches.html
 git -C "$WORKSPACE" add -A >&2
-git -C "$WORKSPACE" diff --cached --no-color -- . \
-  ':(exclude,glob)**/__pycache__/**' ':(exclude,glob)**/*.pyc'
+patch=$(git -C "$WORKSPACE" diff --cached --no-color -- . \
+  ':(exclude,glob)**/__pycache__/**' ':(exclude,glob)**/*.pyc' \
+  ':(exclude,glob)**/.venv/**' ':(exclude,glob)**/venv/**' \
+  ':(exclude,glob)**/.tox/**' ':(exclude,glob)**/node_modules/**' \
+  ':(exclude,glob)**/*.egg-info/**')
+# Binary blobs cannot survive a text diff — `git apply` rejects the whole patch
+# and the fallback chain above corrupts it. Fail loudly here instead: an
+# ungradable answer must read as infra noise, never as a model miss.
+# Ref: https://git-scm.com/docs/git-diff (see "Binary files ... differ" output)
+if printf '%s\n' "$patch" | grep -q '^Binary files .* differ$'; then
+  echo "run-grim: workspace diff contains binary files — refusing to submit an ungradable patch" >&2
+  printf '%s\n' "$patch" | grep -B2 '^Binary files .* differ$' | head -20 >&2
+  exit 1
+fi
+# Preserve the empty-diff contract: a "changed nothing" answer must stay
+# byte-empty for the Grader, so only re-add the newline substitution stripped
+# from a non-empty patch. Ref: https://www.gnu.org/software/bash/manual/html_node/Command-Substitution.html
+if [ -n "$patch" ]; then
+  printf '%s\n' "$patch"
+fi
 exit 0

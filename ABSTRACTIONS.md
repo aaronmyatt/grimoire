@@ -52,3 +52,10 @@ mechanically.
   deliberate pair as the earlier GRIM_LANGUAGES entry, same reason
   (slices never import each other), now with a matching never-empty
   fail-safe in both. Any future unification covers all four parses.
+- **Sanitized patch capture, two copies.** `evals/grim-swebench/run-grim`
+  and `run-mini` now share a guarded diff-emission block: venv/tooling
+  pathspec excludes, a binary-blob refusal (exit 1 = infra, not a model
+  miss), and the empty-diff-stays-empty rule. Duplicated deliberately —
+  the arms must not drift, and both belong to the run-grim preamble
+  family above; any future `evals/lib/` prelude extraction should absorb
+  this block too.
