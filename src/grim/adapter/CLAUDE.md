@@ -24,7 +24,13 @@ D6 revised → native tool-calling).
   `format_observation_messages` renders results as `role: "tool"` messages.
 - `environment.py` — `GrimEnvironment`, subclassing mini-swe-agent's
   `LocalEnvironment` and overriding `execute(action, cwd="", *,
-  timeout=None)`. No shell in the control plane: `execute` reads the
+  timeout=None)`. The launch directory is captured once at construction
+  (`self.cwd`, overridable via `environment.cwd` config) and every action
+  executes with it pinned: `_session_env` exports it as `$GRIM_CWD` around
+  each verb call, `verbs/run.py` passes it to the dispatched subprocess
+  and records it on the execution row — so a drifted process cwd or a
+  script's own `cd` never relocates later actions. No shell in the
+  control plane: `execute` reads the
   structured `action["tool"]`/`action["args"]`, maps them via
   `tool_call_to_argv`, and runs `cli.main(argv)` **in-process** through the
   private `_invoke` helper (redirected stdio; traps argparse's
@@ -52,7 +58,10 @@ D6 revised → native tool-calling).
   must never surface another repo's scripts.
   Mitigates build plan §8's "optional find misses/duplicates existing
   scripts" risk by surfacing a high-confidence hit before the agent
-  decides whether to search at all. `run()` also stashes
+  decides whether to search at all. `run()` also stashes `env.cwd` as
+  `grim_cwd` — rendered by `system_template`'s `<working_directory>`
+  block, the SAME value `GrimEnvironment` pins every action to, so the
+  declared directory can never disagree with the enforced one. It also stashes
   `tools.lang_enum()` as `grim_languages`, rendered by BOTH templates so
   every enabled language is named in prose (static python-or-bash fallback
   when undefined — the language-sweep confound fix), and

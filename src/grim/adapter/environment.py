@@ -45,11 +45,19 @@ class GrimEnvironmentConfig(BaseModel):
     generates a fresh uuid4 at startup (schema comment: session.id is
     "uuid or 'human-adhoc'")."""
 
+    cwd: str = ""
+    """The working directory every action is pinned to. Empty captures the
+    launch directory at startup — the same anchor Pi and Claude Code use —
+    so a drifted process cwd, or a `cd` inside one script, can never
+    relocate later actions. Exported as $GRIM_CWD around each verb call
+    (verbs/run.py consumes it and records it on the execution row)."""
+
 
 class GrimEnvironment(LocalEnvironment):
     def __init__(self, *, config_class: type = GrimEnvironmentConfig, **kwargs: Any) -> None:
         self.config = config_class(**kwargs)
         self.session_id = self.config.session_id or str(uuid.uuid4())
+        self.cwd = self.config.cwd or os.getcwd()
         conn = db.connect()  # no `init` verb reaches the agent (D12) — ensure schema exists
         try:
             db.migrate(conn)
@@ -68,7 +76,9 @@ class GrimEnvironment(LocalEnvironment):
         tool = action["tool"]
         args = action.get("args", {})
         with trace.span("tool." + tool, args=_tool_args_snippet(args)):
-            return self._execute(tool, args, cwd, timeout)
+            # mini rarely passes a cwd; the pin captured at startup is the
+            # default so every action shares one stable working directory.
+            return self._execute(tool, args, cwd or self.cwd, timeout)
         raise AssertionError("unreachable: _execute always returns or raises")
 
     def _execute(
@@ -87,23 +97,31 @@ class GrimEnvironment(LocalEnvironment):
                 }
             )
         argv, stdin = tool_call_to_argv(tool, args)
-        text, exit_code = _invoke(argv, stdin or "", self.session_id)
+        text, exit_code = _invoke(argv, stdin or "", self.session_id, cwd)
         output = {"output": text, "returncode": exit_code, "exception_info": ""}
         assert "output" in output, "execute() must always return an 'output' key"
         return output
 
 
 @contextlib.contextmanager
-def _session_env(session_id: str) -> Any:
-    previous = os.environ.get("GRIM_SESSION")
-    os.environ["GRIM_SESSION"] = session_id
+def _session_env(session_id: str, cwd: str) -> Any:
+    """Export the session id and the pinned working directory for the span
+    of one in-process verb call, then restore. GRIM_SESSION stamps the rows
+    the call writes; GRIM_CWD is consumed by verbs/run.py so the dispatched
+    script — and, via inherited env, any nested `grim run` it shells out to
+    — starts from the pin, never from a drifted process cwd."""
+    assert session_id, "a verb call always carries a session id"
+    exported = {"GRIM_SESSION": session_id, "GRIM_CWD": cwd}
+    previous = {name: os.environ.get(name) for name in exported}
+    os.environ.update(exported)
     try:
         yield
     finally:
-        if previous is None:
-            os.environ.pop("GRIM_SESSION", None)
-        else:
-            os.environ["GRIM_SESSION"] = previous
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 # Several sessions (and the human CLI) share one SQLite library, and WAL
@@ -117,7 +135,7 @@ _BUSY_RETRIES = 3
 _BUSY_BACKOFF_S = (0.5, 1.0, 2.0)
 
 
-def _invoke(argv: list[str], stdin: str, session_id: str) -> tuple[str, int]:
+def _invoke(argv: list[str], stdin: str, session_id: str, cwd: str = "") -> tuple[str, int]:
     """Calls cli.main(argv) in-process with captured stdio — the only
     path from the agent into verbs/*, matching D7's "no shell in the
     control plane" (adapter/CLAUDE.md). Requires no changes to cli.py.
@@ -146,7 +164,7 @@ def _invoke(argv: list[str], stdin: str, session_id: str) -> tuple[str, int]:
         while True:
             try:
                 with (
-                    _session_env(session_id),
+                    _session_env(session_id, cwd),
                     contextlib.redirect_stdout(stdout_buf),
                     contextlib.redirect_stderr(stderr_buf),
                 ):

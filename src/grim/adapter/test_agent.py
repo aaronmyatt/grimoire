@@ -423,6 +423,33 @@ def test_run_new_session_clears_history_and_rotates_session_id(
     assert agent.messages[1]["content"] == "second task"  # history cleared, not appended
 
 
+def test_run_declares_the_environments_pinned_cwd_to_the_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """{{ grim_cwd }} renders the SAME value environment.py pins actions to
+    (env.cwd) — declared and enforced from one source, so the prompt can
+    never disagree with where scripts actually run."""
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    db.migrate(db.connect())
+    env = GrimEnvironment(session_id="cwd-declared")
+    agent = GrimAgent(
+        DeterministicModel(outputs=[make_output("done", [_act("submit", {"result": "ok"})])]),  # type: ignore[no-untyped-call]
+        env,
+        system_template="wd: {{ grim_cwd }}",
+        instance_template="{{task}}",
+        mode="yolo",
+        cost_limit=0,
+    )
+    monkeypatch.setattr(
+        InteractiveAgent, "_prompt_and_handle_slash_commands", _scripted_prompt([""])
+    )
+
+    agent.run("task")
+
+    assert agent.extra_template_vars["grim_cwd"] == env.cwd
+    assert agent.messages[0]["content"] == f"wd: {env.cwd}"
+
+
 # --- add_messages rich rendering (display.py) --------------------------------
 
 

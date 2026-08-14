@@ -38,7 +38,7 @@ agent:
     as documentation.
 
     A starter library already exists. The canonical way to reach a script
-    is run(name="..."), e.g. run(name="read_file", args=["path/to/file.py"]).
+    is run(name="..."), e.g. run(name="read_file", args=["/abs/path/to/file.py"]).
     Calling a script name directly as if it were a tool also works — it
     falls through to run, with your argument values becoming argv in order:
       - run shell …           run any shell command — the escape hatch when no script fits yet
@@ -124,6 +124,16 @@ agent:
     <system_information>
     {{system}} {{release}} {{version}} {{machine}}
     </system_information>
+    {%- if grim_cwd is defined and grim_cwd %}
+
+    <working_directory>
+    {{ grim_cwd }}
+    </working_directory>
+    Every script runs with this as its working directory: relative paths in
+    script bodies and arguments resolve against it, and each run starts back
+    here — a `cd` inside one script never carries into the next. Use
+    absolute paths for anything outside it.
+    {%- endif %}
     {%- if grim_user_prompt is defined and grim_user_prompt %}
 
     <operator_instructions>

@@ -5,6 +5,7 @@ structured {tool, args} action dicts against a real tmp GRIM_DB.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,26 @@ def test_two_runs_share_session_and_increment_seq() -> None:
     first_id = first["output"].split("exec #")[1].split(" ")[0]
     second_id = second["output"].split("exec #")[1].split(" ")[0]
     assert first_id != second_id
+
+
+def test_run_actions_execute_from_the_pinned_launch_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wrong-directory fix: the launch cwd is captured at construction
+    and every action executes from it, even after the process cwd drifts.
+    The export is scoped to the call — GRIM_CWD never leaks between turns."""
+    launch = tmp_path / "launch"
+    launch.mkdir()
+    monkeypatch.chdir(launch)
+    env = GrimEnvironment(session_id="s1")
+    monkeypatch.chdir(tmp_path)  # the process cwd drifts after startup...
+
+    _write(env, "where", "python", "import os; print(os.getcwd())")
+    run = env.execute(_tool("run", {"name": "where"}))
+
+    assert run["returncode"] == 0
+    assert str(launch.resolve()) in run["output"]  # ...but scripts still run from launch
+    assert "GRIM_CWD" not in os.environ
 
 
 def test_submit_tool_raises_submitted_with_the_result() -> None:

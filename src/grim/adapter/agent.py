@@ -269,6 +269,11 @@ class GrimAgent(InteractiveAgent):
             with trace.span("agent.turn", turn=turn):
                 self.extra_template_vars["grim_strong_matches"] = strong_matches(task)
                 self.extra_template_vars["grim_user_prompt"] = user_prompt_extension()
+                # Declared and enforced from the same value: env.cwd is the
+                # pin every action executes from (environment.py exports it
+                # as $GRIM_CWD), so the rendered {{ grim_cwd }} can never
+                # disagree with where scripts actually run.
+                self.extra_template_vars["grim_cwd"] = env.cwd
                 # The enabled language set, from the SAME function that builds
                 # the write/list schema enums — prompt and schema cannot drift.
                 # Without this the prose undersells granted languages (the
