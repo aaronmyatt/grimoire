@@ -244,6 +244,22 @@ def build_mini_args(user_argv: list[str], spec: LaunchSpec) -> list[str]:
     return args
 
 
+def model_name_for_display(mini_args: list[str]) -> str:
+    """The model name this run will use, for the startup announcement.
+    Mirrors mini's own resolution order (minisweagent.models.get_model_name —
+    https://github.com/SWE-agent/mini-swe-agent): the last -m/--model in the
+    built argv (an explicit flag or the injected $GRIM_MODEL default) wins,
+    then $MSWEA_MODEL_NAME, then whatever mini's config layers supply."""
+    assert isinstance(mini_args, list), "mini argv must be a list"
+    name: str | None = None
+    for i, token in enumerate(mini_args):  # bounded by len(mini_args)
+        if token in ("-m", "--model") and i + 1 < len(mini_args):
+            name = mini_args[i + 1]  # last occurrence wins, matching click's repeat rule
+    resolved = name or os.environ.get("MSWEA_MODEL_NAME") or "(from mini config)"
+    assert resolved, "display name must never be empty"
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # Programmatic print mode (-p / --output-format). Gives a clean, pipeable
 # stdout — only the agent's final answer — by sending mini's interactive UI to
@@ -471,6 +487,10 @@ def _launch(app: Any, raw: list[str], print_opts: PrintOptions, continue_on: boo
         session_id=session_id,
     )
     mini_args = build_mini_args(raw, spec)
+    # Announce the model beside the banner — on stderr, and withheld in print
+    # mode, for the same stdout-stays-clean reason as _GRIM_BANNER in main().
+    if not print_opts.enabled:
+        print(f"grim-agent: model: {model_name_for_display(mini_args)}", file=sys.stderr)
     if print_opts.enabled:
         code = run_print(app, mini_args, spec.trajectory, print_opts.output_format)
         _remember_trajectory(spec.trajectory)

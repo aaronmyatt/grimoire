@@ -77,6 +77,38 @@ def test_build_mini_args_explicit_model_beats_the_default() -> None:
     assert args.count("-m") == 1 and "prov/default" not in args
 
 
+def test_model_name_for_display_takes_the_last_argv_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSWEA_MODEL_NAME", "env/model")
+    # the argv flag beats the env, and the last occurrence wins (click's rule).
+    assert launcher.model_name_for_display(["-t", "q", "-m", "a", "--model", "b"]) == "b"
+
+
+def test_model_name_for_display_falls_back_to_env_then_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MSWEA_MODEL_NAME", "env/model")
+    assert launcher.model_name_for_display(["-t", "q"]) == "env/model"
+    monkeypatch.delenv("MSWEA_MODEL_NAME")
+    assert launcher.model_name_for_display([]) == "(from mini config)"
+
+
+def test_main_announces_the_model_at_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    monkeypatch.setenv("GRIM_MODEL", "env/model")
+    monkeypatch.setattr(sys, "stdin", io.StringIO())  # deterministic unattended path
+    import minisweagent.run.mini as minirun
+
+    monkeypatch.setattr(minirun, "app", lambda args, standalone_mode: None)
+
+    assert launcher.main(["a task"]) == 0
+    err = capsys.readouterr().err
+    assert "grim-agent: model: env/model" in err  # announced on stderr, not stdout
+
+
 def test_main_reads_grim_model_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
     monkeypatch.setenv("GRIM_MODEL", "env/model")
