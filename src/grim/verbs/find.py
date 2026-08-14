@@ -13,8 +13,14 @@ DEFAULT_FIND_LIMIT = 5
 
 
 def find_scripts(
-    conn: sqlite3.Connection, query: str, limit: int = DEFAULT_FIND_LIMIT
+    conn: sqlite3.Connection, query: str, limit: int = DEFAULT_FIND_LIMIT, scope: str | None = None
 ) -> list[sqlite3.Row]:
+    """FTS hits tiered by provenance before bm25: scripts written in the
+    current repo (`scope`) first, deliberately-global scripts second,
+    other-repo/legacy scopes last — cross-repo noise never outranks the
+    current repo's own library. scope=None (or 'global' when cwd is not a
+    repo) leaves only the global/other tiers."""
+    assert scope is None or _shared.SCOPE_RE.match(scope), "scope must be resolved before find"
     match_query = _shared.fts_match_query(query)
     if not match_query:
         return []
@@ -24,8 +30,10 @@ def find_scripts(
         "COALESCE(h.runs, 0) AS runs, COALESCE(h.success_rate, 0) AS success_rate, h.last_used "
         "FROM script_fts JOIN script s ON s.id = script_fts.rowid "
         "LEFT JOIN script_health h ON h.id = s.id "
-        "WHERE script_fts MATCH ? AND s.archived = 0 ORDER BY rank LIMIT ?",
-        (match_query, limit),
+        "WHERE script_fts MATCH ? AND s.archived = 0 "
+        "ORDER BY CASE WHEN s.scope = ? THEN 0 WHEN s.scope = 'global' THEN 1 ELSE 2 END, "
+        "rank LIMIT ?",
+        (match_query, scope or "", limit),
     ).fetchall()
     assert len(rows) <= limit, "find_scripts must never exceed the requested limit"
     return rows
@@ -34,7 +42,9 @@ def find_scripts(
 def cmd_find(args: argparse.Namespace) -> int:
     conn = _shared.connect()
     try:
-        rows = find_scripts(conn, args.query, args.limit or DEFAULT_FIND_LIMIT)
+        rows = find_scripts(
+            conn, args.query, args.limit or DEFAULT_FIND_LIMIT, scope=_shared.default_scope()
+        )
         for row in rows:
             # last_used is NULL until a script's first run; show "-" so the column
             # stays aligned rather than printing the literal "None".

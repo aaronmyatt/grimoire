@@ -125,8 +125,8 @@ def test_list_scripts_filters_by_language(tmp_path: Path, monkeypatch: pytest.Mo
 def test_list_scripts_filters_by_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     conn = _migrated_conn(tmp_path, monkeypatch)
     _write(conn, "foo_bar", scope="global")
-    _write(conn, "baz_qux", scope="repo:abc123")
-    rows = list_scripts(conn, ListFilters(scope="repo:abc123", language=None, limit=20, offset=0))
+    _write(conn, "baz_qux", scope="abc123abc123")
+    rows = list_scripts(conn, ListFilters(scope="abc123abc123", language=None, limit=20, offset=0))
     assert [row["name"] for row in rows] == ["baz_qux"]
 
 

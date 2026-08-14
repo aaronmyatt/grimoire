@@ -137,10 +137,84 @@ def test_default_scope_outside_git_repo(tmp_path: Path, monkeypatch: pytest.Monk
     assert _shared.default_scope() == "global"
 
 
-def test_default_scope_inside_git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _commit_root(path: Path) -> str:
+    """git init + one empty commit; returns the root-commit hash (identity
+    committer pinned so the hash is env-independent within the test)."""
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "root",
+        ],
+        cwd=path,
+        check=True,
+    )
+    out = subprocess.run(
+        ["git", "rev-list", "--max-parents=0", "HEAD"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.strip()
+
+
+def test_default_scope_is_root_commit_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _commit_root(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert _shared.default_scope() == root[:12]
+
+
+def test_repo_identity_stable_across_worktrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scope half is worktree-invariant (root commit); the tag half is
+    per-checkout (basename) — exactly why the name is only a tag."""
+    repo = tmp_path / "mainrepo"
+    repo.mkdir()
+    root = _commit_root(repo)
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", "-q", str(tmp_path / "wt")], cwd=repo, check=True
+    )
+    monkeypatch.chdir(repo)
+    main_identity = _shared.repo_identity()
+    monkeypatch.chdir(tmp_path / "wt")
+    wt_identity = _shared.repo_identity()
+    assert main_identity is not None and wt_identity is not None
+    assert main_identity[0] == wt_identity[0] == root[:12]
+    assert main_identity[1] == "repo-mainrepo"
+    assert wt_identity[1] == "repo-wt"
+
+
+def test_repo_identity_unborn_head_keeps_scope_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     monkeypatch.chdir(tmp_path)
-    assert _shared.default_scope().startswith("repo:")
+    identity = _shared.repo_identity()
+    assert identity is not None
+    assert identity[0] != "global"
+    assert _shared.SCOPE_RE.match(identity[0])
+
+
+def test_resolve_scope_expands_literal_and_rejects_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _commit_root(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert _shared.resolve_scope("repo") == root[:12]
+    assert _shared.resolve_scope(None) == root[:12]
+    assert _shared.resolve_scope("global") == "global"
+    with pytest.raises(ValueError, match="invalid scope"):
+        _shared.resolve_scope("repo:abc123def456")
 
 
 def test_similar_scripts_finds_matching_description(

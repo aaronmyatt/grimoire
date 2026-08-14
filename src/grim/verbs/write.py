@@ -63,7 +63,7 @@ def write_script(
         raise ValueError(lint_error)
 
     similar = _shared.similar_scripts(conn, f"{request.name} {request.description}")
-    scope = request.scope or _shared.default_scope()
+    scope = _shared.resolve_scope(request.scope)
     _shared.ensure_session(conn, request.session_id)
 
     parent_version_id = None
@@ -96,6 +96,11 @@ def write_script(
         "INSERT INTO script_version (script_id, version, body, body_hash) VALUES (?, 1, ?, ?)",
         (script_id, request.body, _shared.body_hash(request.body)),
     )
+    # Repo-scoped scripts also get a human-readable 'repo-<name>' provenance
+    # tag (the stable identity lives in scope; the mutable name is only a tag,
+    # since worktree basenames differ per checkout). Global writes stay untagged.
+    if scope != "global":
+        _shared.stamp_repo_tag(conn, script_id, scope)
     conn.commit()
 
     assert script_id > 0, "inserted script must get a positive id"

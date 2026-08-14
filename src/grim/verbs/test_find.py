@@ -21,7 +21,7 @@ def _migrated_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.C
     return conn
 
 
-def _write(conn: sqlite3.Connection, name: str, description: str) -> None:
+def _write(conn: sqlite3.Connection, name: str, description: str, scope: str = "global") -> None:
     write_script(
         conn,
         WriteRequest(
@@ -30,7 +30,7 @@ def _write(conn: sqlite3.Connection, name: str, description: str) -> None:
             description=description,
             body="print(1)",
             parent=None,
-            scope="global",
+            scope=scope,
             session_id="human-adhoc",
         ),
     )
@@ -83,6 +83,20 @@ def test_find_scripts_includes_seeded_scripts(
     conn.commit()
     results = find_scripts(conn, "patch a file")
     assert [r["name"] for r in results] == ["apply_patch"]
+
+
+def test_find_scripts_tiers_current_repo_before_global_before_foreign(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Equal FTS relevance: provenance decides — current repo, then global,
+    then other repos / legacy scopes."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    current_scope = "aaaaaaaaaaaa"
+    _write(conn, "helper_foreign", "handles failing tests", scope="bbbbbbbbbbbb")
+    _write(conn, "helper_global", "handles failing tests", scope="global")
+    _write(conn, "helper_current", "handles failing tests", scope=current_scope)
+    results = find_scripts(conn, "failing tests", scope=current_scope)
+    assert [r["name"] for r in results] == ["helper_current", "helper_global", "helper_foreign"]
 
 
 def test_cmd_find_shows_last_used_dash_for_never_run(

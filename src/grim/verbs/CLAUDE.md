@@ -23,6 +23,16 @@ surface.
 - `write`/`update` never skip the slug lint, mandatory-description check,
   or the FTS similarity nudge — those are the anti-duplication mechanism
   the build plan's §4 and §6 depend on.
+- `script.scope` is `'global'` or the enclosing repo's 12-hex root-commit
+  id (`_shared.repo_identity` — worktree/clone-stable, unlike a path
+  hash; `SCOPE_RE` is the shape contract). `write` resolves the tool
+  literal `'repo'`/`None` via `_shared.resolve_scope`, rejects anything
+  else out of shape, and stamps repo-scoped scripts with a human-readable
+  `repo-<toplevel-basename>` provenance tag (curate's tag tables;
+  duplication flagged in `ABSTRACTIONS.md`). `find` tiers results by
+  provenance — current repo, then global, then foreign/legacy scopes —
+  before bm25, so cross-repo noise never outranks the working repo's own
+  scripts.
 - `write_script(..., enforce_language_gate=False)` bypasses only the
   env-derived writable-set check (for `grim init` seeding); the language
   must still exist in the runner catalog, and every other validation runs.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import io
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,47 @@ def test_write_script_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     row = conn.execute("SELECT * FROM script WHERE id = ?", (result.script_id,)).fetchone()
     assert row["name"] == "extract_failing_tests"
     assert row["scope"] == "global"
+
+
+def _script_tags(conn: sqlite3.Connection, script_id: int) -> list[str]:
+    rows = conn.execute(
+        "SELECT t.name FROM tag t JOIN script_tag st ON st.tag_id = t.id WHERE st.script_id = ?",
+        (script_id,),
+    ).fetchall()
+    return [row["name"] for row in rows]
+
+
+def test_write_script_repo_scope_stamps_provenance_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """scope='repo' (the tool-schema literal) resolves to the repo's 12-hex
+    root-commit id, and the human-readable name lands as a repo-<name> tag."""
+    repo = tmp_path / "myrepo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    monkeypatch.chdir(repo)
+    result = write_script(conn, _request(scope="repo"))
+    row = conn.execute("SELECT scope FROM script WHERE id = ?", (result.script_id,)).fetchone()
+    assert row["scope"] != "global"
+    assert _shared.SCOPE_RE.match(row["scope"])
+    assert _script_tags(conn, result.script_id) == ["repo-myrepo"]
+
+
+def test_write_script_global_scope_writes_no_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    result = write_script(conn, _request(scope="global"))
+    assert _script_tags(conn, result.script_id) == []
+
+
+def test_write_script_rejects_legacy_scope_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="invalid scope"):
+        write_script(conn, _request(scope="repo:abc123def456"))
 
 
 def test_write_script_rejects_duplicate_name(

@@ -69,3 +69,12 @@ mechanically.
   internals, and the two adapter copies differ on prefix semantics. The
   abstraction might be a shared-kernel `fts_query(text, *, prefix=False)`
   plus a named weights constant — the human decides, as its own task.
+- **Tag upsert, two copies.** The two-statement tag attach (INSERT OR
+  IGNORE into `tag`, then into `script_tag` via SELECT) exists in
+  `curate/tags.py` (`add_tags`, human-driven, normalizes via `TAG_RE`)
+  and now in `verbs/_shared.py` (`stamp_repo_tag`, the write-time
+  `repo-<name>` provenance stamp, shape guarded by its own
+  `_REPO_TAG_RE` mirroring curate's). Deliberate: slices don't import
+  each other, and the verbs copy is fixed-prefix/no-user-input. The
+  abstraction might be a shared-kernel `attach_tag(conn, script_id,
+  tag)` — the human decides, as its own task.

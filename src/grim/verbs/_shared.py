@@ -15,6 +15,18 @@ from grim import db
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 
+# script.scope is either 'global' or a 12-hex repo id (the repo's root-commit
+# hash — see repo_identity). The retired 'repo:<pathhash>' shape simply never
+# matches a current scope, so legacy rows rank last in `find`'s scope tiers.
+SCOPE_RE = re.compile(r"^global$|^[0-9a-f]{12}$")
+_ROOT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+# Mirrors curate/tags.py's TAG_RE shape (lowercase slug, ≤ 32 chars total)
+# under the fixed 'repo-' prefix — a deliberate cross-slice duplicate (slices
+# don't import each other, root CLAUDE.md §2), flagged in ABSTRACTIONS.md.
+_REPO_TAG_RE = re.compile(r"^repo-[a-z0-9][a-z0-9-]{0,26}$")
+_REPO_TAG_NAME_MAX = 27  # 32-char tag budget minus the 'repo-' prefix
+_SCOPE_HEX_CHARS = 12  # truncation length of the root-commit hash in scope
+
 
 # language -> syntax-checker argv (body fed on stdin). Keep the set small:
 # a checker must be cheap, offline, and read stdin — no temp files. A missing
@@ -121,17 +133,94 @@ def ensure_session(conn: sqlite3.Connection, session_id: str) -> None:
     conn.execute("INSERT OR IGNORE INTO session (id, kind) VALUES (?, ?)", (session_id, kind))
 
 
-def default_scope() -> str:
-    """Repo-scoped by default when cwd is a git repo, else global (D10)."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False
-    )
+def _git_out(argv: list[str]) -> str | None:
+    """Stripped stdout of a git query, or None on nonzero exit / missing git —
+    repo detection is best-effort and must never block a write."""
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    except OSError:
+        return None
     if result.returncode != 0:
-        return "global"
-    toplevel = result.stdout.strip()
-    assert toplevel, "git rev-parse succeeded but returned an empty toplevel path"
-    fingerprint = hashlib.sha256(toplevel.encode()).hexdigest()[:12]
-    return f"repo:{fingerprint}"
+        return None
+    return result.stdout.strip()
+
+
+def repo_identity() -> tuple[str, str] | None:
+    """(scope, tag) identifying the enclosing git repo, or None outside one.
+
+    scope is the repo's oldest root-commit hash truncated to 12 hex chars —
+    stable across clones, worktrees, and directory renames, unlike a
+    toplevel-path hash (D10 revised). A repo with no commits yet degrades to
+    the path hash, keeping the same shape. tag is 'repo-<toplevel basename>'
+    normalized to curate's tag shape: the human-readable name is provenance
+    metadata only, because worktree basenames differ per checkout.
+    `--max-parents=0` lists root commits, newest first, so the last line is
+    the oldest root even after unrelated-history merges.
+    Ref: https://git-scm.com/docs/git-rev-list#Documentation/git-rev-list.txt---max-parentsltnumbergt
+    """
+    toplevel = _git_out(["git", "rev-parse", "--show-toplevel"])
+    if not toplevel:
+        return None
+    roots = (_git_out(["git", "rev-list", "--max-parents=0", "HEAD"]) or "").split()
+    oldest = roots[-1] if roots else ""
+    if _ROOT_COMMIT_RE.match(oldest):
+        scope = oldest[:_SCOPE_HEX_CHARS]
+    else:  # unborn HEAD (fresh `git init`): same 12-hex shape from the path
+        scope = hashlib.sha256(toplevel.encode()).hexdigest()[:_SCOPE_HEX_CHARS]
+    name = re.sub(r"[^a-z0-9-]", "-", os.path.basename(toplevel).lower())
+    name = name.strip("-")[:_REPO_TAG_NAME_MAX]
+    tag = f"repo-{name}" if name else f"repo-{scope}"
+    assert SCOPE_RE.match(scope), "repo scope must be 12 hex chars"
+    assert _REPO_TAG_RE.match(tag), "repo tag must fit curate's tag shape"
+    return scope, tag
+
+
+def default_scope() -> str:
+    """The current repo's scope when cwd is inside a git repo, else 'global'
+    (D10; identity semantics live in repo_identity)."""
+    identity = repo_identity()
+    scope = "global" if identity is None else identity[0]
+    assert SCOPE_RE.match(scope), "default_scope must produce a valid scope"
+    assert identity is None or scope != "global", "a detected repo never maps to 'global'"
+    return scope
+
+
+def resolve_scope(raw: str | None) -> str:
+    """Normalize a caller-supplied --scope: None and the tool-schema literal
+    'repo' resolve to default_scope() (so 'repo' outside a git repo degrades
+    to 'global', matching the old default's behavior); 'global' and an
+    explicit 12-hex repo id pass verbatim. Anything else — including the
+    retired 'repo:<pathhash>' shape — is rejected: external input gets
+    validation, never an assert."""
+    if raw is None or raw == "repo":
+        return default_scope()
+    if not SCOPE_RE.match(raw):
+        raise ValueError(f"invalid scope {raw!r} — expected 'global', 'repo', or a 12-hex repo id")
+    assert raw == "global" or len(raw) == _SCOPE_HEX_CHARS, (
+        "validated scope is 'global' or a 12-hex id"
+    )
+    return raw
+
+
+def stamp_repo_tag(conn: sqlite3.Connection, script_id: int, scope: str) -> str | None:
+    """Attach the current repo's 'repo-<name>' provenance tag to a freshly
+    written script. No-op when cwd has no repo identity or its scope differs
+    from `scope` (e.g. an explicit foreign repo id): the name tag must never
+    claim a repo the script wasn't written in. Duplicates curate/tags.py's
+    two-statement tag upsert on purpose (flagged in ABSTRACTIONS.md); caller
+    commits."""
+    assert script_id > 0, "stamp_repo_tag needs a persisted script id"
+    assert SCOPE_RE.match(scope), "stamp_repo_tag takes an already-resolved scope"
+    identity = repo_identity()
+    if identity is None or identity[0] != scope:
+        return None
+    tag = identity[1]
+    conn.execute("INSERT OR IGNORE INTO tag (name) VALUES (?)", (tag,))
+    conn.execute(
+        "INSERT OR IGNORE INTO script_tag (script_id, tag_id) SELECT ?, id FROM tag WHERE name = ?",
+        (script_id, tag),
+    )
+    return tag
 
 
 def fts_match_query(text: str) -> str:
