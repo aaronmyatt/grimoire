@@ -6,6 +6,7 @@ raw SQL against the kernel schema, not by importing verbs/write.py.
 from __future__ import annotations
 
 import sqlite3
+import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -21,6 +22,7 @@ from grim.adapter.agent import (
     RECALL_LIMIT_MAX,
     STRONG_MATCH_LIMIT,
     GrimAgent,
+    _current_scope,
     rank_recall,
     recall_enabled,
     recall_limit,
@@ -89,6 +91,55 @@ def test_strong_matches_excludes_weak_or_unrelated_text(
         description="extracts failing pytest tests from a CI log",
     )
     assert strong_matches("draw me an epic SDLC diagram in excalidraw") == []
+
+
+def test_strong_matches_excludes_foreign_repo_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A script written in another repo never reaches the system prompt,
+    however strong its FTS score — that injection is exactly the cross-repo
+    distraction the scope filter exists to stop."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_distractors(conn)
+    _seed(
+        conn=conn,
+        name="extract_failing_tests",
+        language="python",
+        description="extracts failing pytest tests from a CI log",
+    )
+    conn.execute("UPDATE script SET scope = 'bbbbbbbbbbbb' WHERE name = 'extract_failing_tests'")
+    conn.commit()
+    assert strong_matches("extract failing pytest tests from ci logs") == []
+
+
+def test_strong_matches_includes_current_repo_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_distractors(conn)
+    repo = tmp_path / "wrk"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    monkeypatch.chdir(repo)
+    scope = _current_scope()
+    assert scope != "global"
+    _seed(
+        conn=conn,
+        name="extract_failing_tests",
+        language="python",
+        description="extracts failing pytest tests from a CI log",
+    )
+    conn.execute("UPDATE script SET scope = ? WHERE name = 'extract_failing_tests'", (scope,))
+    conn.commit()
+    results = strong_matches("extract failing pytest tests from ci logs")
+    assert [r["name"] for r in results] == ["extract_failing_tests"]
+
+
+def test_current_scope_outside_git_repo_is_global(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _current_scope() == "global"
 
 
 def test_strong_matches_empty_task_returns_empty(

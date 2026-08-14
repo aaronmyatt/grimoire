@@ -11,9 +11,11 @@ already is, instead of depending on the agent choosing to search.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sqlite3
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
@@ -44,6 +46,48 @@ SYSTEM_PROMPT_PATH = Path.home() / ".grimoire" / "system.md"
 STRONG_MATCH_THRESHOLD = 6.0
 STRONG_MATCH_LIMIT = 3
 
+_SCOPE_HEX_CHARS = 12  # truncation length of the root-commit hash in scope
+_SCOPE_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+_ROOT_HASH_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _current_scope() -> str:
+    """The enclosing repo's scope id — its oldest root-commit hash truncated
+    to 12 hex (worktree/clone-stable) — or 'global' outside a git repo. An
+    adapter-owned duplicate of verbs/_shared.py's default_scope, like
+    _match_query below (slices don't share internals, root CLAUDE.md §2;
+    flagged in ABSTRACTIONS.md). The read-only pre-run git queries are this
+    slice's sole sanctioned subprocess use (see the amended D7 invariant in
+    adapter/CLAUDE.md); any git hiccup degrades to 'global', never crashes.
+    `--max-parents=0` lists root commits, newest first, so the last line is
+    the oldest root even after unrelated-history merges.
+    Ref: https://git-scm.com/docs/git-rev-list#Documentation/git-rev-list.txt---max-parentsltnumbergt
+    """
+    try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=False
+        )
+        roots = subprocess.run(
+            ["git", "rev-list", "--max-parents=0", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return "global"
+    toplevel = top.stdout.strip()
+    if top.returncode != 0 or not toplevel:
+        return "global"
+    tokens = roots.stdout.split() if roots.returncode == 0 else []
+    oldest = tokens[-1] if tokens else ""
+    if not _ROOT_HASH_RE.match(oldest):
+        # unborn HEAD (fresh `git init`): the path hash, matching verbs' shape
+        oldest = hashlib.sha256(toplevel.encode()).hexdigest()
+    scope = oldest[:_SCOPE_HEX_CHARS]
+    assert _SCOPE_ID_RE.match(scope), "a detected repo yields a 12-hex scope id"
+    assert scope != "global", "a detected repo never maps to 'global'"
+    return scope
+
 
 def _match_query(text: str) -> str:
     """Tokenize into an FTS5 MATCH expression (OR'd, quoted tokens) — a
@@ -58,7 +102,11 @@ def strong_matches(task: str) -> list[dict[str, str]]:
     """Strict FTS5 hits for `task` against the script library — empty if
     nothing clears STRONG_MATCH_THRESHOLD, never partial/best-effort
     matches. Uses find.py's column weighting (name > description > body)
-    since this is effectively a pre-run, high-confidence `grim find`."""
+    since this is effectively a pre-run, high-confidence `grim find`.
+    Restricted to the working repo's scope plus 'global' — a hard filter,
+    not find's soft tiering, because this list is injected into the system
+    prompt unprompted: a cross-repo "strong match" there is exactly the
+    distraction it would otherwise mechanize."""
     match_query = _match_query(task)
     if not match_query:
         return []
@@ -70,9 +118,10 @@ def strong_matches(task: str) -> list[dict[str, str]]:
             "-bm25(script_fts, 10.0, 5.0, 1.0) AS score "
             "FROM script_fts JOIN script s ON s.id = script_fts.rowid "
             "WHERE script_fts MATCH ? AND s.archived = 0 "
+            "AND s.scope IN (?, 'global') "
             "AND -bm25(script_fts, 10.0, 5.0, 1.0) >= ? "
             "ORDER BY score DESC LIMIT ?",
-            (match_query, STRONG_MATCH_THRESHOLD, STRONG_MATCH_LIMIT),
+            (match_query, _current_scope(), STRONG_MATCH_THRESHOLD, STRONG_MATCH_LIMIT),
         ).fetchall()
     finally:
         conn.close()

@@ -46,6 +46,10 @@ D6 revised → native tool-calling).
   and stashes only *strict* hits (`STRONG_MATCH_THRESHOLD`, bm25
   sign-flipped so higher = closer) into `extra_template_vars` as
   `grim_strong_matches`, which `system_template` renders conditionally.
+  Hits are hard-filtered to the working repo's scope plus `'global'`
+  (`_current_scope()`, the adapter-owned duplicate of verbs'
+  root-commit-hash scope id) — an unprompted system-prompt injection
+  must never surface another repo's scripts.
   Mitigates build plan §8's "optional find misses/duplicates existing
   scripts" risk by surfacing a high-confidence hit before the agent
   decides whether to search at all. `run()` also stashes
@@ -144,8 +148,15 @@ D6 revised → native tool-calling).
 - This module is the only caller of `cli.main()` on the agent's behalf; a
   human using the CLI directly invokes `grim`/`cli.py` themselves, not
   through here.
-- No new shell/subprocess call is ever added to this slice — that would
-  reopen exactly the bypass D7 exists to close.
+- No shell/subprocess call is ever reachable from the model's control
+  plane — `execute()` and anything an action can trigger — that would
+  reopen exactly the bypass D7 exists to close. Sole sanctioned
+  exception (human-approved 2026-08-14): the read-only `git rev-parse` /
+  `git rev-list` pair in `agent.py::_current_scope`, run once during
+  pre-run setup (before the first turn, never from an action) to
+  identify the working repo; it executes nothing the model chose and its
+  output is only a SQL filter value. Any further subprocess use requires
+  the same explicit human sign-off.
 - `-p`/`--output-format`/`--continue` are the human launcher's flags only:
   `parse_print_options`/`_take_flag` strip them from argv before dispatch, so
   the model's argv (and the six-verb contract, D12) is never touched.

@@ -78,3 +78,12 @@ mechanically.
   each other, and the verbs copy is fixed-prefix/no-user-input. The
   abstraction might be a shared-kernel `attach_tag(conn, script_id,
   tag)` — the human decides, as its own task.
+- **Repo-scope computation, two copies.** The git toplevel + oldest
+  root-commit-hash → 12-hex scope id derivation exists in
+  `verbs/_shared.py` (`repo_identity`/`default_scope`, also yields the
+  `repo-<name>` tag) and `adapter/agent.py` (`_current_scope`, scope id
+  only, degrade-to-'global'). Deliberate: slices don't share internals,
+  and the two shapes must agree or scoped retrieval silently misses —
+  drift here is a bug, not a style choice. The abstraction might be a
+  shared-kernel `repo_scope()`; it would also absorb the FTS-helper
+  family above's callers. The human decides, as its own task.
