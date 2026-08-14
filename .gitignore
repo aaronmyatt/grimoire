@@ -25,3 +25,7 @@ evals/**/cache/
 
 # sweep arm label configs are generated on demand by evals/sweep-langs
 evals/**/configs/L-*.yaml
+
+# the swebench harness dumps build/eval logs into cwd (logs/build_images,
+# logs/run_evaluation) — throwaway per-run droppings, same as evals/**/runs/
+logs/
