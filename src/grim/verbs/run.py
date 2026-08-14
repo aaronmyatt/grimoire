@@ -26,6 +26,7 @@ DEFAULT_TIMEOUT_S = 120.0
 # belongs in a background job (a `grimbg:`-tagged seed), not a blocking run.
 MAX_TIMEOUT_S = 3600.0
 _TIMEOUT_ENV = "GRIM_TIMEOUT"
+_CWD_ENV = "GRIM_CWD"
 
 
 def _timeout_from_env(env_value: str | None) -> float:
@@ -40,6 +41,29 @@ def _timeout_from_env(env_value: str | None) -> float:
         return DEFAULT_TIMEOUT_S
     result = parsed if parsed > 0 else DEFAULT_TIMEOUT_S
     assert result > 0, "timeout fallback is always positive"
+    return result
+
+
+def cwd_from_env(env_value: str | None) -> str | None:
+    """$GRIM_CWD — the working directory the adapter exports around every
+    in-process verb call, so each dispatched script starts from the
+    directory the harness was launched in instead of inheriting whatever
+    the process cwd has since drifted to. Unset (the human-CLI path) ->
+    None, which dispatch hands to subprocess.run as "inherit my cwd" —
+    exactly the shell behavior a human at a terminal expects.
+    External input: a relative or nonexistent path falls back to None
+    rather than asserting (mirrors _timeout_from_env above); a bad pin
+    must degrade to today's inherit behavior, never crash the run.
+    Ref: https://docs.python.org/3/library/subprocess.html#subprocess.Popen
+    """
+    if not env_value:
+        return None
+    path = Path(env_value)
+    if not path.is_absolute() or not path.is_dir():
+        return None
+    result = str(path)
+    assert os.path.isabs(result), "a pinned cwd is always absolute"
+    assert Path(result).is_dir(), "a pinned cwd always exists"
     return result
 
 
@@ -256,7 +280,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             version=version,
             argv=args.args,
             stdin=stdin,
-            cwd=None,
+            cwd=cwd_from_env(os.environ.get(_CWD_ENV)),
             timeout=timeout,
             session_id=_shared.session_id_from_env(),
             # getattr keeps this working before cli.py (frozen, committed

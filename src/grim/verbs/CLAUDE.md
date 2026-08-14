@@ -40,3 +40,9 @@ surface.
   piped/redirected (non-tty) sys.stdin read eagerly — the leg the adapter's
   run-tool `stdin` argument travels — and an interactive tty passes None.
   Tool-provided stdin is never silently dropped.
+- `run` pins each dispatched script's working directory to `$GRIM_CWD`
+  when set (the adapter exports it around every in-process verb call —
+  see `run.cwd_from_env`), and records it on the execution row. Unset —
+  the human-CLI path — means None: the subprocess inherits the shell's
+  cwd, unchanged. A relative or nonexistent value degrades to None,
+  never crashes the run.

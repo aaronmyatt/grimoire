@@ -20,6 +20,7 @@ from grim.verbs.run import (
     RunRequest,
     _resolve_stdin,
     cmd_run,
+    cwd_from_env,
     resolve_timeout,
     run_script,
 )
@@ -95,6 +96,40 @@ def test_resolve_stdin_tolerates_closed_stdin(monkeypatch: pytest.MonkeyPatch) -
     closed.close()
     monkeypatch.setattr("sys.stdin", closed)
     assert _resolve_stdin(None) is None
+
+
+def test_cwd_from_env_accepts_only_an_absolute_existing_dir(tmp_path: Path) -> None:
+    """External input: anything but an absolute path to a real directory
+    degrades to None (inherit the process cwd) — never a crash, never a
+    half-valid pin passed through to subprocess.run."""
+    assert cwd_from_env(None) is None
+    assert cwd_from_env("") is None
+    assert cwd_from_env("relative/dir") is None
+    assert cwd_from_env(str(tmp_path / "missing")) is None
+    assert cwd_from_env(str(tmp_path)) == str(tmp_path)
+
+
+def test_cmd_run_pins_script_cwd_from_grim_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With $GRIM_CWD exported (the adapter's per-action pin), the dispatched
+    script runs from that directory — not from wherever the harness process
+    happens to be — and the execution row records the pin for audit."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn, body="import os; print(os.getcwd())")
+    pinned = tmp_path / "workdir"
+    pinned.mkdir()
+    monkeypatch.setenv("GRIM_CWD", str(pinned))
+    monkeypatch.setattr("sys.stdin", _FakeTty(""))
+    args = argparse.Namespace(name="foo_bar", args=[], timeout=None, stdin_file=None)
+
+    exit_code = cmd_run(args)
+
+    assert exit_code == 0
+    assert str(pinned) in capsys.readouterr().out
+    recorded = conn.execute("SELECT cwd FROM execution").fetchone()["cwd"]
+    conn.close()
+    assert recorded == str(pinned)
 
 
 def test_cmd_run_missing_script_nudges_find_then_write(
