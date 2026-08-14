@@ -41,17 +41,42 @@ def _complete(text: str) -> list[Completion]:
     return list(GrimCompleter().get_completions(doc, CompleteEvent()))
 
 
-def test_at_completes_script_names_by_prefix(
+def test_colon_completes_script_names_by_token_prefix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     conn = _migrated_db(tmp_path, monkeypatch)
-    _seed(conn, "read_file", "print a file")
-    _seed(conn, "run_bg", "background job")
+    _seed(conn, "read_file", "print stuff")
+    _seed(conn, "run_bg", "start a job")
 
-    texts = [c.text for c in _complete("please @re")]
+    texts = [c.text for c in _complete("please :re")]
 
     assert "read_file" in texts
-    assert "run_bg" not in texts  # prefix 're' doesn't match 'run_bg'
+    assert "run_bg" not in texts  # no token of name or description starts with 're'
+
+
+def test_colon_fuzzy_matches_beyond_the_name_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_db(tmp_path, monkeypatch)
+    _seed(conn, "run_metrics", "collect eval numbers")
+    _seed(conn, "wal_copy", "read a checkpointed database safely")
+
+    # 'metr' is not a prefix of the whole name — FTS reaches the second token.
+    assert [c.text for c in _complete(":metr")] == ["run_metrics"]
+    # 'database' appears only in the description — same index `grim find` uses.
+    assert [c.text for c in _complete(":database")] == ["wal_copy"]
+
+
+def test_colon_matches_are_uncapped_and_bare_colon_lists_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_db(tmp_path, monkeypatch)
+    script_count = 25  # comfortably above the old 10-script cap
+    for i in range(script_count):
+        _seed(conn, f"note_{i:02}", "a note taker")
+
+    assert len(_complete(":note")) == script_count
+    assert len(_complete("look :")) == script_count  # bare ':' lists the library
 
 
 def test_colon_is_scripts_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,17 +89,43 @@ def test_colon_is_scripts_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert all(c.display_meta_text.startswith("script") for c in completions)
 
 
-def test_at_includes_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _migrated_db(tmp_path, monkeypatch)
+def test_at_is_files_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = _migrated_db(tmp_path, monkeypatch)
+    _seed(conn, "READ_script", "would match the prefix if scripts were included")
     (tmp_path / "README.md").write_text("hi")
     monkeypatch.chdir(tmp_path)
 
     # PathCompleter's .text is the insert-remainder ("ME.md" after "READ");
     # the full filename is in .display_text.
-    metas = {c.display_text: c.display_meta_text for c in _complete("see @READ")}
+    completions = _complete("see @READ")
+    metas = {c.display_text: c.display_meta_text for c in completions}
 
     assert "README.md" in metas
     assert metas["README.md"] == "file"
+    assert all(c.display_meta_text == "file" for c in completions)  # no scripts under `@`
+
+
+def test_at_fuzzy_matches_non_prefix_and_across_dots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "run_metrics.py").write_text("hi")
+    monkeypatch.chdir(tmp_path)
+
+    # 'metr' is not a prefix and 'mtr.py' spans the extension dot — both are
+    # subsequences of the filename, which is all fuzzy matching requires.
+    assert "run_metrics.py" in [c.display_text for c in _complete("@metr")]
+    assert "run_metrics.py" in [c.display_text for c in _complete("@mtr.py")]
+
+
+def test_at_file_matches_are_uncapped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file_count = 25  # comfortably above the old 10-file cap
+    for i in range(file_count):
+        (tmp_path / f"note_{i:02}.md").write_text("hi")
+    monkeypatch.chdir(tmp_path)
+
+    completions = _complete("@note")
+
+    assert len(completions) == file_count
 
 
 def test_plain_text_yields_no_completions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,7 +140,7 @@ def test_completion_survives_an_unmigrated_db(
 ) -> None:
     monkeypatch.setenv("GRIM_DB", str(tmp_path / "absent.db"))  # never created
 
-    assert _complete("@re") == []  # no crash, just nothing
+    assert _complete(":re") == []  # no crash, just nothing
 
 
 def test_install_attaches_completer_to_all_mini_sessions(monkeypatch: pytest.MonkeyPatch) -> None:

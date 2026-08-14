@@ -100,11 +100,13 @@ D6 revised → native tool-calling).
   mini's stock single-fixed-file output behavior instead.
 - `completer.py` — `GrimCompleter` + `install_grim_completer()`. Attaches a
   prompt_toolkit completer to mini's own prompt sessions (no fork) so a human
-  gets `@name` (library scripts + files) and `:name` (scripts only) completion
-  while composing input. `GrimAgent.run` installs it; it's a no-op without a
+  gets `@path` (files only, fuzzy per path segment, uncapped) and `:name`
+  (scripts only, FTS5 prefix-token match over name/description/body with
+  `grim find`'s bm25 column weights, uncapped; bare `:` lists the library)
+  completion while composing input. `GrimAgent.run` installs it; it's a no-op without a
   TTY. Completion-only — see `bang.py` for the `!`-execute affordance. The
   completed text is a plain mention; `grimoire.yaml` tells the agent what
-  `@slug`/`:slug` (a script) vs `@path` (a file) mean.
+  `:slug` (a script) vs `@path` (a file) mean.
 - `bang.py` — `expand_bangs(text, runner) -> str` (pure over an injected
   runner) and `install_bang_expansion(session_id)`, Phase 2 of the
   @-command plan: `!slug`, as a standalone whitespace-bounded token, is

@@ -59,3 +59,13 @@ mechanically.
   the arms must not drift, and both belong to the run-grim preamble
   family above; any future `evals/lib/` prelude extraction should absorb
   this block too.
+- **FTS match-query builder + bm25 column weights, three copies.** The
+  tokenize-into-FTS5-MATCH helper now exists in `verbs/_shared.py`
+  (`fts_match_query`, OR'd quoted tokens), `adapter/agent.py`
+  (`_match_query`, same shape), and `adapter/completer.py`
+  (`_fts_prefix_query`, prefix-starred variant for partial words) — and the
+  `bm25(script_fts, 10.0, 5.0, 1.0)` name>description>body weight triplet
+  is repeated in agent.py and completer.py. Deliberate: slices don't share
+  internals, and the two adapter copies differ on prefix semantics. The
+  abstraction might be a shared-kernel `fts_query(text, *, prefix=False)`
+  plus a named weights constant — the human decides, as its own task.
