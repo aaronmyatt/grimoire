@@ -6,7 +6,10 @@ temp DB — never the real ~/.grimoire/grimoire.db.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
+
+import pytest
 
 from grim import db
 
@@ -30,6 +33,19 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     assert applied_again == []
     row = conn2.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()
     assert row[0] == len(first_applied)
+
+
+def test_connect_bounds_single_value_length(tmp_path: Path) -> None:
+    # Defense in depth behind verbs/run.py's stream clamp: an oversized
+    # value (an unclamped buffer upstream) fails at a boundary we chose,
+    # not at SQLite's ~1 GB compile-time SQLITE_MAX_LENGTH — the accident
+    # line the 2026-08-15 runaway-stdout session crash found.
+    conn = db.connect(tmp_path / "grimoire.db")
+    assert conn.getlimit(sqlite3.SQLITE_LIMIT_LENGTH) == db.MAX_VALUE_LENGTH_BYTES
+
+    conn.execute("CREATE TABLE limit_probe (v TEXT)")
+    with pytest.raises(sqlite3.DataError, match="string or blob too big"):
+        conn.execute("INSERT INTO limit_probe VALUES (?)", ("x" * (db.MAX_VALUE_LENGTH_BYTES + 1),))
 
 
 def test_connect_sets_expected_pragmas(tmp_path: Path) -> None:
