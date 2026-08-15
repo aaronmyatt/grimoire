@@ -2,9 +2,10 @@
 Formatting of stored stdout/stderr into the observation a run returns.
 
 Full output is the default; head/tail limits are opt-in (`grim run
---head/--tail`) for the occasional huge-output script. Either way the full
-text is never lost — the caller stores it verbatim on the execution row
-before calling this, and `grim read --exec <id>` pages all of it back.
+--head/--tail`) for the occasional huge-output script. Either way the text
+shown here matches the execution row — the caller stores it first (clamped
+to verbs/run.py's per-stream storage budget), and `grim read --exec <id>`
+pages all of it back.
 """
 
 from __future__ import annotations
@@ -33,8 +34,8 @@ def truncate(
     """Format stdout (always) and stderr (only if non-empty) for a run's
     observation. Passing None for BOTH head_lines and tail_lines emits the
     full text unabridged; any int limit collapses the middle of a long
-    stream to its first head_lines and last tail_lines. Full text is never
-    lost — the caller stores it verbatim on the execution row first.
+    stream to its first head_lines and last tail_lines. The text shown is
+    never richer than what the caller already stored on the execution row.
 
     The 40/10 defaults are retained only for backward-compatible direct
     callers; `grim run` itself now passes None/None (full output) unless
