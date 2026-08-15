@@ -9,7 +9,7 @@ import pytest
 
 from grim import db
 from grim.seeds.bodies import SEEDS
-from grim.seeds.loader import load_seeds
+from grim.seeds.loader import enabled_seeds, load_seeds
 from grim.verbs import _shared, update
 
 
@@ -107,6 +107,71 @@ def test_load_seeds_never_touches_unseeded_or_archived_rows(
     assert second_pass == []
     assert _latest(conn, "shell")["description"] == "mine now"
     assert _latest(conn, "stats")["description"] == "shelved"
+
+
+def test_enabled_seeds_defaults_to_the_full_roster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GRIM_BASE_SEEDS", raising=False)
+
+    assert enabled_seeds() == SEEDS
+
+
+def test_load_seeds_honors_a_base_seeds_subset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The eval knob: GRIM_BASE_SEEDS picks which bundled seeds land, so an
+    experiment arm can run the same task set with and without `shell`."""
+    monkeypatch.setenv("GRIM_BASE_SEEDS", "read_file, write_file")  # spaces tolerated
+    conn = _migrated_conn(tmp_path, monkeypatch)
+
+    newly_seeded = load_seeds(conn)
+
+    assert newly_seeded == ["read_file", "write_file"]  # roster order
+    rows = conn.execute("SELECT name FROM script ORDER BY name").fetchall()
+    assert [row["name"] for row in rows] == ["read_file", "write_file"]
+    assert load_seeds(conn) == []  # subsetting stays idempotent
+
+
+def test_load_seeds_seeds_nothing_on_an_explicitly_empty_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_BASE_SEEDS", "")
+    conn = _migrated_conn(tmp_path, monkeypatch)
+
+    assert load_seeds(conn) == []
+    assert conn.execute("SELECT COUNT(*) AS n FROM script").fetchone()["n"] == 0
+
+
+def test_load_seeds_rejects_an_unknown_seed_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typo in the env var must abort init loudly before any write —
+    silently seeding a different set would corrupt an experiment arm."""
+    monkeypatch.setenv("GRIM_BASE_SEEDS", "shell,read_fiel")
+    conn = _migrated_conn(tmp_path, monkeypatch)
+
+    with pytest.raises(ValueError, match="read_fiel"):
+        load_seeds(conn)
+    assert conn.execute("SELECT COUNT(*) AS n FROM script").fetchone()["n"] == 0
+
+
+def test_load_seeds_exclusion_never_removes_a_present_seed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Narrowing the set later leaves already-present seeds untouched (and
+    unsynced) — the knob gates seeding, it never archives."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    load_seeds(conn)  # full roster first
+    monkeypatch.setenv("GRIM_BASE_SEEDS", "shell")
+    conn.execute("UPDATE script SET description = 'stale words' WHERE name = 'stats'")
+    conn.commit()
+
+    second_pass = load_seeds(conn)
+
+    assert second_pass == []  # shell in sync; excluded stats not re-synced
+    assert _latest(conn, "stats")["description"] == "stale words"
+    assert conn.execute("SELECT COUNT(*) AS n FROM script").fetchone()["n"] == len(SEEDS)
 
 
 def test_load_seeds_ignores_language_toggles(

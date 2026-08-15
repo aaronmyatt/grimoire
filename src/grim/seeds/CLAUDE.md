@@ -29,8 +29,14 @@ symbols.
   updated in place. Rows the human took over (`seeded=0`) or archived are
   never touched.
 - Seeding ignores the language toggles (GRIM_LANGUAGES /
-  GRIM_BASE_LANGUAGES): those gate agent writing, not the stdlib. The
-  seed set is identical in every environment.
+  GRIM_BASE_LANGUAGES): those gate agent writing, not the stdlib. Which
+  seeds land is gated only by `GRIM_BASE_SEEDS` (unset = the full
+  roster, so the default library floor is identical in every
+  environment): a comma-separated subset of bundled names seeds — and
+  converges — only those; explicitly empty seeds nothing (a control
+  arm); an unknown name fails `grim init` loudly before any write. The
+  knob gates seeding only — exclusion never removes or archives a seed
+  already present.
 - Every seed is written with `seeded=1`, `scope='global'`.
 - Seed bodies are plain scripts stored as `script_version.body` rows —
   this slice never gives seeds special execution privileges over
