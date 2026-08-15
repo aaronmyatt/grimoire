@@ -135,7 +135,10 @@ sys.exit(1)
 '''
 
 _GREP_TREE = '''"""grep_tree — ripgrep wrapper with sane defaults (line numbers, respects
-.gitignore). Usage: grep_tree PATTERN [PATH]"""
+.gitignore). Usage: grep_tree PATTERN [PATH] — exactly those arguments, no
+flags. PATTERN is rg regex syntax: alternation is a plain | (a grep-style
+\\| matches a literal pipe and silently finds nothing).
+Ref: https://docs.rs/regex/latest/regex/#syntax"""
 import subprocess
 import sys
 
@@ -421,7 +424,9 @@ SEEDS: list[SeedSpec] = [
     SeedSpec(
         name="shell",
         language="python",
-        description="run any shell command — the escape hatch when no script fits yet",
+        description="run any shell command — the escape hatch when no script fits yet "
+        "(one arg = full command line; several args stay separate words; "
+        "no args = command read from stdin, the route for multi-line bodies)",
         body=_SHELL,
     ),
     SeedSpec(
@@ -451,7 +456,8 @@ SEEDS: list[SeedSpec] = [
     SeedSpec(
         name="grep_tree",
         language="python",
-        description="search the codebase: find text or a pattern across files (ripgrep)",
+        description="search the codebase for text or a regex: grep_tree PATTERN [PATH] — "
+        "no flags, line numbers and .gitignore respect built in",
         body=_GREP_TREE,
     ),
     SeedSpec(
