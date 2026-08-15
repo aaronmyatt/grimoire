@@ -15,6 +15,17 @@ from pathlib import Path
 DEFAULT_DB_PATH = Path.home() / ".grimoire" / "grimoire.db"
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
+# Ceiling on any single stored value (a script body, an execution's
+# stdout), far below SQLite's compiled-in ~1 GB SQLITE_MAX_LENGTH but
+# comfortably above every legitimate writer (verbs/run.py clamps streams
+# to 10M chars ≤ 40 MB UTF-8; script bodies are lint-bounded). An
+# oversized value is an upstream bug — an unclamped buffer — and should
+# fail fast at this deliberate boundary, not at the 1 GB accident line
+# that let a runaway stdout occupy a gigabyte of RAM before erroring
+# (the 2026-08-15 session crash).
+# Ref: https://sqlite.org/limits.html#max_length
+MAX_VALUE_LENGTH_BYTES = 64_000_000
+
 
 def resolve_db_path() -> Path:
     """Return the GRIM_DB override or DEFAULT_DB_PATH, creating its parent dir.
@@ -53,10 +64,18 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA synchronous = NORMAL")
+    # Per-connection limit, set below the compile-time max — SQLITE_TOOBIG
+    # (sqlite3.DataError) past it, at a boundary we chose rather than the
+    # ~1 GB default. Ref:
+    # https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.setlimit
+    conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_VALUE_LENGTH_BYTES)
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
     fk = conn.execute("PRAGMA foreign_keys").fetchone()[0]
     assert str(mode).lower() == "wal", f"expected WAL journal mode, got {mode}"
     assert fk == 1, "foreign_keys PRAGMA did not take effect"
+    assert conn.getlimit(sqlite3.SQLITE_LIMIT_LENGTH) == MAX_VALUE_LENGTH_BYTES, (
+        "value-length limit did not take effect"
+    )
     return conn
 
 
