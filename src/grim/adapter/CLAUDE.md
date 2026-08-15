@@ -64,7 +64,13 @@ D6 revised → native tool-calling).
   declared directory can never disagree with the enforced one. It also stashes
   `tools.lang_enum()` as `grim_languages`, rendered by BOTH templates so
   every enabled language is named in prose (static python-or-bash fallback
-  when undefined — the language-sweep confound fix), and
+  when undefined — the language-sweep confound fix), `seeded_roster()`
+  (the library's live seed roster: seeded=1, unarchived, seeding order,
+  bounded by `SEEDED_ROSTER_LIMIT`) as `grim_seeds` — `system_template`
+  renders the starter-library list from it instead of static prose, so a
+  `GRIM_BASE_SEEDS` eval arm, a human takeover, or an archival is never
+  advertised as available (static full-roster fallback only when the var
+  is undefined; defined-but-empty renders no roster at all), and
   `user_prompt_extension()` (the operator's `~/.grimoire/system.md`, read
   fresh each run) as `grim_user_prompt`, which `system_template` renders as
   an `<operator_instructions>` block when non-empty — the agent-harness

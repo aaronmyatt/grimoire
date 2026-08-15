@@ -132,6 +132,35 @@ def strong_matches(task: str) -> list[dict[str, str]]:
     ]
 
 
+# Bounded collection (§1): far above the bundled roster's size, so hitting it
+# means the seeded flag is being set outside `grim init` — worth failing loud.
+SEEDED_ROSTER_LIMIT = 100
+
+
+def seeded_roster() -> list[dict[str, str]]:
+    """The library's live seed roster (name + description), for the system
+    prompt: rows still seeded=1 and unarchived, in seeding order. Read from
+    the DB — not from the seeds slice's bundled list (slices don't import
+    each other, root CLAUDE.md §2) — so the prompt reflects what this
+    library actually holds: a GRIM_BASE_SEEDS subset (an eval control arm),
+    a human takeover (seeded=0), or an archived seed all drop out here,
+    never advertising a script that run() would reject."""
+    conn = db.connect()
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT name, description FROM script "
+            "WHERE seeded = 1 AND archived = 0 ORDER BY id LIMIT ?",
+            (SEEDED_ROSTER_LIMIT,),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert len(rows) < SEEDED_ROSTER_LIMIT, "seed roster at its cap — seeded flag leaking?"
+    result = [{"name": row["name"], "description": row["description"]} for row in rows]
+    assert all(r["name"] for r in result), "every seeded row carries a name"
+    return result
+
+
 def user_prompt_extension(path: Path | None = None) -> str:
     """Operator instructions appended to the system prompt, read from
     ~/.grimoire/system.md. Absent or unreadable -> "" (external input:
@@ -279,6 +308,10 @@ class GrimAgent(InteractiveAgent):
                 # Without this the prose undersells granted languages (the
                 # language-sweep confound this line exists to remove).
                 self.extra_template_vars["grim_languages"] = lang_enum()
+                # The live seed roster, not static prose: an eval arm seeded
+                # without `shell` (GRIM_BASE_SEEDS) must not have the prompt
+                # advertising it — that would contaminate the control.
+                self.extra_template_vars["grim_seeds"] = seeded_roster()
                 if recall_enabled():
                     self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
                     self.extra_template_vars["grim_previous_session"] = (

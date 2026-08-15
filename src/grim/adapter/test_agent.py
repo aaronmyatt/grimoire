@@ -27,6 +27,7 @@ from grim.adapter.agent import (
     recall_enabled,
     recall_limit,
     recent_library,
+    seeded_roster,
     strong_matches,
     user_prompt_extension,
 )
@@ -163,6 +164,54 @@ def test_strong_matches_never_exceeds_its_limit(
         )
     results = strong_matches("extract failing pytest tests from ci logs")
     assert len(results) <= STRONG_MATCH_LIMIT
+
+
+def _flag_seeded(conn: sqlite3.Connection, *names: str) -> None:
+    for name in names:
+        conn.execute("UPDATE script SET seeded = 1 WHERE name = ?", (name,))
+    conn.commit()
+
+
+def test_seeded_roster_lists_seeded_rows_in_seeding_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed(conn, "shell", "python", "run any shell command")
+    _seed(conn, "read_file", "python", "read a file")
+    _seed(conn, "my_own_tool", "python", "agent-authored, not a seed")
+    _flag_seeded(conn, "shell", "read_file")
+
+    roster = seeded_roster()
+
+    assert roster == [
+        {"name": "shell", "description": "run any shell command"},
+        {"name": "read_file", "description": "read a file"},
+    ]
+
+
+def test_seeded_roster_drops_archived_and_taken_over_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The prompt must never advertise a script run() would reject or the
+    human pulled out of seed management — an eval arm seeded without
+    `shell` (GRIM_BASE_SEEDS) relies on this to keep its control clean."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed(conn, "shell", "python", "run any shell command")
+    _seed(conn, "stats", "python", "usage report")
+    _flag_seeded(conn, "shell", "stats")
+    conn.execute("UPDATE script SET archived = 1 WHERE name = 'shell'")
+    conn.execute("UPDATE script SET seeded = 0 WHERE name = 'stats'")
+    conn.commit()
+
+    assert seeded_roster() == []
+
+
+def test_seeded_roster_empty_library_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _migrated_conn(tmp_path, monkeypatch)
+
+    assert seeded_roster() == []
 
 
 def test_user_prompt_extension_reads_and_strips_the_file(tmp_path: Path) -> None:

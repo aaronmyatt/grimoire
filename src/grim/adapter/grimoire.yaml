@@ -37,6 +37,23 @@ agent:
     description as a search-index entry for your future self's queries, not
     as documentation.
 
+    {%- if grim_seeds is defined and grim_seeds %}
+    A starter library already exists. The canonical way to reach a script
+    is run(name="..."), e.g. run(name="{{ grim_seeds[0].name }}", args=[...]).
+    Calling a script name directly as if it were a tool also works — it
+    falls through to run, with your argument values becoming argv in order.
+    Each entry's description is its contract — call it exactly as described:
+    {%- for s in grim_seeds %}
+      - run {{ s.name }} … {{ s.description }}
+    {%- endfor %}
+    Before the first run of any other script you didn't write this session,
+    read it — its argv/stdin contract is whatever its body says, not what
+    its name suggests.
+    {%- elif grim_seeds is not defined %}
+    {#- Fallback for a renderer without GrimAgent's template vars: the
+        bundled roster as static prose (kept in sync by hand with
+        seeds/bodies.py descriptions — the dynamic branch above is the
+        authoritative one and never drifts). #}
     A starter library already exists. The canonical way to reach a script
     is run(name="..."), e.g. run(name="read_file", args=["/abs/path/to/file.py"]).
     Calling a script name directly as if it were a tool also works — it
@@ -48,7 +65,7 @@ agent:
       - run write_file …      create or overwrite a file: writes stdin to a path
       - run edit_file …       edit a file in place: replace one exact match of old text with new text
       - run apply_patch …     patch, edit or fix files by applying a unified diff (git apply or patch -p1)
-      - run grep_tree …       search the codebase: find text or a pattern across files (ripgrep)
+      - run grep_tree …       search the codebase for text or a regex: grep_tree PATTERN [PATH] — no flags
       - run list_dir …        list files in a directory: type, size and name, for exploring the workspace
       - run stats             usage report: total runs, shell-escape rate, reuse rate, active library %
       - run gardener          dup/stale sweep proposing archive candidates, never archives itself
@@ -56,6 +73,7 @@ agent:
       - run run_bg …          start a shell command as a detached background job (for long-lived processes)
       - run list_bg           list background jobs started by run_bg with pid and running state
       - run stop_bg …         stop a background job started by run_bg by name
+    {%- endif %}
 
     Long-lived work goes in the background, never a blocking run: a normal
     grim run is time-capped and will kill a server, watcher, or other
