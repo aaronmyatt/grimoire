@@ -6,6 +6,7 @@ structured {tool, args} action dicts against a real tmp GRIM_DB.
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +92,27 @@ def test_running_a_sentinel_printing_script_does_not_submit() -> None:
     _write(env, "prints_sentinel", "bash", "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT")
     run = env.execute(_tool("run", {"name": "prints_sentinel"}))
     assert run["returncode"] == 0  # ran fine, did NOT raise Submitted
+
+
+def test_database_error_returns_error_observation_not_a_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (2026-08-15): a `grim run shell` whose captured stdout blew
+    # past SQLite's value-length limit raised sqlite3.DataError ("string or
+    # blob too big") out of the in-process INSERT. _invoke only caught
+    # OperationalError, so the DataError tore through mini's run loop and
+    # killed a 255-step session (trajectory unsaved). Any sqlite3.Error must
+    # degrade to a nonzero observation the agent can read and route around.
+    env = GrimEnvironment(session_id="s1")
+
+    def explode(argv: list[str]) -> int:
+        raise sqlite3.DataError("string or blob too big")
+
+    monkeypatch.setattr("grim.adapter.environment.cli.main", explode)
+    run = env.execute(_tool("run", {"name": "anything"}))
+    assert run["returncode"] == 1
+    assert "string or blob too big" in run["output"]
+    assert "DataError" in run["output"]
 
 
 def test_bad_arg_value_returns_error_observation_not_systemexit() -> None:

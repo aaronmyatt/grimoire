@@ -151,10 +151,15 @@ def _invoke(argv: list[str], stdin: str, session_id: str, cwd: str = "") -> tupl
     self-correct from — which is the entire point of the six-verb sandbox.
     Ref: https://docs.python.org/3/library/argparse.html#exiting-methods
 
-    The same never-tear-through-the-loop contract covers a transient
-    sqlite3.OperationalError ("database is locked"): retry cli.main with
-    short backoff; only a persistently locked write becomes an ordinary
-    observation (returncode 1) instead of crashing the session.
+    The same never-tear-through-the-loop contract covers every
+    sqlite3.Error. A transient OperationalError ("database is locked") is
+    retried with short backoff; anything else — e.g. the DataError
+    ("string or blob too big") that SQLITE_TOOBIG raises when a run's
+    captured output exceeds the connection's value-length limit, which
+    killed a 255-step live session on 2026-08-15 — degrades immediately
+    into an ordinary observation (returncode 1) the agent can read and
+    route around, never a session crash.
+    Ref: https://docs.python.org/3/library/sqlite3.html#exceptions
     """
     stdout_buf, stderr_buf = io.StringIO(), io.StringIO()
     original_stdin = sys.stdin
@@ -179,6 +184,17 @@ def _invoke(argv: list[str], stdin: str, session_id: str, cwd: str = "") -> tupl
                     return note, 1
                 time.sleep(_BUSY_BACKOFF_S[attempt])
                 attempt += 1
+            except sqlite3.Error as exc:
+                # Ordered after OperationalError (its subclass) so only the
+                # non-retryable classes land here — DataError, IntegrityError,
+                # ProgrammingError. None of them get better on retry.
+                note = (
+                    f"[grim] error: database rejected the operation — "
+                    f"{type(exc).__name__}: {exc} (while running `grim "
+                    f"{' '.join(argv[:2])}`; not retryable as-is — if the error "
+                    "mentions size, rerun with smaller output/input)\n"
+                )
+                return note, 1
             except SystemExit as exit_signal:
                 # Normalize SystemExit.code to a shell-style int the same way
                 # the CPython interpreter does on process exit: None -> 0, an
