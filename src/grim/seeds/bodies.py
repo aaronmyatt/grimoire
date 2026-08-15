@@ -137,7 +137,7 @@ sys.exit(1)
 _GREP_TREE = '''"""grep_tree — ripgrep wrapper with sane defaults (line numbers, respects
 .gitignore). Usage: grep_tree PATTERN [PATH] — exactly those arguments, no
 flags. PATTERN is rg regex syntax: alternation is a plain | (a grep-style
-\\| matches a literal pipe and silently finds nothing).
+backslash-escaped pipe matches a literal pipe and silently finds nothing).
 Ref: https://docs.rs/regex/latest/regex/#syntax"""
 import subprocess
 import sys
