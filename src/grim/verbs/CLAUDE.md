@@ -40,6 +40,13 @@ surface.
   piped/redirected (non-tty) sys.stdin read eagerly — the leg the adapter's
   run-tool `stdin` argument travels — and an interactive tty passes None.
   Tool-provided stdin is never silently dropped.
+- `run` clamps each captured stream to `STORED_STREAM_MAX_CHARS` before
+  the execution INSERT (head + tail kept, middle elided with a sized
+  marker), and builds the observation from the same clamped text — no
+  single stored value can exceed the budget, and what the agent read is
+  what `grim read --exec` replays. The 2026-08-15 regression: an
+  unclamped ~1 GB stdout hit SQLITE_TOOBIG at the INSERT and the
+  resulting DataError killed the session.
 - `run` pins each dispatched script's working directory to `$GRIM_CWD`
   when set (the adapter exports it around every in-process verb call —
   see `run.cwd_from_env`), and records it on the execution row. Unset —

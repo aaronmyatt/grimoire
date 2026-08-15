@@ -1,7 +1,7 @@
 """`grim run` — dispatch through exec/, record the execution, return the
-observation. Full stdout/stderr by default; `--head`/`--tail` opt into
-first-N/last-M limiting for huge output. Exit code propagates for humans
-(build plan §4).
+observation. Full stdout/stderr by default (up to the per-stream storage
+budget, STORED_STREAM_MAX_CHARS); `--head`/`--tail` opt into first-N/last-M
+limiting for huge output. Exit code propagates for humans (build plan §4).
 """
 
 from __future__ import annotations
@@ -18,6 +18,17 @@ from pathlib import Path
 
 from grim.exec import dispatch, envelope
 from grim.verbs import _shared
+
+# An execution row stores stdout/stderr for replay (`grim read --exec`),
+# not as an unbounded archive. One runaway printer — a pty drain loop, a
+# `yes`-alike — can emit gigabytes before the timeout kills it, and SQLite
+# rejects any single bound value past its length limit with SQLITE_TOOBIG
+# (the 2026-08-15 DataError that crashed a live session at run_script's
+# INSERT). Explicit max per stream (root CLAUDE.md §1: buffers always
+# carry one): the first and last half-budget survive, the elided middle
+# is replaced by a marker naming its size.
+# Ref: https://sqlite.org/limits.html#max_length
+STORED_STREAM_MAX_CHARS = 10_000_000  # ~10 MB ASCII; ≤ 40 MB worst-case UTF-8
 
 DEFAULT_TIMEOUT_S = 120.0
 # Hard ceiling on any single `grim run`, mirroring MAX_CALL_DEPTH below: an
@@ -161,6 +172,23 @@ class RunResult:
     observation: str
 
 
+def clamp_stream(text: str, limit_chars: int | None = None) -> str:
+    """Return text unchanged when within the storage budget, else its first
+    and last half-budget joined by an elision marker naming the dropped
+    size. Pure for unit-testability; None resolves STORED_STREAM_MAX_CHARS
+    at call time so tests can monkeypatch the module constant."""
+    limit = STORED_STREAM_MAX_CHARS if limit_chars is None else limit_chars
+    assert limit > 0, "storage budget must be positive"
+    if len(text) <= limit:
+        return text
+    head, tail = text[: limit // 2], text[len(text) - limit // 2 :]
+    elided = len(text) - len(head) - len(tail)
+    marker = f"\n[grim] output clamped for storage: {elided} characters elided\n"
+    clamped = head + marker + tail
+    assert elided > 0, "past the early return there is always a middle to elide"
+    return clamped
+
+
 def _next_seq(conn: sqlite3.Connection, session_id: str) -> int:
     row = conn.execute(
         "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM execution WHERE session_id = ?", (session_id,)
@@ -192,6 +220,12 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
             ),
         )
 
+    # Clamped once, then used for BOTH the stored row and the observation:
+    # what the agent reads is exactly what `grim read --exec` replays, and
+    # no value past the storage budget ever reaches the INSERT below.
+    stdout_stored = clamp_stream(result.stdout)
+    stderr_stored = clamp_stream(result.stderr)
+
     # Computed after dispatch, not before: a nested `grim run` inside the
     # dispatched script may have already inserted execution rows for this
     # same session, so the "next" seq must be read fresh here to avoid a
@@ -217,8 +251,8 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
                 request.stdin,
                 request.cwd,
                 result.exit_code,
-                result.stdout,
-                result.stderr,
+                stdout_stored,
+                stderr_stored,
                 result.duration_ms,
                 result.env_fingerprint,
             ),
@@ -236,7 +270,7 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
     # Full output by default (head_lines/tail_lines default to None on the
     # request); the caller opts into first-N/last-M limiting via --head/--tail.
     body = envelope.truncate(
-        result.stdout, result.stderr, head_lines=request.head_lines, tail_lines=request.tail_lines
+        stdout_stored, stderr_stored, head_lines=request.head_lines, tail_lines=request.tail_lines
     )
     return RunResult(
         execution_id=cursor.lastrowid, exit_code=result.exit_code, observation=f"{header}\n{body}"

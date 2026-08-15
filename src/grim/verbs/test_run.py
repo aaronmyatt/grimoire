@@ -19,6 +19,7 @@ from grim.verbs.run import (
     CallDepthExceeded,
     RunRequest,
     _resolve_stdin,
+    clamp_stream,
     cmd_run,
     cwd_from_env,
     resolve_timeout,
@@ -246,6 +247,47 @@ def test_run_script_limits_output_when_head_tail_requested(
     assert "first 40 + last 10 of 59 lines" in result.observation
     assert "line41" not in result.observation
     assert "... (9 skipped) ..." in result.observation
+
+
+def test_clamp_stream_passes_output_within_budget_through() -> None:
+    assert clamp_stream("hello", 10) == "hello"
+    assert clamp_stream("", 10) == ""
+    assert clamp_stream("x" * 10, 10) == "x" * 10  # boundary: exactly at budget
+
+
+def test_clamp_stream_keeps_head_and_tail_and_names_the_elided_size() -> None:
+    text = "A" * 50 + "MIDDLE" + "B" * 50
+    clamped = clamp_stream(text, 20)
+    assert clamped.startswith("A" * 10)
+    assert clamped.endswith("B" * 10)
+    assert "86 characters elided" in clamped
+    assert "MIDDLE" not in clamped
+
+
+def test_run_script_clamps_stored_output_and_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (2026-08-15): a runaway printer's stdout was inserted
+    # unclamped; past SQLite's value-length limit the INSERT raised
+    # DataError ("string or blob too big") and killed the agent session.
+    # The budget is monkeypatched tiny so the test never allocates much.
+    printed_chars = 500
+    budget_chars = 100
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn, body=f"print('x' * {printed_chars})")
+    monkeypatch.setattr("grim.verbs.run.STORED_STREAM_MAX_CHARS", budget_chars)
+
+    result = run_script(conn, _request())
+
+    row = conn.execute(
+        "SELECT stdout FROM execution WHERE id = ?", (result.execution_id,)
+    ).fetchone()
+    assert "characters elided" in row["stdout"]
+    assert len(row["stdout"]) < printed_chars
+    # The observation is built from the same clamped text — what the agent
+    # read is what `grim read --exec` replays.
+    assert "characters elided" in result.observation
+    assert "x" * printed_chars not in result.observation
 
 
 def test_run_script_rejects_when_call_depth_at_cap(
