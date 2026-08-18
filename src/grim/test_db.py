@@ -43,6 +43,41 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     assert row[0] == len(first_applied)
 
 
+def test_0003_backfills_version_language_from_the_script(tmp_path: Path) -> None:
+    # Upgrade path, not the fresh-install path: a database written before
+    # 0003 has versions but no per-version language. The backfill must give
+    # every one of them its script's language, because that is provably what
+    # each body was written in (update.py linted against it) — a NULL left
+    # behind would later resolve through COALESCE to the script's CURRENT
+    # language and dispatch an old body to the wrong interpreter.
+    conn = sqlite3.connect(tmp_path / "grimoire.db")
+    pre_0003 = ["0001_initial.sql", "0002_tags.sql"]
+    for name in pre_0003:
+        conn.executescript((db.MIGRATIONS_DIR / name).read_text())
+    for script_id, (name, language) in enumerate([("old_bash", "bash"), ("old_py", "python")], 1):
+        conn.execute(
+            "INSERT INTO script (name, language, description) VALUES (?, ?, 'd')",
+            (name, language),
+        )
+        for version in (1, 2):
+            conn.execute(
+                "INSERT INTO script_version (script_id, version, body, body_hash) "
+                "VALUES (?, ?, 'body', 'hash')",
+                (script_id, version),
+            )
+    conn.commit()
+
+    conn.executescript((db.MIGRATIONS_DIR / "0003_version_language.sql").read_text())
+
+    rows = conn.execute(
+        "SELECT s.name, sv.language FROM script_version sv "
+        "JOIN script s ON s.id = sv.script_id ORDER BY s.name, sv.version"
+    ).fetchall()
+    assert [r[1] for r in rows] == ["bash", "bash", "python", "python"]
+    unfilled = conn.execute("SELECT COUNT(*) FROM script_version WHERE language IS NULL").fetchone()
+    assert unfilled[0] == 0, "the backfill must leave no version without a language"
+
+
 def test_connect_bounds_single_value_length(tmp_path: Path) -> None:
     # Defense in depth behind verbs/run.py's stream clamp: an oversized
     # value (an unclamped buffer upstream) fails at a boundary we chose,
