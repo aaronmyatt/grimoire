@@ -188,6 +188,11 @@ def _add_update_parser(subparsers: _SubParsers) -> None:
     parser = subparsers.add_parser("update", help="append a new version (body on stdin)")
     parser.add_argument("name")
     parser.add_argument("--changelog", required=True)
+    # Optional, unlike write's required --lang: omitted means "same language as
+    # the current version", which is the overwhelmingly common case. Supplying
+    # it rewrites the script in a different language instead of forcing a
+    # near-duplicate fork.
+    parser.add_argument("--lang")
     parser.set_defaults(func=update.cmd_update)
 
 
