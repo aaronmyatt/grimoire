@@ -14,10 +14,18 @@ import pytest
 from grim import db
 
 
-def test_fresh_migrate_applies_initial_schema(tmp_path: Path) -> None:
+def test_fresh_migrate_applies_every_bundled_migration(tmp_path: Path) -> None:
+    # Derived from the directory, not a hardcoded list: adding a migration is
+    # a routine schema change and must not require editing this assertion —
+    # and `migrations/` is a different slice from this file, so the fence
+    # cannot land a new .sql and its list edit in one change set anyway.
+    bundled = sorted(p.name for p in db.MIGRATIONS_DIR.glob("*.sql"))
+    assert bundled[0] == "0001_initial.sql", "0001 is the schema floor, never renamed"
+
     conn = db.connect(tmp_path / "grimoire.db")
     applied = db.migrate(conn)
-    assert applied == ["0001_initial.sql", "0002_tags.sql"]
+
+    assert applied == bundled, "a fresh db applies every bundled migration, in filename order"
     row = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()
     assert row[0] == len(applied)
 
