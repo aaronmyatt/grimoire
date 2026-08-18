@@ -93,8 +93,9 @@ def write_script(
         "id"
     ]
     cursor = conn.execute(
-        "INSERT INTO script_version (script_id, version, body, body_hash) VALUES (?, 1, ?, ?)",
-        (script_id, request.body, _shared.body_hash(request.body)),
+        "INSERT INTO script_version (script_id, version, body, body_hash, language) "
+        "VALUES (?, 1, ?, ?, ?)",
+        (script_id, request.body, _shared.body_hash(request.body), request.language),
     )
     # Repo-scoped scripts also get a human-readable 'repo-<name>' provenance
     # tag (the stable identity lives in scope; the mutable name is only a tag,

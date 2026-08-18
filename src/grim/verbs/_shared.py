@@ -105,10 +105,19 @@ def parse_name_version(spec: str) -> tuple[str, int | None]:
 def resolve_script_version(conn: sqlite3.Connection, name: str, version: int | None) -> sqlite3.Row:
     """Fetch script_version joined with script; latest when version is
     None. Raises LookupError if missing — external input, not an assert.
+
+    `language` is the VERSION's language, falling back to the script's.
+    That distinction is the point of migration 0003: after `grim update
+    --lang`, this row is what `run` dispatches on, so an older version must
+    resolve to the language its body was actually written in, not the
+    script's current one. The COALESCE is belt-and-braces — 0003 backfills
+    every pre-existing row and both write and update stamp new ones — so a
+    NULL here would mean a row inserted by neither path.
     """
     query = (
         "SELECT sv.id, sv.script_id, sv.version, sv.body, sv.body_hash, "
-        "s.name, s.language, s.description "
+        "COALESCE(sv.language, s.language) AS language, "
+        "s.name, s.description "
         "FROM script_version sv JOIN script s ON s.id = sv.script_id WHERE s.name = ?"
     )
     params: list[object] = [name]

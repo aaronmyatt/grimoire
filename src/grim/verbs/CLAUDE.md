@@ -36,6 +36,20 @@ surface.
 - `write_script(..., enforce_language_gate=False)` bypasses only the
   env-derived writable-set check (for `grim init` seeding); the language
   must still exist in the runner catalog, and every other validation runs.
+- Language is recorded per *version* (`script_version.language`, migration
+  0003), and `_shared.resolve_script_version` returns
+  `COALESCE(sv.language, s.language)` — so `run name@N` always dispatches a
+  body to the interpreter it was written for. `script.language` is the
+  *current* language only: what `find`/`list` display and what `write`'s
+  gate reads. `update --lang` changes both (new version row + the script
+  row) and leaves every earlier version's row untouched; omitting `--lang`
+  keeps the current version's language, which is the common case.
+  `update.resolve_language` applies exactly the gate `write` applies —
+  writable set, then runner catalog — so update is never a side door into
+  a language `write` would have refused. The lint is retargeted at the new
+  language, never skipped. Before 0003 language was immutable for a
+  script's life, which pushed agents into forking near-duplicate `*_py`
+  siblings — the duplication the similarity nudge exists to prevent.
 - `run` feeds the script's stdin by precedence: `--stdin-file`, then a
   piped/redirected (non-tty) sys.stdin read eagerly — the leg the adapter's
   run-tool `stdin` argument travels — and an interactive tty passes None.
