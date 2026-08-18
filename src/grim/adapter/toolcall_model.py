@@ -41,6 +41,22 @@ _PROPERTIES: dict[str, dict[str, Any]] = {
 # Cap how much of a mismatched value is echoed back to the model.
 _MAX_SHOWN = 60
 
+# How many consecutive text-only turns the model may take before the protocol
+# reasserts itself. A response carrying prose and no tool call is the agent
+# addressing the human (a summary, an answer, a question back) — discarding it,
+# as a bare FormatError does, throws away the one thing the human asked for.
+# Bounded so prose can never become the whole run: the counter only resets on a
+# real tool call, so an agent that only ever talks trips this, then trips mini's
+# own max_consecutive_format_errors, and the run ends.
+MAX_CONSECUTIVE_PROSE_TURNS = 2
+
+# The observation a prose turn gets in place of tool results. Keeps the
+# assistant/user alternation the chat APIs expect and names the only exit.
+PROSE_NUDGE = (
+    "Noted — that turn had no tool call, so nothing ran. Continue with a tool "
+    "call, or call submit to finish and hand your answer back to the human."
+)
+
 
 def _expected_type(prop: dict[str, Any]) -> str:
     """Human phrasing of a property schema's type for FormatError messages,
@@ -88,6 +104,10 @@ class GrimToolcallModel(LitellmModel):
     """Same contract as LitellmModel; only the tool set and action parsing
     differ. Selected via `model.model_class` in grimoire.yaml."""
 
+    # Class-level default so no __init__ override is needed; each instance
+    # shadows it on first prose turn. Reset only by a real tool call.
+    _consecutive_prose_turns: int = 0
+
     def _query(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
         # Overridden wholesale (not super()) because the parent hardcodes
         # tools=[BASH_TOOL] with no seam to swap it. Auth-error hint kept
@@ -131,17 +151,66 @@ class GrimToolcallModel(LitellmModel):
 
     def _parse_actions_impl(self, response: Any) -> list[dict[str, Any]]:
         """Validate the model's tool calls and lower them to grim actions.
-        Any deviation (no call, unknown tool, bad/missing args) raises
-        FormatError so the agent loop feeds a precise correction back —
-        the deterministic, structured replacement for regex flakiness."""
+        A deviation that can't be acted on (unknown tool, bad/missing args)
+        raises FormatError so the agent loop feeds a precise correction back —
+        the deterministic, structured replacement for regex flakiness. A
+        text-only turn is not such a deviation; see `_prose_turn`."""
         choice = response.choices[0]
         tool_calls = choice.message.tool_calls or []
         if not tool_calls:
+            return self._prose_turn(choice)
+        actions = [self._parse_one(tc, choice.finish_reason) for tc in tool_calls]
+        self._consecutive_prose_turns = 0  # acting clears the talk budget
+        assert actions, "a non-empty tool_calls list must yield at least one action"
+        return actions
+
+    def _prose_turn(self, choice: Any) -> list[dict[str, Any]]:
+        """Accept a bounded text-only turn as speech rather than a violation.
+
+        Returning `[]` keeps mini's flow intact — the assistant message is
+        persisted with `extra.actions == []`, `execute_actions` runs nothing,
+        and `format_observation_messages` supplies the nudge below. Raising
+        instead (the old unconditional path) drops the message entirely, which
+        is how composed answers to the human were being lost.
+
+        An empty-content response is still a violation: there is no speech to
+        keep, so it raises without spending talk budget.
+        """
+        assert not (choice.message.tool_calls or []), "prose turns carry no tool calls"
+        content = (getattr(choice.message, "content", None) or "").strip()
+        if not content:
             raise self._format_error(
                 "No tool call in the response. Every response MUST call a grim tool.",
                 choice.finish_reason,
             )
-        return [self._parse_one(tc, choice.finish_reason) for tc in tool_calls]
+        self._consecutive_prose_turns += 1
+        if self._consecutive_prose_turns > MAX_CONSECUTIVE_PROSE_TURNS:
+            # Deliberately not reset here: leaving it over budget means the next
+            # text-only turn raises again, so repeated silence terminates the run
+            # via max_consecutive_format_errors instead of ping-ponging forever.
+            raise self._format_error(
+                f"That is {self._consecutive_prose_turns} responses in a row with no tool "
+                f"call (limit {MAX_CONSECUTIVE_PROSE_TURNS}). Call a grim tool now, or "
+                "call submit to finish.",
+                choice.finish_reason,
+            )
+        assert self._consecutive_prose_turns >= 1, "an accepted prose turn always counts"
+        return []
+
+    def format_observation_messages(
+        self, message: dict[str, Any], outputs: list[dict[str, Any]], template_vars: Any = None
+    ) -> list[dict[str, Any]]:
+        """Tool results as usual; a prose turn gets the nudge instead.
+
+        A text-only turn has no tool_call_id to correlate, so the parent's
+        tool-result rendering has nothing to build from — a plain user message
+        keeps the role alternation chat APIs require.
+        """
+        actions = message.get("extra", {}).get("actions", [])
+        if actions:
+            return super().format_observation_messages(message, outputs, template_vars)
+        assert not outputs, "a turn with no actions cannot have produced outputs"
+        return [{"role": "user", "content": PROSE_NUDGE}]
 
     def _parse_one(self, tool_call: Any, finish_reason: Any) -> dict[str, Any]:
         name = tool_call.function.name

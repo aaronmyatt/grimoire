@@ -20,8 +20,18 @@ D6 revised → native tool-calling).
   `_query` (hands the model `GRIM_TOOLS` instead of the single `bash`
   tool) and `_parse_actions` (validates each tool call — name + required
   args — into a `{tool, args, tool_call_id}` action, raising `FormatError`
-  with a precise message on any deviation). Inherited
-  `format_observation_messages` renders results as `role: "tool"` messages.
+  with a precise message on any deviation it cannot act on). A response
+  carrying prose and **no** tool call is not such a deviation: `_prose_turn`
+  accepts up to `MAX_CONSECUTIVE_PROSE_TURNS` of them, returning `[]` so the
+  message is persisted with `extra.actions == []` instead of being dropped —
+  the agent addressing the human is speech, not a violation. The counter
+  resets only on a real tool call and is deliberately *not* reset when it
+  raises, so an agent that only ever talks trips mini's
+  `max_consecutive_format_errors` and the run ends rather than ping-ponging.
+  An empty-content response with no tool call still raises immediately.
+  `format_observation_messages` is overridden to match: tool results as usual,
+  but a prose turn (no actions, so no `tool_call_id` to correlate) gets a
+  single `role: "user"` nudge, preserving the alternation chat APIs require.
 - `environment.py` — `GrimEnvironment`, subclassing mini-swe-agent's
   `LocalEnvironment` and overriding `execute(action, cwd="", *,
   timeout=None)`. The launch directory is captured once at construction
@@ -156,10 +166,14 @@ D6 revised → native tool-calling).
   become argv in call order) and the result is validated exactly like an
   explicit run call. Malformed input (non-JSON args, non-scalar lowering
   values, missing/invalid args on known tools) still raises `FormatError`
-  — an action never reaches execution unvalidated.
+  — an action never reaches execution unvalidated. An accepted prose turn
+  is not an exception to this: it yields zero actions, so there is nothing
+  to execute and nothing bypasses validation.
 - Task completion is *only* the `submit` tool call, which raises
   `Submitted` with the model's `result`. There is no output-sentinel scan
-  — a script may freely print any text, including old sentinels.
+  — a script may freely print any text, including old sentinels. A prose
+  turn is explicitly NOT a completion signal: the run continues, and the
+  nudge names `submit` as the way to actually finish.
 - This module is the only caller of `cli.main()` on the agent's behalf; a
   human using the CLI directly invokes `grim`/`cli.py` themselves, not
   through here.
