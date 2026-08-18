@@ -61,6 +61,33 @@ def test_update_requires_changelog_and_sends_body_on_stdin() -> None:
     assert stdin == "new"
 
 
+def test_update_omits_lang_unless_the_language_is_changing() -> None:
+    # The common case must stay byte-identical: no --lang means "keep the
+    # script's current language", which is what the verb defaults to anyway.
+    argv, _ = tool_call_to_argv("update", {"name": "greet", "changelog": "fix", "body": "new"})
+    assert "--lang" not in argv
+
+
+def test_update_passes_lang_through_when_rewriting_in_another_language() -> None:
+    argv, stdin = tool_call_to_argv(
+        "update", {"name": "greet", "changelog": "port", "body": "print(1)", "lang": "python"}
+    )
+    assert argv == ["update", "greet", "--changelog", "port", "--lang", "python"]
+    assert stdin == "print(1)"
+
+
+def test_update_lang_offers_the_same_enum_as_write() -> None:
+    # One source (lang_enum) for both, so a language enabled for write can
+    # never be missing from update — that mismatch is what forced *_py forks.
+    params = {t["function"]["name"]: t["function"]["parameters"] for t in GRIM_TOOLS}
+    assert (
+        params["update"]["properties"]["lang"]["enum"]
+        == params["write"]["properties"]["lang"]["enum"]
+    )
+    assert "lang" in params["write"]["required"], "write's lang stays required"
+    assert "lang" not in params["update"]["required"], "update's lang is optional"
+
+
 def test_read_by_name_and_by_exec_page() -> None:
     assert tool_call_to_argv("read", {"name": "greet"}) == (["read", "greet"], None)
     argv, _ = tool_call_to_argv("read", {"exec": 12, "page": 2})

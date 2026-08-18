@@ -12,9 +12,13 @@ D6 revised → native tool-calling).
   -> (argv, stdin)`, the pure structured-args → `cli.main` argv mapper,
   and `lang_enum()` — the enabled-language list ($GRIM_LANGUAGES extended
   + $GRIM_BASE_LANGUAGES-subsettable builtins, never-empty fail-safe,
-  mirroring exec/dispatch.py's knob pair) that feeds BOTH the write/list
-  schema enums and the prompt (GrimAgent stashes it as `grim_languages`),
-  so schema and prose can never drift. Text/data in, data out; no mini-swe-agent import. This is
+  mirroring exec/dispatch.py's knob pair) that feeds the write/update/list
+  schema enums AND the prompt (GrimAgent stashes it as `grim_languages`),
+  so schema and prose can never drift. `update.lang` draws from the same
+  enum but is OPTIONAL — omitted means "keep the script's current
+  language", set means "this body is written in a different one". Without
+  it the agent's only way to change a script's language was a
+  near-duplicate fork under a new name. Text/data in, data out; no mini-swe-agent import. This is
   the successor to the old text-based `parse.py`.
 - `toolcall_model.py` — `GrimToolcallModel(LitellmModel)`. Overrides
   `_query` (hands the model `GRIM_TOOLS` instead of the single `bash`

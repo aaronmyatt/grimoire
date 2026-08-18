@@ -94,10 +94,9 @@ def tool_call_to_argv(tool: str, args: dict[str, Any]) -> tuple[list[str], str |
             argv += _opt("--parent", args.get("parent")) + _opt("--scope", args.get("scope"))
             return argv, args["body"]
         case "update":
-            return (
-                ["update", _str(args["name"]), "--changelog", _str(args["changelog"])],
-                args["body"],
-            )
+            argv = ["update", _str(args["name"]), "--changelog", _str(args["changelog"])]
+            argv += _opt("--lang", args.get("lang"))
+            return argv, args["body"]
         case "read":
             argv = ["read", *([_str(args["name"])] if args.get("name") else [])]
             argv += _opt("--exec", args.get("exec")) + _opt("--page", args.get("page"))
@@ -180,11 +179,18 @@ GRIM_TOOLS: list[dict[str, Any]] = [
         "update",
         "Append a new version of an existing script (e.g. to fix a bug found by run). "
         "changelog is a required one-line note on why this version exists; body is the "
-        "full new source.",
+        "full new source. Set lang only to rewrite the script in a different language — "
+        "do that instead of forking a near-duplicate script under a new name.",
         {
             "name": _STR,
             "changelog": {**_STR, "description": "why this version exists"},
             "body": {**_STR, "description": "full new script source"},
+            "lang": {
+                "type": "string",
+                "enum": lang_enum(),
+                "description": "OPTIONAL — omit to keep the script's current language; "
+                "set it only when this new body is written in a different one",
+            },
         },
         ["name", "changelog", "body"],
     ),
