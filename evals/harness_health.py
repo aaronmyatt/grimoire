@@ -31,6 +31,7 @@ ESCAPE_HATCHES = ("shell", "run_sh", "run_cmd", "run_py")
 TOP_ERRORS = 10
 EXIT_TIMEOUT = 124
 EXIT_NOT_FOUND = 127
+REPEAT_MIN_RUNS = 2  # a run_py snippet run this often is worth a named script
 _P90 = 0.9
 
 
@@ -117,6 +118,28 @@ def db_metrics(conn: sqlite3.Connection, since: str) -> dict[str, Any]:
     }
 
 
+def snippet_metrics(conn: sqlite3.Connection, since: str) -> dict[str, int]:
+    """How often run_py snippets repeat (same text once stripped): the
+    measure behind keeping run_py vs forcing named scripts (gardener lists
+    the repeats themselves)."""
+    sources = [
+        (row[0] or "").strip()
+        for row in conn.execute(
+            "SELECT e.stdin FROM execution e "
+            "JOIN script_version v ON v.id = e.script_version_id "
+            "JOIN script s ON s.id = v.script_id "
+            "WHERE s.name = 'run_py' AND e.started_at >= ?",
+            (since,),
+        )
+    ]
+    counts = collections.Counter(source for source in sources if source)
+    return {
+        "snippet_runs": len(sources),
+        "snippet_distinct": len(counts),
+        "snippet_repeated": sum(1 for n in counts.values() if n >= REPEAT_MIN_RUNS),
+    }
+
+
 def check_invariants(
     conn: sqlite3.Connection, sessions: dict[str, dict[str, Any]], since: str
 ) -> list[str]:
@@ -154,6 +177,8 @@ def render(spans: dict[str, Any], lib: dict[str, Any]) -> str:
         f"escape-hatch share     {lib['escape_pct']:.1f}%  ({', '.join(ESCAPE_HATCHES)})",
         f"timeouts / not found   {lib['timeouts']} / {lib['not_found']}",
         f"single-use scripts     {lib['single_use_pct']:.0f}%",
+        f"run_py snippets        {lib['snippet_runs']} runs, {lib['snippet_distinct']} distinct, "
+        f"{lib['snippet_repeated']} run 2+ times",
         f"format errors          {spans['format_errors']} / {spans['llm_calls']} ({fe_pct:.1f}%)",
         f"tokens/session         median {spans['tokens_median']:,}  p90 {spans['tokens_p90']:,}",
         f"prompt tokens p90      {spans['prompt_p90']:,}",
@@ -178,7 +203,8 @@ def main(argv: list[str]) -> int:
     )
     conn = sqlite3.connect(f"file:{_home_file('GRIM_DB', 'grimoire.db')}?mode=ro", uri=True)
     try:
-        print(render(span_metrics(sessions), db_metrics(conn, args.since)))
+        lib = db_metrics(conn, args.since) | snippet_metrics(conn, args.since)
+        print(render(span_metrics(sessions), lib))
         violations = check_invariants(conn, sessions, args.since) if args.check else []
     finally:
         conn.close()
