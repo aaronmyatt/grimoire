@@ -45,6 +45,11 @@ SYSTEM_PROMPT_PATH = Path.home() / ".grimoire" / "system.md"
 # not a lower-recall echo of `grim find`. Tune alongside real usage data.
 STRONG_MATCH_THRESHOLD = 6.0
 STRONG_MATCH_LIMIT = 3
+# One-off scripts are named scratch_* (verbs/find.py's SCRATCH_PREFIX — a
+# deliberate duplicate, slices never import each other). Neither the
+# unprompted strong-match list nor --continue recall advertises them.
+# GLOB, not LIKE: `_` is literal there. Ref: https://www.sqlite.org/lang_expr.html#glob
+_SCRATCH_GLOB = "scratch_*"
 
 _SCOPE_HEX_CHARS = 12  # truncation length of the root-commit hash in scope
 _SCOPE_ID_RE = re.compile(r"^[0-9a-f]{12}$")
@@ -117,11 +122,17 @@ def strong_matches(task: str) -> list[dict[str, str]]:
             "SELECT s.name, s.language, s.description, "
             "-bm25(script_fts, 10.0, 5.0, 1.0) AS score "
             "FROM script_fts JOIN script s ON s.id = script_fts.rowid "
-            "WHERE script_fts MATCH ? AND s.archived = 0 "
+            "WHERE script_fts MATCH ? AND s.archived = 0 AND s.name NOT GLOB ? "
             "AND s.scope IN (?, 'global') "
             "AND -bm25(script_fts, 10.0, 5.0, 1.0) >= ? "
             "ORDER BY score DESC LIMIT ?",
-            (match_query, _current_scope(), STRONG_MATCH_THRESHOLD, STRONG_MATCH_LIMIT),
+            (
+                match_query,
+                _SCRATCH_GLOB,
+                _current_scope(),
+                STRONG_MATCH_THRESHOLD,
+                STRONG_MATCH_LIMIT,
+            ),
         ).fetchall()
     finally:
         conn.close()
@@ -232,6 +243,7 @@ _RECALL_SQL = (
     "h.last_used "
     "FROM script s JOIN script_health h ON h.id = s.id "
     "WHERE s.archived = 0 AND s.seeded = 0 AND h.runs > 0 AND h.success_rate >= ? "
+    "AND s.name NOT GLOB ? "
     "ORDER BY h.last_used DESC LIMIT ?"
 )
 
@@ -245,7 +257,7 @@ def recent_library(limit: int) -> list[dict[str, str]]:
     conn.row_factory = sqlite3.Row
     try:
         pool = conn.execute(
-            _RECALL_SQL, (RECALL_MIN_SUCCESS, limit * RECALL_POOL_FACTOR)
+            _RECALL_SQL, (RECALL_MIN_SUCCESS, _SCRATCH_GLOB, limit * RECALL_POOL_FACTOR)
         ).fetchall()
     finally:
         conn.close()

@@ -72,7 +72,9 @@ D6 revised → native tool-calling).
   Hits are hard-filtered to the working repo's scope plus `'global'`
   (`_current_scope()`, the adapter-owned duplicate of verbs'
   root-commit-hash scope id) — an unprompted system-prompt injection
-  must never surface another repo's scripts.
+  must never surface another repo's scripts. `scratch_*` one-offs
+  (`_SCRATCH_GLOB`, a duplicate of verbs' `SCRATCH_PREFIX`) are
+  hard-filtered out of strong matches and `--continue` recall too.
   Mitigates build plan §8's "optional find misses/duplicates existing
   scripts" risk by surfacing a high-confidence hit before the agent
   decides whether to search at all. `run()` also stashes `env.cwd` as
