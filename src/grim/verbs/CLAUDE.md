@@ -67,3 +67,8 @@ surface.
   the human-CLI path — means None: the subprocess inherits the shell's
   cwd, unchanged. A relative or nonexistent value degrades to None,
   never crashes the run.
+- `ensure_session` stamps a new session row once, on first insert: the
+  repo fingerprint (`repo_identity`'s scope, None outside a repo) and, for
+  agent sessions only, `model`/`task` from `$GRIM_SESSION_MODEL` /
+  `$GRIM_SESSION_TASK` (the adapter exports both beside `$GRIM_SESSION`;
+  task capped at 500 chars). An existing row is never rewritten.

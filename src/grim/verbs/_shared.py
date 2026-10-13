@@ -27,6 +27,13 @@ _REPO_TAG_RE = re.compile(r"^repo-[a-z0-9][a-z0-9-]{0,26}$")
 _REPO_TAG_NAME_MAX = 27  # 32-char tag budget minus the 'repo-' prefix
 _SCOPE_HEX_CHARS = 12  # truncation length of the root-commit hash in scope
 
+# Session metadata the agent harness exports around each in-process verb call
+# (adapter/environment.py's _session_env) — a message across the process env,
+# the same channel as GRIM_SESSION. Absent for a human's direct CLI use.
+SESSION_MODEL_ENV = "GRIM_SESSION_MODEL"
+SESSION_TASK_ENV = "GRIM_SESSION_TASK"
+_SESSION_TASK_MAX_CHARS = 500
+
 
 # language -> syntax-checker argv (body fed on stdin). Keep the set small:
 # a checker must be cheap, offline, and read stdin — no temp files. A missing
@@ -137,9 +144,35 @@ def resolve_script_version(conn: sqlite3.Connection, name: str, version: int | N
 
 def ensure_session(conn: sqlite3.Connection, session_id: str) -> None:
     """Lazily create the session row FK-dependent inserts need (no verb
-    creates sessions explicitly). Caller commits; this only stages it."""
+    creates sessions explicitly). Caller commits; this only stages it.
+
+    The first insert also stamps what the session is: its repo fingerprint
+    and — for agent sessions — the model and task the harness exports in
+    $GRIM_SESSION_MODEL / $GRIM_SESSION_TASK (adapter/environment.py). An
+    existing row is never rewritten, so the first verb call's view wins."""
+    assert session_id, "a session id is never empty"
+    if conn.execute("SELECT 1 FROM session WHERE id = ?", (session_id,)).fetchone() is not None:
+        return
     kind = "human" if session_id == "human-adhoc" else "agent"
-    conn.execute("INSERT OR IGNORE INTO session (id, kind) VALUES (?, ?)", (session_id, kind))
+    model, task = _session_metadata() if kind == "agent" else (None, None)
+    identity = repo_identity()
+    conn.execute(
+        "INSERT OR IGNORE INTO session (id, kind, task, model, repo_fingerprint) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (session_id, kind, task, model, None if identity is None else identity[0]),
+    )
+    assert task is None or len(task) <= _SESSION_TASK_MAX_CHARS, "task text is capped"
+
+
+def _session_metadata() -> tuple[str | None, str | None]:
+    """(model, task) from the harness's env, each None when unset or blank —
+    a human CLI call exports neither. Env is external input: normalized and
+    capped here, never asserted."""
+    model = (os.environ.get(SESSION_MODEL_ENV) or "").strip() or None
+    task = (os.environ.get(SESSION_TASK_ENV) or "").strip()[:_SESSION_TASK_MAX_CHARS] or None
+    assert model is None or model == model.strip(), "model is stripped"
+    assert task is None or len(task) <= _SESSION_TASK_MAX_CHARS, "task is capped"
+    return model, task
 
 
 def _git_out(argv: list[str]) -> str | None:

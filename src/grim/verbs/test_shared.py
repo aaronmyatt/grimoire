@@ -132,6 +132,67 @@ def test_ensure_session_kind_for_agent_vs_human(
     assert kinds["sess-123"] == "agent"
 
 
+def _session_row(conn: sqlite3.Connection, session_id: str) -> sqlite3.Row:
+    conn.commit()
+    row = conn.execute(
+        "SELECT task, model, repo_fingerprint FROM session WHERE id = ?", (session_id,)
+    ).fetchone()
+    assert isinstance(row, sqlite3.Row)
+    return row
+
+
+def test_ensure_session_stamps_agent_model_and_task_from_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    monkeypatch.setenv(_shared.SESSION_MODEL_ENV, " deepseek/v4 ")
+    monkeypatch.setenv(_shared.SESSION_TASK_ENV, "fix the build")
+    _shared.ensure_session(conn, "sess-1")
+    row = _session_row(conn, "sess-1")
+    assert row["model"] == "deepseek/v4"
+    assert row["task"] == "fix the build"
+
+
+def test_ensure_session_caps_task_and_never_rewrites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    monkeypatch.setenv(_shared.SESSION_MODEL_ENV, "first-model")
+    monkeypatch.setenv(_shared.SESSION_TASK_ENV, "t" * (_shared._SESSION_TASK_MAX_CHARS + 50))
+    _shared.ensure_session(conn, "sess-1")
+    monkeypatch.setenv(_shared.SESSION_MODEL_ENV, "second-model")
+    _shared.ensure_session(conn, "sess-1")
+    row = _session_row(conn, "sess-1")
+    assert row["model"] == "first-model"
+    assert len(row["task"]) == _shared._SESSION_TASK_MAX_CHARS
+
+
+def test_ensure_session_leaves_human_and_unset_metadata_null(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)  # outside any git repo: no fingerprint either
+    monkeypatch.setenv(_shared.SESSION_MODEL_ENV, "some-model")
+    _shared.ensure_session(conn, "human-adhoc")
+    monkeypatch.delenv(_shared.SESSION_MODEL_ENV)
+    _shared.ensure_session(conn, "sess-2")
+    for session_id in ("human-adhoc", "sess-2"):
+        row = _session_row(conn, session_id)
+        assert (row["model"], row["task"], row["repo_fingerprint"]) == (None, None, None)
+
+
+def test_ensure_session_records_repo_fingerprint_inside_a_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    sha = _commit_root(repo)
+    monkeypatch.chdir(repo)
+    _shared.ensure_session(conn, "sess-3")
+    assert _session_row(conn, "sess-3")["repo_fingerprint"] == sha[:12]
+
+
 def test_default_scope_outside_git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     assert _shared.default_scope() == "global"
