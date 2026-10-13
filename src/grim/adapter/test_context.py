@@ -31,6 +31,9 @@ _OUTPUT_MIN = 512
 _BUDGET_LO = 100_000
 _WINDOW = 128_000
 _AUTHORITATIVE = 99_999
+_CAP_DEFAULT = 120_000
+_CAP_MIN = 16_000
+_CAP_CUSTOM = 50_000
 
 
 @pytest.fixture(autouse=True)
@@ -156,6 +159,28 @@ def test_knobs_validate_external_input(monkeypatch: pytest.MonkeyPatch) -> None:
     assert context.max_tool_output() == _OUTPUT_MIN
     monkeypatch.setenv("GRIM_COMPACT_MODEL", "  cheap/model  ")
     assert context.compact_model() == "cheap/model"
+
+
+def test_compact_max_tokens_defaults_and_clamps(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert context.compact_max_tokens() == _CAP_DEFAULT
+    monkeypatch.setenv("GRIM_COMPACT_MAX_TOKENS", "5")
+    assert context.compact_max_tokens() == _CAP_MIN
+    monkeypatch.setenv("GRIM_COMPACT_MAX_TOKENS", "garbage")
+    assert context.compact_max_tokens() == _CAP_DEFAULT
+
+
+def test_compaction_threshold_caps_a_huge_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A ~1M-token model: the window share alone would wait until ~740k.
+    monkeypatch.setitem(context._MODEL_INFO, "big/model", {"window": 1_000_000, "reserve": 8_000})
+    assert context.compaction_threshold("big/model") == _CAP_DEFAULT
+    monkeypatch.setenv("GRIM_COMPACT_MAX_TOKENS", "50000")
+    assert context.compaction_threshold("big/model") == _CAP_CUSTOM
+
+
+def test_compaction_threshold_keeps_the_window_share_when_lower() -> None:
+    expected = int(context.budget_for("gpt-4o") * context.compact_at())
+    assert expected < _CAP_DEFAULT
+    assert context.compaction_threshold("gpt-4o") == expected
 
 
 def test_budget_for_falls_back_on_unmapped_model() -> None:

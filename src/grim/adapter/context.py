@@ -9,7 +9,8 @@ mutated — only the list handed to litellm.completion is rewritten.
 GRIM_COMPACT=0 restores the pre-awareness behavior byte-for-byte.
 
 Env knobs (validated/clamped, never trusted): GRIM_COMPACT (1|0, on),
-GRIM_COMPACT_AT (0.75), GRIM_COMPACT_KEEP (6), GRIM_MAX_TOOL_OUTPUT (4096),
+GRIM_COMPACT_AT (0.75), GRIM_COMPACT_MAX_TOKENS (120000, an absolute cap
+beside the window share), GRIM_COMPACT_KEEP (6), GRIM_MAX_TOOL_OUTPUT (4096),
 GRIM_COMPACT_MODEL (unset = no LLM tail summary; the grim-native summary
 always runs). The ladder is cheap-first: trim tool results -> drop stale
 results -> replace the old span with a grim-native summary (task +
@@ -29,6 +30,7 @@ from grim import db
 
 _COMPACT_ENV = "GRIM_COMPACT"
 _COMPACT_AT_ENV = "GRIM_COMPACT_AT"
+_COMPACT_MAX_TOKENS_ENV = "GRIM_COMPACT_MAX_TOKENS"
 _COMPACT_KEEP_ENV = "GRIM_COMPACT_KEEP"
 _MAX_TOOL_OUTPUT_ENV = "GRIM_MAX_TOOL_OUTPUT"
 _COMPACT_MODEL_ENV = "GRIM_COMPACT_MODEL"
@@ -83,6 +85,23 @@ def compact_at() -> float:
     """Budget fraction that triggers proactive compaction, clamped to
     [0.5, 0.95] so the ceiling is never pushed into the output reserve."""
     return _env_float(_COMPACT_AT_ENV, 0.75, 0.5, 0.95)
+
+
+def compact_max_tokens() -> int:
+    """Absolute prompt-size ceiling for proactive compaction, clamped to
+    [16k, 2M]. compact_at() is a share of the model's window, so on a ~1M
+    window it never fired below ~500k tokens — October prompts reached 375k
+    per call. This caps per-call cost whatever the window."""
+    return _env_int(_COMPACT_MAX_TOKENS_ENV, 120_000, 16_000, 2_000_000)
+
+
+def compaction_threshold(model: str) -> int:
+    """Prompt tokens above which completion() compacts proactively: the
+    window share or the absolute cap, whichever is lower."""
+    threshold = min(int(budget_for(model) * compact_at()), compact_max_tokens())
+    assert threshold > 0, "the compaction threshold is always positive"
+    assert threshold <= compact_max_tokens(), "the absolute cap always holds"
+    return threshold
 
 
 def keep() -> int:
@@ -409,7 +428,7 @@ def completion(
     assert model and isinstance(messages, list), "completion needs a model and a message list"
     if not enabled():
         return litellm.completion(model=model, messages=messages, tools=tools, **kwargs)
-    threshold = int(budget_for(model) * compact_at())
+    threshold = compaction_threshold(model)
     sent = messages
     if prompt_tokens(messages, model) > threshold:
         sent, _ = compact_messages(
