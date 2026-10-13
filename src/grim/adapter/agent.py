@@ -24,7 +24,7 @@ from minisweagent.agents.interactive import InteractiveAgent, console
 from minisweagent.exceptions import UserInterruption
 
 from grim import db
-from grim.adapter import context, trace
+from grim.adapter import previous_session, trace
 from grim.adapter.bang import install_bang_expansion
 from grim.adapter.completer import install_grim_completer
 from grim.adapter.display import action_renderables, grim_actions, reasoning_text
@@ -324,7 +324,7 @@ class GrimAgent(InteractiveAgent):
                 if recall_enabled():
                     self.extra_template_vars["grim_recent_library"] = recent_library(recall_limit())
                     self.extra_template_vars["grim_previous_session"] = (
-                        context.previous_session_snippet()
+                        previous_session.previous_session_snippet()
                     )
                 result = super().run(task, **kwargs)
             assert isinstance(result, dict), "InteractiveAgent.run always returns a dict"

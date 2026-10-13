@@ -10,7 +10,6 @@ never leak in.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -192,31 +191,3 @@ def test_is_context_error_classification() -> None:
     assert not context.is_context_error(
         litellm.exceptions.BadRequestError("bad json", "gpt-4o", "openai")
     )
-
-
-def test_previous_session_snippet(tmp_path: Path) -> None:
-    traj = tmp_path / "grimoire-test.traj.json"
-    traj.write_text(
-        '{"info": {"exit_status": "Submitted"}, "messages": ['
-        '{"role": "user", "content": "task one"},'
-        '{"role": "assistant", "content": "reasoning"},'
-        '{"role": "tool", "content": "output"}]}'
-    )
-    pointer = tmp_path / "last-trajectory"
-    pointer.write_text(str(traj) + "\n")
-    snippet = context.previous_session_snippet(pointer)
-    assert "Submitted" in snippet
-    assert "reasoning" in snippet and "output" in snippet
-
-
-def test_previous_session_snippet_degrades(tmp_path: Path) -> None:
-    assert context.previous_session_snippet(tmp_path / "absent") == ""
-    bad = tmp_path / "bad.traj.json"
-    bad.write_text("not json")
-    pointer = tmp_path / "p"
-    pointer.write_text(str(bad) + "\n")
-    assert context.previous_session_snippet(pointer) == ""
-    other = tmp_path / "other"
-    other.write_text("x")
-    pointer.write_text(str(other) + "\n")
-    assert context.previous_session_snippet(pointer) == ""

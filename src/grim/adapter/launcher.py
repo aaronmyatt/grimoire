@@ -449,7 +449,7 @@ def last_agent_session_id() -> str | None:
 
 def _remember_trajectory(path: str) -> None:
     """Record the finished run's trajectory path for the next `--continue`
-    (adapter/context.py::previous_session_snippet reads it). An adapter-owned
+    (adapter/previous_session.py::previous_session_snippet reads it). An adapter-owned
     file under ~/.grimoire — fail-soft: a broken HOME must never fail a run."""
     assert path.endswith(".traj.json"), "trajectory path must be a .traj.json file"
     try:
