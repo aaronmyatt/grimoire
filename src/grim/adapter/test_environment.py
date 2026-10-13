@@ -93,7 +93,7 @@ def test_running_a_sentinel_printing_script_does_not_submit() -> None:
     # the old sentinel must run like any other, never end the task. The whole
     # class of false-submission bugs is gone with the output-scan.
     env = GrimEnvironment(session_id="s1")
-    _write(env, "prints_sentinel", "bash", "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT")
+    _write(env, "prints_sentinel", "python", "print('COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT')")
     run = env.execute(_tool("run", {"name": "prints_sentinel"}))
     assert run["returncode"] == 0  # ran fine, did NOT raise Submitted
 
@@ -125,7 +125,7 @@ def test_bad_arg_value_returns_error_observation_not_systemexit() -> None:
     # _invoke traps that SystemExit so it returns as a normal nonzero
     # observation the agent can read and fix — never a process kill.
     env = GrimEnvironment(session_id="s1")
-    _write(env, "greet", "bash", "echo hi")
+    _write(env, "greet", "python", "print('hi')")
     run = env.execute(_tool("run", {"name": "greet", "timeout": "notanumber"}))
     assert run["returncode"] != 0
     assert "usage:" in run["output"]

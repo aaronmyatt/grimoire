@@ -11,7 +11,8 @@ D6 revised → native tool-calling).
   verbs + a terminal `submit` control), `tool_call_to_argv(tool, args)
   -> (argv, stdin)`, the pure structured-args → `cli.main` argv mapper,
   and `lang_enum()` — the enabled-language list ($GRIM_LANGUAGES extended
-  + $GRIM_BASE_LANGUAGES-subsettable builtins, never-empty fail-safe,
+  + $GRIM_BASE_LANGUAGES-subsettable builtins — python only when unset,
+  `python,bash` opts bash back in — never-empty fail-safe to python,
   mirroring exec/dispatch.py's knob pair) that feeds the write/update/list
   schema enums AND the prompt (GrimAgent stashes it as `grim_languages`),
   so schema and prose can never drift. `update.lang` draws from the same

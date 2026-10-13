@@ -69,9 +69,9 @@ def test_toy_task_end_to_end_via_tool_calls() -> None:
                     "tool": "write",
                     "args": {
                         "name": "greet",
-                        "lang": "bash",
+                        "lang": "python",
                         "desc": "prints a greeting",
-                        "body": "echo hi",
+                        "body": "print('hi')",
                     },
                 }
             ],
@@ -118,7 +118,12 @@ def test_grim_agent_runs_tool_actions_end_to_end() -> None:
     outputs = [
         make_output(
             "write greet",
-            [act("write", {"name": "greet", "lang": "bash", "desc": "greets", "body": "echo hi"})],
+            [
+                act(
+                    "write",
+                    {"name": "greet", "lang": "python", "desc": "greets", "body": "print('hi')"},
+                )
+            ],
         ),
         make_output("run greet", [act("run", {"name": "greet"})]),
         make_output("finish", [act("submit", {"result": "said hi"})]),
@@ -211,5 +216,5 @@ def test_run_stashes_enabled_languages(monkeypatch: pytest.MonkeyPatch) -> None:
     result = agent.run("noop")
 
     assert result["exit_status"] == "Submitted"
-    assert agent.extra_template_vars["grim_languages"] == ["bash", "jq", "python"]
-    assert agent.messages[0]["content"] == "langs: bash, jq, python"
+    assert agent.extra_template_vars["grim_languages"] == ["jq", "python"]
+    assert agent.messages[0]["content"] == "langs: jq, python"

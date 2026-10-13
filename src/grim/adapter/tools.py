@@ -25,14 +25,19 @@ SUBMIT_TOOL_NAME = "submit"
 
 
 _BUILTIN_PAIR = frozenset({"python", "bash"})
+# The python-only pivot (docs/python-pivot-plan.md): with the knob unset,
+# only python is writable. bash stays in the pair so GRIM_BASE_LANGUAGES can
+# still opt it back in for an eval arm; legacy bash scripts always run.
+_DEFAULT_BASE = frozenset({"python"})
 
 
 def lang_enum() -> list[str]:
     """The `--lang` choices the model may propose: the (subsettable)
     builtins plus extended languages enabled in $GRIM_LANGUAGES.
-    $GRIM_BASE_LANGUAGES mirrors exec/dispatch.py's knob — unset -> both
-    builtins, '' -> none (solo-language sweep arms) — including the same
-    never-empty fail-safe, so schema, prompt, and write gate always agree.
+    $GRIM_BASE_LANGUAGES mirrors exec/dispatch.py's knob — unset -> python
+    only, '' -> none (solo-language sweep arms), 'python,bash' -> both —
+    including the same never-empty fail-safe (-> python), so schema,
+    prompt, and write gate always agree.
     A deliberate copy of dispatch's env parses (ledgered) — the adapter
     never imports a slice; the authoritative platform gate stays in
     write_script. Public: feeds BOTH the write/list tool schemas below and
@@ -41,12 +46,12 @@ def lang_enum() -> list[str]:
     enabled = {tok.strip() for tok in raw_extended.split(",") if tok.strip()}
     raw_base = os.environ.get("GRIM_BASE_LANGUAGES")
     base = (
-        _BUILTIN_PAIR
+        _DEFAULT_BASE
         if raw_base is None
         else {tok.strip() for tok in raw_base.split(",") if tok.strip()} & _BUILTIN_PAIR
     )
     assert base <= _BUILTIN_PAIR, "base only ever narrows the builtin pair"
-    languages = sorted(base | enabled) or sorted(_BUILTIN_PAIR)  # dispatch's fail-safe, mirrored
+    languages = sorted(base | enabled) or sorted(_DEFAULT_BASE)  # dispatch's fail-safe, mirrored
     assert languages, "the enum is never empty"
     return languages
 
@@ -159,7 +164,9 @@ GRIM_TOOLS: list[dict[str, Any]] = [
         "write",
         "Create a new script in the library. Name it verb_noun; the description is a "
         "search-index entry for your future self's `find` queries, not documentation. "
-        "python or bash, plus any languages you enabled in config (off by default). "
+        "Scripts are python (lang's enum lists every enabled language). Third-party "
+        "packages need a PEP 723 `# /// script` header declaring them. Name a one-off "
+        "(a probe, a check) scratch_verb_noun: it runs as usual but stays out of find. "
         "The body is the full script source.",
         {
             "name": {**_STR, "description": "slug, ^[a-z][a-z0-9_]{2,63}$"},
@@ -180,7 +187,9 @@ GRIM_TOOLS: list[dict[str, Any]] = [
         "Append a new version of an existing script (e.g. to fix a bug found by run). "
         "changelog is a required one-line note on why this version exists; body is the "
         "full new source. Set lang only to rewrite the script in a different language — "
-        "do that instead of forking a near-duplicate script under a new name.",
+        "do that instead of forking a near-duplicate script under a new name. A legacy "
+        "script in a language that is no longer enabled (e.g. bash) must be ported: "
+        "rewrite it in python and set lang to python.",
         {
             "name": _STR,
             "changelog": {**_STR, "description": "why this version exists"},
