@@ -186,10 +186,13 @@ conn.row_factory = sqlite3.Row
 
 total_runs = conn.execute("SELECT COUNT(*) AS n FROM execution").fetchone()["n"]
 
+# The escape hatches: the retired shell seed, the agent-made run_sh, and the
+# no-shell run_cmd / run_py that replaced them.
 shell_runs = conn.execute(
     "SELECT COUNT(*) AS n FROM execution e "
     "JOIN script_version sv ON sv.id = e.script_version_id "
-    "JOIN script s ON s.id = sv.script_id WHERE s.name = 'shell'"
+    "JOIN script s ON s.id = sv.script_id "
+    "WHERE s.name IN ('shell', 'run_sh', 'run_cmd', 'run_py')"
 ).fetchone()["n"]
 
 reused_runs = conn.execute(

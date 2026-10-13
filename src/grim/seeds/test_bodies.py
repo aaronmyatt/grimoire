@@ -284,6 +284,32 @@ def test_stats_reports_shell_escape_and_reuse_rates(
     assert "active library: 100.00%" in result.stdout
 
 
+def test_stats_counts_run_cmd_and_run_py_as_escape_hatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _seed_fixture_db(tmp_path, monkeypatch)  # 1 shell + 3 greet runs
+    for seq, name in ((10, "run_cmd"), (11, "run_py")):
+        script_id = conn.execute(
+            "INSERT INTO script (name, language, description, seeded) VALUES (?, 'python', 'd', 1)",
+            (name,),
+        ).lastrowid
+        version_id = conn.execute(
+            "INSERT INTO script_version (script_id, version, body, body_hash) "
+            "VALUES (?, 1, 'b', ?)",
+            (script_id, f"hash-{name}"),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO execution (script_version_id, session_id, seq, exit_code) "
+            "VALUES (?, 's1', ?, 0)",
+            (version_id, seq),
+        )
+    conn.commit()
+
+    result = _run("stats")
+    assert "total runs: 6" in result.stdout
+    assert "shell-escape rate: 50.00%" in result.stdout  # 3 of 6
+
+
 def test_gardener_reports_stale_scripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     conn = _seed_fixture_db(tmp_path, monkeypatch)
     # backdate greet's only execution history so it reads as stale, then
