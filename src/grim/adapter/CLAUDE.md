@@ -130,10 +130,17 @@ D6 revised → native tool-calling).
   from this slash command.
 - `run.sh` — the recommended launcher: `./run.sh -m <model> -y -t
   "<task>"`. A pre-launch wrapper only (runs *before* the agent loop
-  starts, to pick a fresh `/tmp` trajectory path per invocation) — not
+  starts, to pick a fresh trajectory path per invocation under
+  `$GRIM_TRAJ_DIR` or `~/.grimoire/trajectories`) — not
   part of the `execute()` control plane the invariants below govern.
   Bypass it and call `uv run mini -c grimoire.yaml ...` directly for
   mini's stock single-fixed-file output behavior instead.
+- `trajectories.py` — `next_path(stamp, pid)`: where `grim-agent` writes
+  each run's trajectory (`$GRIM_TRAJ_DIR`, else `~/.grimoire/trajectories`,
+  always absolute; temp dir only if that can't be created), after `prune`
+  cuts grim's own `grimoire-*.traj.json` files there to the newest
+  `$GRIM_TRAJ_KEEP` (default 500, clamped 1–100,000). Other tools' files
+  are never touched.
 - `completer.py` — `GrimCompleter` + `install_grim_completer()`. Attaches a
   prompt_toolkit completer to mini's own prompt sessions (no fork) so a human
   gets `@path` (files only, fuzzy per path segment, uncapped) and `:name`

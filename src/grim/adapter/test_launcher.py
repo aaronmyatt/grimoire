@@ -23,10 +23,12 @@ def test_config_path_resolves_to_the_packaged_yaml() -> None:
     assert Path(path).is_file()
 
 
-def test_trajectory_path_honors_env_and_is_unique_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GRIM_TRAJ_DIR", "/var/tmp")
+def test_trajectory_path_honors_env_and_is_unique_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_TRAJ_DIR", str(tmp_path))
     path = launcher._trajectory_path()
-    assert path.startswith("/var/tmp/grimoire-")
+    assert path.startswith(f"{tmp_path}/grimoire-")
     assert path.endswith(".traj.json")
 
 

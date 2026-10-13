@@ -4,7 +4,7 @@
 # DEFAULT_OUTPUT_FILE), and grimoire.yaml's static config can't compute a
 # fresh one itself (only system_template/instance_template go through
 # Jinja; output_path is consumed as a literal Path). So this script picks
-# a unique /tmp path per invocation and passes it as -o, giving every run
+# a unique path per invocation and passes it as -o, giving every run
 # its own saved trajectory JSON to inspect after a crash or silent stop.
 #
 # ALWAYS launch through this script (or pass `-c grimoire.yaml` yourself).
@@ -17,7 +17,11 @@
 set -euo pipefail
 
 adapter_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-traj_path="/tmp/grimoire-mini-$(date +%Y%m%dT%H%M%S)-$$.traj.json"
+# Same dir as grim-agent (adapter/trajectories.py): survives reboots, unlike
+# /tmp. grim-agent's launch-time prune also caps the grimoire-mini-* files.
+traj_dir="${GRIM_TRAJ_DIR:-$HOME/.grimoire/trajectories}"
+mkdir -p "$traj_dir"
+traj_path="$traj_dir/grimoire-mini-$(date +%Y%m%dT%H%M%S)-$$.traj.json"
 
 echo "[grim] trajectory: $traj_path" >&2
 # All arguments are forwarded to mini untouched.

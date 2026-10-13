@@ -25,14 +25,13 @@ import enum
 import json
 import os
 import sys
-import tempfile
 import time
 from importlib import resources
 from pathlib import Path
 from typing import Any, NamedTuple
 
 from grim import cli, db
-from grim.adapter import trace
+from grim.adapter import trace, trajectories
 from grim.adapter.mini_prompt_patch import ensure_mini_task_prompt_patch
 
 # grimoire.yaml ships inside this package (see pyproject hatchling config);
@@ -87,7 +86,7 @@ Common options:
                        and reuse the last session's lineage. Off by default.
   -l, --cost-limit N   Cost limit in USD; 0 disables.
   -o, --output PATH    Trajectory JSON (default: a fresh per-run file under
-                       $GRIM_TRAJ_DIR or the system temp dir).
+                       $GRIM_TRAJ_DIR or ~/.grimoire/trajectories).
   -c, --config SPEC    Extra mini config file / key=value, merged on top of
                        grim's own packaged config.
 
@@ -119,10 +118,9 @@ def _config_path() -> str:
 def _trajectory_path() -> str:
     """A fresh trajectory file per run so a crash leaves an inspectable
     transcript — mini overwrites one fixed path by default (adapter/run.sh).
-    Honors $GRIM_TRAJ_DIR, else the system temp dir."""
-    base = os.environ.get("GRIM_TRAJ_DIR") or tempfile.gettempdir()
-    path = os.path.join(base, f"grimoire-{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}.traj.json")
-    assert base, "trajectory dir must be non-empty"
+    Where, and how many are kept: adapter/trajectories.py."""
+    path = trajectories.next_path(time.strftime("%Y%m%dT%H%M%S"), os.getpid())
+    assert os.path.isabs(path), "trajectory path must be absolute"
     assert path.endswith(".traj.json"), "trajectory path must be a .traj.json file"
     return path
 
