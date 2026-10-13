@@ -166,9 +166,9 @@ def test_env_fingerprint_present_for_bash_and_python() -> None:
 
 
 def test_supported_languages_off_by_default() -> None:
-    # With no [languages] config, only bash + python are writable — the exact
-    # contract verbs/write.py validates against.
-    assert supported_languages() == frozenset({"bash", "python"})
+    # With no [languages] config, only python is writable (the python-only
+    # pivot) — the exact contract verbs/write.py validates against.
+    assert supported_languages() == frozenset({"python"})
 
 
 def test_enabled_languages_filters_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,7 +178,7 @@ def test_enabled_languages_filters_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_supported_languages_includes_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRIM_LANGUAGES", "ruby,jq")
-    assert supported_languages() == frozenset({"bash", "python", "ruby", "jq"})
+    assert supported_languages() == frozenset({"python", "ruby", "jq"})
 
 
 def test_osascript_gated_to_darwin(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -342,8 +342,10 @@ def test_kill_group_terminates_a_grandchild() -> None:
 # --- base-language subsetting (GRIM_BASE_LANGUAGES, the solo-arm knob) -------
 
 
-def test_base_languages_unset_keeps_both_builtins(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_base_languages_unset_is_python_only(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GRIM_BASE_LANGUAGES", raising=False)
+    assert base_languages() == frozenset({"python"})
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "python,bash")  # bash opted back in
     assert base_languages() == frozenset({"python", "bash"})
 
 
@@ -369,7 +371,7 @@ def test_supported_languages_solo_extended(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_supported_languages_fail_safe_never_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Both knobs emptied out -> fall back to the builtin pair, never a brick.
+    # Both knobs emptied out -> fall back to python, never a brick.
     monkeypatch.setenv("GRIM_BASE_LANGUAGES", "")
     monkeypatch.delenv("GRIM_LANGUAGES", raising=False)
-    assert supported_languages() == frozenset({"python", "bash"})
+    assert supported_languages() == frozenset({"python"})
