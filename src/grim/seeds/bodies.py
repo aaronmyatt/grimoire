@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from grim.seeds.bodies_exec import RUN_BG
+
 
 @dataclass(frozen=True)
 class SeedSpec:
@@ -316,47 +318,6 @@ for row in rows:
 print(f"exported {len(rows)} scripts to {out_dir}/")
 '''
 
-_RUN_BG = '''"""run_bg — start a shell command as a detached background job, tagged
-grimbg:<name> and logged to <run_dir>/<name>.log. For long-lived processes
-(servers, watchers) that a normal `grim run` would kill at its timeout ceiling.
-Usage: run_bg NAME COMMAND...  (run dir: $GRIM_RUN_DIR or ~/.grimoire/run)"""
-import os
-import shlex
-import subprocess
-import sys
-from pathlib import Path
-
-if len(sys.argv) < 3:
-    print("usage: run_bg NAME COMMAND...", file=sys.stderr)
-    sys.exit(2)
-
-name = sys.argv[1]
-# One command arg = a full command line, run verbatim; several = argv words
-# rejoined with quoting preserved (same shape rules as the shell seed).
-# Ref: https://docs.python.org/3/library/shlex.html#shlex.join
-command = sys.argv[2] if len(sys.argv) == 3 else shlex.join(sys.argv[2:])
-run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
-run_dir.mkdir(parents=True, exist_ok=True)
-log_path = run_dir / f"{name}.log"
-pid_path = run_dir / f"{name}.pid"
-
-# `exec -a` sets argv[0], so `pgrep -f grimbg:` discovers the job by name;
-# start_new_session detaches it into its own session/process group so it
-# outlives this dispatched script and can be signalled as a group by stop_bg.
-tagged = f'exec -a "grimbg:{name}" bash -c {shlex.quote(command)}'
-with open(log_path, "ab") as log:
-    proc = subprocess.Popen(
-        ["bash", "-c", tagged],
-        stdout=log,
-        stderr=log,
-        stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-pid_path.write_text(str(proc.pid))
-print(f"started grimbg:{name} pid {proc.pid}")
-print(f"log: {log_path}")
-'''
-
 _LIST_BG = '''"""list_bg — list background jobs started by run_bg: name, pid, state, log.
 Reads <run_dir>/*.pid and checks liveness via os.kill(pid, 0)."""
 import os
@@ -487,8 +448,9 @@ SEEDS: list[SeedSpec] = [
     SeedSpec(
         name="run_bg",
         language="python",
-        description="start a shell command as a detached background job for long-lived processes",
-        body=_RUN_BG,
+        description="start a program as a detached background job for long-lived processes "
+        "(servers, watchers): run_bg NAME PROGRAM [ARG...] — no shell",
+        body=RUN_BG,
     ),
     SeedSpec(
         name="list_bg",

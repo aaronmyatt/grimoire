@@ -18,6 +18,7 @@ from grim.seeds.bodies import SEEDS
 _TIMEOUT_S = 10.0
 # The strict-argv convention: a wrong invocation exits 2 with a usage line.
 _USAGE_EXIT_CODE = 2
+_NOT_FOUND_EXIT_CODE = 127
 
 
 def _seed_body(name: str) -> str:
@@ -389,6 +390,38 @@ def test_run_bg_multi_element_argv_preserves_word_boundaries(
     while not target.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     assert target.exists(), "backgrounded touch never created its spaced-path target"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [["sleep 1 && echo hi"], ["sleep", "1", "|", "cat"], ["bash", "-c", "sleep 1"], ["sh x.sh"]],
+    ids=["and-chain", "pipe", "bash", "sh"],
+)
+def test_run_bg_refuses_shell_syntax_and_shell_programs(
+    command: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "run"
+    monkeypatch.setenv("GRIM_RUN_DIR", str(run_dir))
+    result = _run("run_bg", argv=["job3", *command])
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "no shell here" in result.stderr
+    assert not (run_dir / "job3.pid").exists()  # nothing was started
+
+
+def test_run_bg_rejects_a_path_like_job_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
+    result = _run("run_bg", argv=["../escape", "sleep", "1"])
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "bad job name" in result.stderr
+
+
+def test_run_bg_reports_a_missing_program(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
+    result = _run("run_bg", argv=["job4", "definitely-not-a-real-program-xyz"])
+    assert result.exit_code == _NOT_FOUND_EXIT_CODE
+    assert "not found on PATH" in result.stderr
 
 
 def test_stop_bg_reports_unknown_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

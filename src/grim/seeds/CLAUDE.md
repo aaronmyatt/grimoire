@@ -5,10 +5,12 @@ Seed script bodies loaded on `grim init` (`shell`, `read_file`,
 `write_file`, `edit_file`, `apply_patch`, `grep_tree`, `list_dir`,
 `stats`, `gardener`, `export_library`, plus the background-job trio
 `run_bg`/`list_bg`/`stop_bg` — build plan §3 Phase 3, D11). Meta-tooling ships as library scripts here,
-not as new CLI verbs. The background trio tags detached processes
-`grimbg:<name>` and tracks them under `$GRIM_RUN_DIR` (default
-`~/.grimoire/run`): the answer to "long-lived work" is a background job,
-not a longer `grim run` timeout (which is hard-capped, see verbs/run.py).
+not as new CLI verbs. The background trio tracks detached processes by pid
+file under `$GRIM_RUN_DIR` (default `~/.grimoire/run`; each job also
+carries `GRIMBG_NAME` in its env): the answer to "long-lived work" is a
+background job, not a longer `grim run` timeout (which is hard-capped, see
+verbs/run.py). Program-starting bodies live in `bodies_exec.py` and never
+use a shell: argv only, shell operators and shell interpreters refused.
 
 ## Public interface
 `loader.py` — `load_seeds(db) -> list[str]`: bare names for newly written
