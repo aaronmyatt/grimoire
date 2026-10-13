@@ -321,6 +321,40 @@ def test_gardener_proposes_week_idle_scratch_scripts_in_their_own_section(
     assert "scratch_" not in stale_section.split("=== stale")[1]  # one section only
 
 
+def test_gardener_lists_run_py_snippets_run_more_than_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _seed_fixture_db(tmp_path, monkeypatch)  # sessions s0, s1; seq 1-4 used in s1
+    script_id = conn.execute(
+        "INSERT INTO script (name, language, description, seeded) "
+        "VALUES ('run_py', 'python', 'd', 1)"
+    ).lastrowid
+    version_id = conn.execute(
+        "INSERT INTO script_version (script_id, version, body, body_hash) "
+        "VALUES (?, 1, 'b', 'hash-run_py')",
+        (script_id,),
+    ).lastrowid
+    runs = [
+        ("s0", 1, "import json\nprint(json.dumps({}))\n"),
+        ("s1", 10, "  import json\nprint(json.dumps({}))"),  # same text once trimmed
+        ("s1", 11, "import json\nprint(json.dumps({}))"),
+        ("s1", 12, "print('only once')"),
+    ]
+    for session, seq, stdin in runs:
+        conn.execute(
+            "INSERT INTO execution (script_version_id, session_id, seq, stdin, exit_code) "
+            "VALUES (?, ?, ?, ?, 0)",
+            (version_id, session, seq, stdin),
+        )
+    conn.commit()
+
+    section = _run("gardener").stdout.split("=== repeated run_py snippets")[1]
+
+    assert "3 runs / 2 sessions" in section
+    assert "import json" in section
+    assert "only once" not in section
+
+
 def test_gardener_reports_exact_duplicate_bodies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

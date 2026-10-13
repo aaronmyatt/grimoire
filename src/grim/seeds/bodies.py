@@ -256,6 +256,29 @@ if not scratch:
     print("  (none)")
 for row in scratch:
     print(f"  {row['name']}")
+
+# run_py snippets leave no named script behind, only their source as the
+# execution's stdin. One run twice (exact text) is a script worth writing.
+TOP_SNIPPETS = 10
+# TRIM strips only spaces by default; name tabs/newlines so a trailing
+# newline can't split one snippet in two. Ref: https://www.sqlite.org/lang_corefunc.html#trim
+SOURCE = "TRIM(COALESCE(e.stdin, ''), ' ' || char(9) || char(10) || char(13))"
+print("=== repeated run_py snippets (promote to a named script) ===")
+snippets = conn.execute(
+    "SELECT MAX(e.id) AS exec_id, COUNT(*) AS runs, COUNT(DISTINCT e.session_id) AS "
+    f"sessions, {SOURCE} AS source FROM execution e "
+    "JOIN script_version sv ON sv.id = e.script_version_id "
+    "JOIN script s ON s.id = sv.script_id "
+    f"WHERE s.name = 'run_py' AND {SOURCE} != '' "
+    f"GROUP BY {SOURCE} HAVING COUNT(*) >= 2 ORDER BY runs DESC, exec_id DESC LIMIT ?",
+    (TOP_SNIPPETS,),
+).fetchall()
+if not snippets:
+    print("  (none)")
+for row in snippets:
+    first_line = row["source"].splitlines()[0][:80]
+    counts = f"{row['runs']} runs / {row['sessions']} sessions"
+    print(f"  {counts}  exec #{row['exec_id']}  {first_line}")
 '''
 
 _EXPORT_LIBRARY = '''"""export_library — dump the latest version of every non-archived
