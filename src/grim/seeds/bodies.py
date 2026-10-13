@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from grim.seeds.bodies_exec import RUN_BG
+from grim.seeds.bodies_exec import RUN_BG, RUN_CMD
 
 
 @dataclass(frozen=True)
@@ -382,6 +382,13 @@ finally:
 '''
 
 SEEDS: list[SeedSpec] = [
+    SeedSpec(
+        name="run_cmd",
+        language="python",
+        description="run one program with its arguments, no shell: run_cmd git status — "
+        "the escape hatch for CLIs (git, uv, curl, ssh, docker); no pipes or &&",
+        body=RUN_CMD,
+    ),
     SeedSpec(
         name="shell",
         language="python",

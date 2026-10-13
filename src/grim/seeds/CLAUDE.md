@@ -1,7 +1,7 @@
 # Slice: seeds
 
 ## Purpose
-Seed script bodies loaded on `grim init` (`shell`, `read_file`,
+Seed script bodies loaded on `grim init` (`run_cmd`, `shell`, `read_file`,
 `write_file`, `edit_file`, `apply_patch`, `grep_tree`, `list_dir`,
 `stats`, `gardener`, `export_library`, plus the background-job trio
 `run_bg`/`list_bg`/`stop_bg` — build plan §3 Phase 3, D11). Meta-tooling ships as library scripts here,

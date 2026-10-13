@@ -70,3 +70,59 @@ pid_path.write_text(str(proc.pid))
 print(f"started grimbg:{name} pid {proc.pid}")
 print(f"log: {log_path}")
 '''
+
+RUN_CMD = '''"""run_cmd — run ONE program with its arguments, no shell. Examples:
+run_cmd git status   run_cmd uv run pytest -q   run_cmd curl -sS URL
+A single quoted command string is split shlex-style. Pipes, redirects, &&,
+;, globbing, cd, and shell interpreters (bash, sh, ...) are refused — chain
+and filter in python instead (run_py for a one-off, a named script if you'll
+do it twice). Exit code, stdin and output pass straight through.
+Usage: run_cmd PROGRAM [ARG...]
+Ref: https://docs.python.org/3/library/subprocess.html#subprocess.run"""
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+
+SHELL_OPERATORS = {"|", "||", "&", "&&", ";", ">", ">>", "<", "<<", "2>", "2>&1", "&>"}
+SHELLS = {"bash", "sh", "zsh", "dash", "fish", "ksh", "csh", "tcsh"}
+# Programs a seed already covers with bounded, structured output. The hint
+# goes to stderr and the command still runs: a nudge, never a new failure.
+BETTER_SEEDS = {
+    "cat": "read_file PATH [START] [END]",
+    "head": "read_file PATH 1 N",
+    "tail": "read_file PATH START",
+    "sed": "read_file PATH START END to view, edit_file to edit",
+    "grep": "grep_tree PATTERN [PATH]",
+    "rg": "grep_tree PATTERN [PATH]",
+    "ls": "list_dir [PATH]",
+    "find": "list_dir [PATH] or grep_tree PATTERN [PATH]",
+}
+
+if len(sys.argv) < 2:
+    print("usage: run_cmd PROGRAM [ARG...]", file=sys.stderr)
+    sys.exit(2)
+argv = shlex.split(sys.argv[1]) if len(sys.argv) == 2 else sys.argv[1:]
+operators = sorted({token for token in argv if token in SHELL_OPERATORS})
+if not argv or operators or os.path.basename(argv[0]) in SHELLS:
+    print(
+        f"run_cmd: no shell here (got {operators or argv[:1]}). Run one program, and do "
+        "the chaining/filtering in python: run_py for a one-off, or write a named script.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+program = os.path.basename(argv[0])
+if program in BETTER_SEEDS:
+    print(f"[run_cmd] hint: the {BETTER_SEEDS[program]} seed does this better", file=sys.stderr)
+if shutil.which(argv[0]) is None:
+    # The 'command not found' class: usually a library script called as if it
+    # were a program on PATH. Library scripts are reached through run(name=...).
+    print(
+        f"run_cmd: {argv[0]!r} is not a program on PATH. If it is a library script, "
+        f'call run(name="{argv[0]}") instead.',
+        file=sys.stderr,
+    )
+    sys.exit(127)
+sys.exit(subprocess.run(argv, check=False).returncode)
+'''
