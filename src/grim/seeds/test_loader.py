@@ -9,7 +9,7 @@ import pytest
 
 from grim import db
 from grim.seeds.bodies import SEEDS
-from grim.seeds.loader import enabled_seeds, load_seeds
+from grim.seeds.loader import RETIRED_SEEDS, enabled_seeds, load_seeds
 from grim.verbs import _shared, update
 
 
@@ -65,14 +65,14 @@ def test_load_seeds_resyncs_a_drifted_seed_body(
     body at the next load — as a new append-only version, never a rewrite."""
     conn = _migrated_conn(tmp_path, monkeypatch)
     load_seeds(conn)
-    drifted = update.UpdateRequest(name="shell", changelog="local drift", body='print("old")\n')
+    drifted = update.UpdateRequest(name="list_dir", changelog="local drift", body='print("old")\n')
     update.update_script(conn, drifted)
 
     second_pass = load_seeds(conn)
 
-    assert second_pass == ["shell@3"]  # v1 seeded, v2 drift, v3 re-sync
-    bundled = next(seed.body for seed in SEEDS if seed.name == "shell")
-    assert _latest(conn, "shell")["body"] == bundled
+    assert second_pass == ["list_dir@3"]  # v1 seeded, v2 drift, v3 re-sync
+    bundled = next(seed.body for seed in SEEDS if seed.name == "list_dir")
+    assert _latest(conn, "list_dir")["body"] == bundled
     assert load_seeds(conn) == []  # converged: a third pass is a no-op
 
 
@@ -81,14 +81,14 @@ def test_load_seeds_resyncs_a_drifted_description(
 ) -> None:
     conn = _migrated_conn(tmp_path, monkeypatch)
     load_seeds(conn)
-    conn.execute("UPDATE script SET description = 'stale words' WHERE name = 'shell'")
+    conn.execute("UPDATE script SET description = 'stale words' WHERE name = 'list_dir'")
     conn.commit()
 
     second_pass = load_seeds(conn)
 
-    assert second_pass == ["shell@1"]  # description refreshed, body untouched
-    bundled = next(seed.description for seed in SEEDS if seed.name == "shell")
-    assert _latest(conn, "shell")["description"] == bundled
+    assert second_pass == ["list_dir@1"]  # description refreshed, body untouched
+    bundled = next(seed.description for seed in SEEDS if seed.name == "list_dir")
+    assert _latest(conn, "list_dir")["description"] == bundled
 
 
 def test_load_seeds_never_touches_unseeded_or_archived_rows(
@@ -98,14 +98,14 @@ def test_load_seeds_never_touches_unseeded_or_archived_rows(
     of sync-scope — re-running load_seeds must leave it exactly as found."""
     conn = _migrated_conn(tmp_path, monkeypatch)
     load_seeds(conn)
-    conn.execute("UPDATE script SET seeded = 0, description = 'mine now' WHERE name = 'shell'")
+    conn.execute("UPDATE script SET seeded = 0, description = 'mine now' WHERE name = 'list_dir'")
     conn.execute("UPDATE script SET archived = 1, description = 'shelved' WHERE name = 'stats'")
     conn.commit()
 
     second_pass = load_seeds(conn)
 
     assert second_pass == []
-    assert _latest(conn, "shell")["description"] == "mine now"
+    assert _latest(conn, "list_dir")["description"] == "mine now"
     assert _latest(conn, "stats")["description"] == "shelved"
 
 
@@ -121,7 +121,7 @@ def test_load_seeds_honors_a_base_seeds_subset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The eval knob: GRIM_BASE_SEEDS picks which bundled seeds land, so an
-    experiment arm can run the same task set with and without `shell`."""
+    experiment arm can run the same task set with and without `run_cmd`."""
     monkeypatch.setenv("GRIM_BASE_SEEDS", "read_file, write_file")  # spaces tolerated
     conn = _migrated_conn(tmp_path, monkeypatch)
 
@@ -148,7 +148,7 @@ def test_load_seeds_rejects_an_unknown_seed_name(
 ) -> None:
     """A typo in the env var must abort init loudly before any write —
     silently seeding a different set would corrupt an experiment arm."""
-    monkeypatch.setenv("GRIM_BASE_SEEDS", "shell,read_fiel")
+    monkeypatch.setenv("GRIM_BASE_SEEDS", "run_cmd,read_fiel")
     conn = _migrated_conn(tmp_path, monkeypatch)
 
     with pytest.raises(ValueError, match="read_fiel"):
@@ -163,13 +163,13 @@ def test_load_seeds_exclusion_never_removes_a_present_seed(
     unsynced) — the knob gates seeding, it never archives."""
     conn = _migrated_conn(tmp_path, monkeypatch)
     load_seeds(conn)  # full roster first
-    monkeypatch.setenv("GRIM_BASE_SEEDS", "shell")
+    monkeypatch.setenv("GRIM_BASE_SEEDS", "run_cmd")
     conn.execute("UPDATE script SET description = 'stale words' WHERE name = 'stats'")
     conn.commit()
 
     second_pass = load_seeds(conn)
 
-    assert second_pass == []  # shell in sync; excluded stats not re-synced
+    assert second_pass == []  # run_cmd in sync; excluded stats not re-synced
     assert _latest(conn, "stats")["description"] == "stale words"
     assert conn.execute("SELECT COUNT(*) AS n FROM script").fetchone()["n"] == len(SEEDS)
 
@@ -208,3 +208,45 @@ def test_load_seeds_resyncs_drift_even_when_python_is_unwritable(
     assert load_seeds(conn) == ["read_file@3"]
     bundled = next(seed.body for seed in SEEDS if seed.name == "read_file")
     assert _latest(conn, "read_file")["body"] == bundled
+
+
+def _insert_bundled_shell(conn: sqlite3.Connection, seeded: int) -> None:
+    """A library from before the pivot: a `shell` row as the old build wrote it."""
+    script_id = conn.execute(
+        "INSERT INTO script (name, language, description, seeded) "
+        "VALUES ('shell', 'python', 'run any shell command', ?)",
+        (seeded,),
+    ).lastrowid
+    conn.execute(
+        "INSERT INTO script_version (script_id, version, body, body_hash) "
+        "VALUES (?, 1, 'print(1)', 'h')",
+        (script_id,),
+    )
+    conn.commit()
+
+
+def test_load_seeds_archives_a_retired_seed_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _insert_bundled_shell(conn, seeded=1)
+
+    assert "shell (retired)" in load_seeds(conn)
+    row = conn.execute("SELECT archived FROM script WHERE name = 'shell'").fetchone()
+    assert row["archived"] == 1
+    assert load_seeds(conn) == []  # converged: retiring is idempotent
+
+
+def test_load_seeds_leaves_a_taken_over_retired_name_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _insert_bundled_shell(conn, seeded=0)  # a human's own script named shell
+
+    assert "shell (retired)" not in load_seeds(conn)
+    row = conn.execute("SELECT archived FROM script WHERE name = 'shell'").fetchone()
+    assert row["archived"] == 0
+
+
+def test_retired_seeds_are_never_bundled() -> None:
+    assert not set(RETIRED_SEEDS) & {seed.name for seed in SEEDS}

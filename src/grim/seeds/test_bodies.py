@@ -33,40 +33,6 @@ def _run(
     return dispatch(script_version, request)
 
 
-def test_shell_runs_a_shell_command() -> None:
-    result = _run("shell", argv=["echo hello"])
-    assert result.exit_code == 0
-    assert result.stdout.strip() == "hello"
-
-
-def test_shell_propagates_exit_code() -> None:
-    expected_exit_code = 3
-    result = _run("shell", argv=[f"exit {expected_exit_code}"])
-    assert result.exit_code == expected_exit_code
-
-
-def test_shell_multi_element_argv_preserves_word_boundaries(tmp_path: Path) -> None:
-    """Regression: the old naive " ".join dissolved a spaced path into two
-    words, so this exact call used to fail with 'No such file'."""
-    target = tmp_path / "has space.txt"
-    target.write_text("payload")
-    result = _run("shell", argv=["cat", str(target)])
-    assert result.exit_code == 0
-    assert result.stdout == "payload"
-
-
-def test_shell_runs_stdin_body_when_no_argv() -> None:
-    result = _run("shell", stdin="echo one\necho two\n")
-    assert result.exit_code == 0
-    assert result.stdout == "one\ntwo\n"
-
-
-def test_shell_empty_invocation_exits_with_usage() -> None:
-    result = _run("shell")
-    assert result.exit_code == _USAGE_EXIT_CODE
-    assert "usage:" in result.stderr
-
-
 @pytest.mark.parametrize(
     ("name", "argv"),
     [

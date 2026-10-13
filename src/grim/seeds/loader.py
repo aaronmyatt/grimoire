@@ -13,6 +13,13 @@ from grim.verbs import update, write
 SEED_SESSION_ID = "human-adhoc"  # grim init is a human action
 _SYNC_CHANGELOG = "grim init: re-sync with the bundled seed body"
 _BASE_SEEDS_ENV = "GRIM_BASE_SEEDS"
+# Seeds this build no longer ships. load_seeds archives a row of that name
+# only while it is still the bundled seed (seeded=1, unarchived) — a row a
+# human took over (seeded=0) is theirs to keep. Archived, never deleted: its
+# versions and executions stay readable (D4, append-only). `shell` ran
+# /bin/sh; the python-only pivot (docs/python-pivot-plan.md) replaced it
+# with run_cmd and run_py.
+RETIRED_SEEDS: tuple[str, ...] = ("shell",)
 
 
 def enabled_seeds() -> list[SeedSpec]:
@@ -120,5 +127,23 @@ def load_seeds(conn: sqlite3.Connection) -> list[str]:
         conn.commit()
         applied.append(seed.name)
 
-    assert len(applied) <= len(roster), "cannot apply more names than the enabled roster"
+    applied.extend(_retire_seeds(conn))
+    assert len(applied) <= len(roster) + len(RETIRED_SEEDS), "one entry per seed at most"
     return applied
+
+
+def _retire_seeds(conn: sqlite3.Connection) -> list[str]:
+    """Archive still-bundled rows of RETIRED_SEEDS; returns 'name (retired)'
+    for each one archived now, [] once converged."""
+    assert not set(RETIRED_SEEDS) & {s.name for s in SEEDS}, "a retired seed is never bundled"
+    retired: list[str] = []
+    for name in RETIRED_SEEDS:
+        cursor = conn.execute(
+            "UPDATE script SET archived = 1 WHERE name = ? AND seeded = 1 AND archived = 0",
+            (name,),
+        )
+        if cursor.rowcount:
+            retired.append(f"{name} (retired)")
+    conn.commit()
+    assert len(retired) <= len(RETIRED_SEEDS), "each retired name archives at most one row"
+    return retired

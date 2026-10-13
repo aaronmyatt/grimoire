@@ -18,32 +18,6 @@ class SeedSpec:
     body: str
 
 
-_SHELL = '''"""shell — escape hatch: run one shell command. Three call shapes:
-one arg = a full command line (pipes/redirects work); several args = argv
-words rejoined with quoting preserved (a word with spaces stays one word;
-shell operators like | are literal in this shape); no args = the command
-is read from stdin — the quoting-proof route for multi-line commands.
-Usage: shell COMMAND..."""
-import shlex
-import subprocess
-import sys
-
-if len(sys.argv) == 2:
-    command = sys.argv[1]
-elif len(sys.argv) > 2:
-    # shlex.join quotes each word so the shell re-tokenizes to exactly this
-    # argv — never the old naive " ".join that dissolved word boundaries.
-    # Ref: https://docs.python.org/3/library/shlex.html#shlex.join
-    command = shlex.join(sys.argv[1:])
-else:
-    command = sys.stdin.read()
-if not command.strip():
-    print("usage: shell COMMAND...  (or pipe the command via stdin)", file=sys.stderr)
-    sys.exit(2)
-result = subprocess.run(command, shell=True)
-sys.exit(result.returncode)
-'''
-
 _READ_FILE = '''"""read_file — print a file, optionally sliced by line range.
 Usage: read_file PATH [START] [END] (1-indexed, inclusive; END omitted = EOF)
 """
@@ -398,14 +372,6 @@ SEEDS: list[SeedSpec] = [
         description="run a one-off python snippet from stdin (args become sys.argv) — "
         "the quick path for chaining/filtering that used to be a shell pipeline",
         body=RUN_PY,
-    ),
-    SeedSpec(
-        name="shell",
-        language="python",
-        description="run any shell command — the escape hatch when no script fits yet "
-        "(one arg = full command line; several args stay separate words; "
-        "no args = command read from stdin, the route for multi-line bodies)",
-        body=_SHELL,
     ),
     SeedSpec(
         name="read_file",

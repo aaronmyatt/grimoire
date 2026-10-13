@@ -1,7 +1,7 @@
 # Slice: seeds
 
 ## Purpose
-Seed script bodies loaded on `grim init` (`run_cmd`, `run_py`, `shell`, `read_file`,
+Seed script bodies loaded on `grim init` (`run_cmd`, `run_py`, `read_file`,
 `write_file`, `edit_file`, `apply_patch`, `grep_tree`, `list_dir`,
 `stats`, `gardener`, `export_library`, plus the background-job trio
 `run_bg`/`list_bg`/`stop_bg` — build plan §3 Phase 3, D11). Meta-tooling ships as library scripts here,
@@ -43,3 +43,8 @@ symbols.
 - Seed bodies are plain scripts stored as `script_version.body` rows —
   this slice never gives seeds special execution privileges over
   agent-authored scripts.
+- `loader.RETIRED_SEEDS` (today: `shell`, which ran `/bin/sh`) names seeds
+  this build no longer ships. `load_seeds` archives such a row only while
+  it is still the bundled seed (`seeded=1`, unarchived) and reports it as
+  `name (retired)`; a taken-over row (`seeded=0`) is never touched, and
+  nothing is ever deleted. A retired name is never also in `SEEDS`.
