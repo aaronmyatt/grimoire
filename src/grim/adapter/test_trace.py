@@ -207,3 +207,20 @@ def test_turn_counter_advances() -> None:
     first = trace.turn_begin()
     second = trace.turn_begin()
     assert second == first + _ONE
+
+
+def test_exit_hook_closes_an_open_session_once() -> None:
+    trace.session_open("s1")
+    trace._close_at_exit()
+    trace._close_at_exit()  # nothing open now: a no-op, not a second record
+    trace._flush()
+
+    closes = [e for e in _events() if e["kind"] == "session" and e["phase"] == "close"]
+    assert len(closes) == _ONE
+    assert closes[0]["exit_status"] == "process_exit"
+
+
+def test_exit_hook_without_a_session_writes_nothing() -> None:
+    trace._close_at_exit()
+    trace._flush()
+    assert _events() == []

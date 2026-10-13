@@ -292,3 +292,27 @@ def turn_begin() -> int:
     with _lock:
         _current_turn += 1
         return _current_turn
+
+
+_EXIT_STATUS_AT_EXIT = "process_exit"
+
+
+def _close_at_exit() -> None:
+    """atexit hook: a session still open when the interpreter exits (a crash
+    outside GrimAgent.run's finally, a sys.exit from a deeper layer) still
+    gets a close record, marked process_exit — before this, 8 of 103 traced
+    sessions simply had none. SIGKILL and an unhandled SIGTERM/SIGHUP skip
+    atexit entirely; those stay invisible.
+    Ref: https://docs.python.org/3/library/atexit.html
+    """
+    with _lock:
+        open_session = _current_session
+    if open_session is None:
+        return
+    session_close(exit_status=_EXIT_STATUS_AT_EXIT)
+    assert _current_session is None, "the exit hook leaves no session open"
+
+
+# atexit runs handlers last-registered-first, so this close is written before
+# the _flush registered above runs.
+atexit.register(_close_at_exit)

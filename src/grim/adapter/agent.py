@@ -280,10 +280,18 @@ class GrimAgent(InteractiveAgent):
         model = str(getattr(getattr(self.model, "config", None), "model_name", "") or "")
         env.stamp_session(model, task)
         trace.session_open(env.session_id, task=task[:500], model=model)
+        exit_status = "unknown"
         try:
-            return self._run_loop(task, env, model, **kwargs)
+            result = self._run_loop(task, env, model, **kwargs)
+            exit_status = str(result.get("exit_status") or "unknown")
+            return result
+        except BaseException as exc:
+            # Not handled here — only named, so the close record says why the
+            # session died (KeyboardInterrupt, a crash) instead of nothing.
+            exit_status = type(exc).__name__
+            raise
         finally:
-            trace.session_close()
+            trace.session_close(exit_status=exit_status)
 
     def _run_loop(
         self, task: str, env: GrimEnvironment, model: str, **kwargs: object
@@ -322,6 +330,7 @@ class GrimAgent(InteractiveAgent):
             assert isinstance(result, dict), "InteractiveAgent.run always returns a dict"
             if result.get("exit_status") != _NEW_SESSION_EXIT_STATUS:
                 return result
+            trace.session_close(exit_status=_NEW_SESSION_EXIT_STATUS)
             env.session_id = str(uuid.uuid4())
             task = str(result.get("submission", ""))
             env.stamp_session(model, task)
