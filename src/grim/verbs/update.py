@@ -62,11 +62,22 @@ def resolve_language(requested: str | None, current: str) -> str:
     return requested
 
 
-def update_script(conn: sqlite3.Connection, request: UpdateRequest) -> UpdateResult:
+def update_script(
+    conn: sqlite3.Connection, request: UpdateRequest, *, enforce_language_gate: bool = True
+) -> UpdateResult:
+    """Append a new version. `enforce_language_gate=False` mirrors
+    write_script's: it exists for `grim init`'s seed re-sync (seeds/loader.py),
+    which must converge the stdlib whatever the agent-experiment writable set
+    says. An ungated update still stays inside the runner catalog."""
     if not request.changelog.strip():
         raise ValueError("changelog is required")
     latest = _shared.resolve_script_version(conn, request.name, None)
-    language = resolve_language(request.language, latest["language"])
+    if enforce_language_gate:
+        language = resolve_language(request.language, latest["language"])
+    else:
+        language = request.language or latest["language"]
+        if not dispatch.language_tool(language):
+            raise ValueError(f"unknown language {language!r} — not in the runner catalog")
     lint_error = _shared.lint(language, request.body)
     if lint_error:
         raise ValueError(lint_error)

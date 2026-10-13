@@ -75,6 +75,22 @@ def test_update_script_lints_against_existing_language(
         )
 
 
+def test_ungated_update_converges_a_script_outside_the_writable_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `grim init`'s seed re-sync path: a solo-language eval arm makes python
+    # unwritable, but the python stdlib must still converge on its bundle.
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn)
+    monkeypatch.setenv("GRIM_LANGUAGES", "")
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "bash")
+    request = UpdateRequest(name="foo_bar", changelog="sync", body="print(2)")
+    with pytest.raises(ValueError, match="no longer writable"):
+        update_script(conn, request)
+    result = update_script(conn, request, enforce_language_gate=False)
+    assert (result.version, result.language) == (2, "python")
+
+
 # --- resolve_language: pure, so tested without a database -------------------
 
 

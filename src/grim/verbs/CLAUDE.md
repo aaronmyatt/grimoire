@@ -36,6 +36,8 @@ surface.
 - `write_script(..., enforce_language_gate=False)` bypasses only the
   env-derived writable-set check (for `grim init` seeding); the language
   must still exist in the runner catalog, and every other validation runs.
+  `update_script(..., enforce_language_gate=False)` is the same bypass for
+  `grim init`'s seed re-sync (keeps the current language, catalog-checked).
 - Language is recorded per *version* (`script_version.language`, migration
   0003), and `_shared.resolve_script_version` returns
   `COALESCE(sv.language, s.language)` — so `run name@N` always dispatches a
