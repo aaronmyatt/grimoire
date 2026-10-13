@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 from grim import completions, config, db
 from grim.curate import edit, near, recent, tags
 from grim.exec import dispatch
+from grim.metrics import command as stats_command
 from grim.seeds.bodies import SEEDS
 from grim.seeds.loader import load_seeds
 from grim.verbs import find, read, run, update, write
@@ -313,6 +314,10 @@ def build_parser() -> argparse.ArgumentParser:
     favourites_parser = subparsers.add_parser("favourites", help="list starred scripts")
     favourites_parser.add_argument("--limit", type=int)
     favourites_parser.set_defaults(func=tags.cmd_favourites)
+    # Raw usage numbers for humans and visualisation scripts (metrics slice) —
+    # like the curate commands, never on the agent's tool surface.
+    stats_parser = subparsers.add_parser("stats", help="raw usage stats in table/json/csv/...")
+    stats_command.configure(stats_parser)
     for add_parser in (
         _add_write_parser,
         _add_update_parser,
