@@ -35,11 +35,11 @@ def test_ten_task_smoke_suite_and_stats_reflect_the_session(
 
     monkeypatch.setenv("GRIM_SESSION", "test-session-1")
 
-    exit_code, out = _run(monkeypatch, capsys, ["run", "shell", "--", "echo", "first"])
+    exit_code, out = _run(monkeypatch, capsys, ["run", "run_cmd", "--", "echo", "first"])
     assert exit_code == 0
     assert "first" in out
 
-    exit_code, out = _run(monkeypatch, capsys, ["run", "shell", "--", "echo", "second"])
+    exit_code, out = _run(monkeypatch, capsys, ["run", "run_cmd", "--", "echo", "second"])
     assert exit_code == 0
     assert "second" in out
 
@@ -96,7 +96,7 @@ def test_ten_task_smoke_suite_and_stats_reflect_the_session(
     exit_code, out = _run(monkeypatch, capsys, ["list"])
     assert exit_code == 0
     assert "greet" in out
-    assert "shell" in out
+    assert "run_cmd" in out
 
     _assert_stats_reflect_the_session(monkeypatch, capsys)
 
@@ -104,10 +104,10 @@ def test_ten_task_smoke_suite_and_stats_reflect_the_session(
 def _assert_stats_reflect_the_session(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """7 execution rows precede this call (2 shell, 5 named-script runs);
-    2 of those 7 are the shell escape hatch, 5 are reused seeds/scripts
+    """7 execution rows precede this call (2 run_cmd, 5 named-script runs);
+    2 of those 7 are the run_cmd escape hatch, 5 are reused seeds/scripts
     from an earlier session than "test-session-1". 6 distinct scripts were
-    run (shell, greet, double, write_file, read_file, list_dir) out of
+    run (run_cmd, greet, double, write_file, read_file, list_dir) out of
     len(SEEDS) + 2 unarchived (every seed plus greet and double); the active
     ratio is computed so adding a seed doesn't silently break this golden."""
     scripts_run = 6
