@@ -131,6 +131,28 @@ def test_bad_arg_value_returns_error_observation_not_systemexit() -> None:
     assert "usage:" in run["output"]
 
 
+def test_stamped_session_metadata_lands_on_the_session_row(tmp_path: Path) -> None:
+    env = GrimEnvironment(session_id="stamped")
+    env.stamp_session(" some/model ", "  build the thing  ")
+    _write(env, "greet", "python", "print('hi')")
+
+    conn = sqlite3.connect(tmp_path / "grimoire.db")
+    row = conn.execute("SELECT model, task FROM session WHERE id = 'stamped'").fetchone()
+    conn.close()
+    assert row == ("some/model", "build the thing")
+    assert "GRIM_SESSION_MODEL" not in os.environ  # exported per call, then restored
+
+
+def test_unstamped_session_leaves_metadata_null(tmp_path: Path) -> None:
+    env = GrimEnvironment(session_id="bare")
+    _write(env, "greet", "python", "print('hi')")
+
+    conn = sqlite3.connect(tmp_path / "grimoire.db")
+    row = conn.execute("SELECT model, task FROM session WHERE id = 'bare'").fetchone()
+    conn.close()
+    assert row == (None, None)
+
+
 def test_tool_span_records_the_observation_returncode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

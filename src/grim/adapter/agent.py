@@ -278,6 +278,7 @@ class GrimAgent(InteractiveAgent):
         assert isinstance(task, str), "task is a string"
         env = self._grim_env()
         model = str(getattr(getattr(self.model, "config", None), "model_name", "") or "")
+        env.stamp_session(model, task)
         trace.session_open(env.session_id, task=task[:500], model=model)
         try:
             return self._run_loop(task, env, model, **kwargs)
@@ -323,6 +324,7 @@ class GrimAgent(InteractiveAgent):
                 return result
             env.session_id = str(uuid.uuid4())
             task = str(result.get("submission", ""))
+            env.stamp_session(model, task)
             trace.session_open(env.session_id, task=task[:500], model=model)
 
     def _grim_env(self) -> GrimEnvironment:

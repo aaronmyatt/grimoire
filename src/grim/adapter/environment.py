@@ -27,6 +27,11 @@ from grim.adapter import trace
 from grim.adapter.tools import SUBMIT_TOOL_NAME, tool_call_to_argv
 
 _ARGS_PREVIEW_LIMIT = 200
+# Read by verbs/_shared.py's ensure_session (deliberate duplicate of its
+# SESSION_*_ENV names: slices never import each other, root CLAUDE.md §2).
+_SESSION_MODEL_ENV = "GRIM_SESSION_MODEL"
+_SESSION_TASK_ENV = "GRIM_SESSION_TASK"
+_SESSION_TASK_EXPORT_CHARS = 500
 
 
 def _tool_args_snippet(args: dict[str, Any]) -> str:
@@ -58,6 +63,10 @@ class GrimEnvironment(LocalEnvironment):
         self.config = config_class(**kwargs)
         self.session_id = self.config.session_id or str(uuid.uuid4())
         self.cwd = self.config.cwd or os.getcwd()
+        # What this session is (model, task) — empty until GrimAgent.run
+        # stamps it; exported around each verb call (_metadata_env).
+        self.session_model = ""
+        self.session_task = ""
         conn = db.connect()  # no `init` verb reaches the agent (D12) — ensure schema exists
         try:
             db.migrate(conn)
@@ -101,10 +110,41 @@ class GrimEnvironment(LocalEnvironment):
                 }
             )
         argv, stdin = tool_call_to_argv(tool, args)
-        text, exit_code = _invoke(argv, stdin or "", self.session_id, cwd)
+        with _metadata_env(self.session_model, self.session_task):
+            text, exit_code = _invoke(argv, stdin or "", self.session_id, cwd)
         output = {"output": text, "returncode": exit_code, "exception_info": ""}
         assert "output" in output, "execute() must always return an 'output' key"
         return output
+
+    def stamp_session(self, model: str, task: str) -> None:
+        """Record what this session is, so the first verb call stamps it on
+        the DB session row. GrimAgent.run calls it at start and on /new."""
+        self.session_model = model.strip()
+        self.session_task = task.strip()[:_SESSION_TASK_EXPORT_CHARS]
+        assert len(self.session_task) <= _SESSION_TASK_EXPORT_CHARS, "task export is capped"
+        assert self.session_model == self.session_model.strip(), "model is stripped"
+
+
+@contextlib.contextmanager
+def _metadata_env(model: str, task: str) -> Any:
+    """Export the session's model and task for one verb call, then restore.
+    verbs' ensure_session stamps them on the session row's first insert —
+    a message across the process env, the same channel as GRIM_SESSION.
+    Empty values export nothing, so the row stays NULL rather than blank."""
+    pairs = ((_SESSION_MODEL_ENV, model), (_SESSION_TASK_ENV, task))
+    exported = {name: value for name, value in pairs if value}
+    previous = {name: os.environ.get(name) for name in exported}
+    assert all(exported.values()), "only non-empty metadata is exported"
+    assert previous.keys() == exported.keys(), "every exported name is restored"
+    os.environ.update(exported)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 @contextlib.contextmanager

@@ -43,8 +43,11 @@ D6 revised → native tool-calling).
   executes with it pinned: `_session_env` exports it as `$GRIM_CWD` around
   each verb call, `verbs/run.py` passes it to the dispatched subprocess
   and records it on the execution row — so a drifted process cwd or a
-  script's own `cd` never relocates later actions. No shell in the
-  control plane: `execute` reads the
+  script's own `cd` never relocates later actions. `stamp_session(model,
+  task)` (GrimAgent.run, at start and on `/new`) has `_metadata_env`
+  export `$GRIM_SESSION_MODEL` / `$GRIM_SESSION_TASK` around each verb
+  call, so verbs' `ensure_session` records them on the session row. No
+  shell in the control plane: `execute` reads the
   structured `action["tool"]`/`action["args"]`, maps them via
   `tool_call_to_argv`, and runs `cli.main(argv)` **in-process** through the
   private `_invoke` helper (redirected stdio; traps argparse's
