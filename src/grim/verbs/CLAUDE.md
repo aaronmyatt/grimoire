@@ -76,3 +76,6 @@ surface.
   observation (`failure_hints`, pure): exit 124 points at `run_bg`; any
   other nonzero exit with an empty stderr asks the script to print why.
   Stored stdout/stderr are untouched — hints live in the observation only.
+- `find` leaves out `scratch_*` scripts (`find.SCRATCH_PREFIX`) unless the
+  query itself starts with "scratch" — one-offs stay runnable, recorded,
+  and listable (`list` is unchanged), but never crowd retrieval.

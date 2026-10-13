@@ -110,3 +110,22 @@ def test_cmd_find_shows_last_used_dash_for_never_run(
     assert exit_code == 0
     # never-run script -> "last=-" placeholder, not "last=None".
     assert "last=-" in out
+
+
+def test_find_scripts_hides_scratch_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "scratch_probe_ports", "probe which local ports are listening")
+    _write(conn, "list_open_ports", "list which local ports are listening")
+    names = [row["name"] for row in find_scripts(conn, "local ports listening")]
+    assert names == ["list_open_ports"]
+
+
+def test_find_scripts_query_starting_with_scratch_opts_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _write(conn, "scratch_probe_ports", "probe which local ports are listening")
+    names = [row["name"] for row in find_scripts(conn, "scratch probe ports")]
+    assert names == ["scratch_probe_ports"]
