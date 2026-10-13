@@ -48,6 +48,9 @@ _totals: dict[str, dict[str, dict[str, float]]] = {}
 _session_started: dict[str, float] = {}
 _since_flush = 0
 _FLUSH_EVERY = 32
+# Cap on an error span's `error_msg`: enough to rank failure causes across
+# sessions, never a transcript dump into the log.
+_ERROR_TEXT_LIMIT_CHARS = 300
 
 
 def _enabled() -> bool:
@@ -167,9 +170,27 @@ class _Span:
         _emit(record)
 
 
+def _error_text(exc: BaseException) -> str:
+    """Short, single-line text for an error span. mini's flow exceptions
+    (FormatError, Submitted, ...) carry their message dicts on `.messages`,
+    not in args, so str(exc) is empty for them — read each dict's `content`
+    first. Duck-typed on purpose: this module stays stdlib-only.
+    Ref: https://github.com/SWE-agent/mini-swe-agent/blob/main/src/minisweagent/exceptions.py
+    """
+    assert isinstance(exc, BaseException), "only exceptions reach an error span"
+    messages = getattr(exc, "messages", None)
+    parts: list[str] = []
+    if isinstance(messages, (tuple, list)):
+        parts = [str(m.get("content") or "") for m in messages if isinstance(m, dict)]
+    text = " ".join(" ".join(parts).split()) or " ".join(str(exc).split())
+    clipped = text[:_ERROR_TEXT_LIMIT_CHARS]
+    assert len(clipped) <= _ERROR_TEXT_LIMIT_CHARS, "error_msg must respect its cap"
+    return clipped
+
+
 @contextlib.contextmanager
 def span(phase: str, **fields: object) -> Iterator[_Span]:
-    """Time a region; records on exit (an error field is added if it raised).
+    """Time a region; records on exit (error + error_msg fields if it raised).
     Nested spans are fine — the report treats leaf phases as attributable and
     computes turn overhead as the remainder. A caller-supplied session/turn
     field overrides the module's current values (agent.turn passes turn)."""
@@ -192,7 +213,7 @@ def span(phase: str, **fields: object) -> Iterator[_Span]:
     try:
         yield sp
     except BaseException as exc:
-        sp.end(error=type(exc).__name__)
+        sp.end(error=type(exc).__name__, error_msg=_error_text(exc))
         raise
     else:
         sp.end()

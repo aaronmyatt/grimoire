@@ -121,6 +121,45 @@ def test_error_span_records_error_and_reraises() -> None:
     assert spans[0]["error"] == "ValueError"
 
 
+class _FlowInterrupt(Exception):
+    """Shape of mini's InterruptAgentFlow (FormatError's base): message dicts
+    on `.messages`, empty args — so str(exc) alone says nothing."""
+
+    def __init__(self, *messages: dict[str, Any]) -> None:
+        self.messages = messages
+        super().__init__()
+
+
+def _error_span(exc: BaseException) -> dict[str, Any]:
+    """Raise `exc` inside one span and return that span's record."""
+    trace.session_open("s1")
+    with pytest.raises(type(exc)):
+        with trace.span("llm.parse"):
+            raise exc
+    trace.session_close()
+    trace._flush()
+    spans = [e for e in _events() if e["kind"] == "span"]
+    assert len(spans) == _ONE
+    return spans[0]
+
+
+def test_error_span_records_plain_exception_text() -> None:
+    span = _error_span(ValueError("bad\n  value"))
+    assert span["error_msg"] == "bad value"
+
+
+def test_error_span_reads_flow_interrupt_message_content() -> None:
+    exc = _FlowInterrupt({"role": "user", "content": "Tool 'run' is missing name."})
+    span = _error_span(exc)
+    assert span["error"] == "_FlowInterrupt"
+    assert span["error_msg"] == "Tool 'run' is missing name."
+
+
+def test_error_span_message_is_capped() -> None:
+    span = _error_span(ValueError("x" * (trace._ERROR_TEXT_LIMIT_CHARS * 2)))
+    assert len(span["error_msg"]) == trace._ERROR_TEXT_LIMIT_CHARS
+
+
 def test_update_attaches_fields() -> None:
     trace.session_open("s1")
     with trace.span("llm.completion") as sp:
