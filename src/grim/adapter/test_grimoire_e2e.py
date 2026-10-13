@@ -160,8 +160,9 @@ def test_system_template_renders_operator_instructions() -> None:
 
 def test_templates_render_enabled_languages() -> None:
     # The language-sweep confound fix: with grim_languages stashed, BOTH
-    # templates must NAME the enabled set; without the var they fall back to
-    # the old static python-or-bash text (grimoire.yaml's guard philosophy).
+    # templates must NAME the enabled set; the python-only default reads as
+    # one plain sentence; without the var they fall back to static python
+    # text (grimoire.yaml's guard philosophy).
     import jinja2  # ships transitively with mini-swe-agent
 
     config = yaml.safe_load(GRIMOIRE_YAML.read_text())["agent"]
@@ -169,9 +170,12 @@ def test_templates_render_enabled_languages() -> None:
     for name in ("system_template", "instance_template"):
         rendered = jinja2.Template(config[name]).render(grim_languages=enabled, task="t")
         assert "python, bash, jq" in rendered, name
+        solo = jinja2.Template(config[name]).render(grim_languages=["python"], task="t")
+        assert "Scripts are written in python" in solo, name
+        assert "enabled languages" not in solo, name
         fallback = jinja2.Template(config[name]).render(task="t")
-        assert "python or bash" in fallback, name
-        assert "jq" not in fallback, name
+        assert "Scripts are written in python" in fallback, name
+        assert "jq" not in fallback and "or bash" not in fallback, name
 
 
 def test_seed_list_reads_as_run_calls_and_documents_fallthrough() -> None:
@@ -181,10 +185,12 @@ def test_seed_list_reads_as_run_calls_and_documents_fallthrough() -> None:
     # call is a supported alias for run(name=...), not a FormatError, so the
     # prompt teaching "not callable directly" would contradict the adapter.
     template = yaml.safe_load(GRIMOIRE_YAML.read_text())["agent"]["system_template"]
-    for seed in ("shell", "read_file", "write_file", "edit_file", "list_dir", "run_bg", "stop_bg"):
+    seeds = ("run_cmd", "run_py", "read_file", "write_file", "edit_file", "list_dir", "run_bg")
+    for seed in seeds:
         assert f"run {seed}" in template, f"{seed} must be shown invoked via run"
     assert "falls through to run" in template
     assert 'run(name="read_file"' in template
+    assert "run shell" not in template  # the retired /bin/sh seed is never advertised
 
 
 def test_run_stashes_enabled_languages(monkeypatch: pytest.MonkeyPatch) -> None:
