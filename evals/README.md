@@ -29,6 +29,10 @@ Evaluation harnesses for the grim-agent, built on
   instance's base commit on the host and prints the resulting git diff; the
   grader hands that patch to the official SWE-bench docker harness. See "SWE
   -bench (grim-swebench)" below — it has extra prerequisites and DB defaults.
+- `harness_health.py` — read-only metrics over your real library and span
+  log (fail %, escape-hatch share, format errors with causes, tokens per
+  session). `--check` exits 1 if any session since `--since` broke a logging
+  invariant: `uv run evals/harness_health.py --since 2026-10-14 --check`.
 
 Tasks in each eval are ordered easy → hard on published pass-rate evidence,
 so cross-model deltas are visible without large run counts. Vendored fixture
