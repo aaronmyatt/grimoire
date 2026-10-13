@@ -64,7 +64,9 @@ def _sync_seed(conn: sqlite3.Connection, seed: SeedSpec) -> str | None:
     refreshed = False
     if row["body"] != seed.body:
         request = update.UpdateRequest(name=seed.name, changelog=_SYNC_CHANGELOG, body=seed.body)
-        version = update.update_script(conn, request).version
+        # Ungated like the initial write: re-sync is seeding, and the
+        # language toggles gate agent writing only (see load_seeds).
+        version = update.update_script(conn, request, enforce_language_gate=False).version
         refreshed = True
     if row["description"] != seed.description:
         conn.execute(

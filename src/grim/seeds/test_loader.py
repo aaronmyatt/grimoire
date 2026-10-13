@@ -190,3 +190,21 @@ def test_load_seeds_ignores_language_toggles(
     assert set(newly_seeded) == {seed.name for seed in SEEDS}
     row = conn.execute("SELECT COUNT(*) AS n FROM script WHERE seeded = 1").fetchone()
     assert row["n"] == len(SEEDS)
+
+
+def test_load_seeds_resyncs_drift_even_when_python_is_unwritable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: once update gated an omitted --lang, the re-sync of a
+    drifted python seed raised under a solo-language arm (python not
+    writable). Re-sync is seeding too — the toggles must not gate it."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    load_seeds(conn)
+    drifted = update.UpdateRequest(name="read_file", changelog="drift", body='print("old")\n')
+    update.update_script(conn, drifted)
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "")
+    monkeypatch.setenv("GRIM_LANGUAGES", "jq")
+
+    assert load_seeds(conn) == ["read_file@3"]
+    bundled = next(seed.body for seed in SEEDS if seed.name == "read_file")
+    assert _latest(conn, "read_file")["body"] == bundled
