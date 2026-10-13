@@ -19,6 +19,7 @@ _TIMEOUT_S = 10.0
 # The strict-argv convention: a wrong invocation exits 2 with a usage line.
 _USAGE_EXIT_CODE = 2
 _NOT_FOUND_EXIT_CODE = 127
+_RG_ERROR_EXIT_CODE = 2
 
 
 def _seed_body(name: str) -> str:
@@ -173,12 +174,18 @@ def test_grep_tree_finds_a_match_with_line_number(tmp_path: Path) -> None:
     assert "2:needle here" in result.stdout
 
 
-def test_grep_tree_no_match_exits_nonzero(tmp_path: Path) -> None:
+def test_grep_tree_no_match_is_an_answer_not_a_failure(tmp_path: Path) -> None:
     (tmp_path / "code.py").write_text("nothing interesting here\n")
 
     result = _run("grep_tree", argv=["needle", str(tmp_path)])
 
-    assert result.exit_code != 0
+    assert result.exit_code == 0
+    assert result.stdout == f"no matches for 'needle' in {tmp_path}\n"
+
+
+def test_grep_tree_real_errors_still_fail(tmp_path: Path) -> None:
+    result = _run("grep_tree", argv=["needle", str(tmp_path / "missing-dir")])
+    assert result.exit_code == _RG_ERROR_EXIT_CODE
 
 
 def test_list_dir_lists_files_and_subdirs(tmp_path: Path) -> None:

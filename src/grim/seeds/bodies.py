@@ -124,6 +124,12 @@ if not 2 <= len(sys.argv) <= 3:
 pattern = sys.argv[1]
 path = sys.argv[2] if len(sys.argv) > 2 else "."
 result = subprocess.run(["rg", "--line-number", "--no-heading", pattern, path])
+# rg exits 1 for "no matches": an answer, not a failure (most of grep_tree's
+# recorded failures were this, skewing its success rate). 2 is a real error
+# (bad regex, missing path) and still fails. Ref: rg(1), EXIT STATUS.
+if result.returncode == 1:
+    print(f"no matches for {pattern!r} in {path}")
+    sys.exit(0)
 sys.exit(result.returncode)
 '''
 
