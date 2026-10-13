@@ -302,6 +302,25 @@ def test_gardener_reports_stale_scripts(tmp_path: Path, monkeypatch: pytest.Monk
     assert "shell" not in result.stdout.split("stale")[1]  # seeded — never flagged stale
 
 
+def test_gardener_proposes_week_idle_scratch_scripts_in_their_own_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _seed_fixture_db(tmp_path, monkeypatch)
+    conn.execute(
+        "INSERT INTO script (name, language, description, seeded, created_at) "
+        "VALUES ('scratch_old_probe', 'python', 'd', 0, datetime('now', '-10 days')), "
+        "('scratch_new_probe', 'python', 'd', 0, datetime('now'))"
+    )
+    conn.commit()
+
+    result = _run("gardener")
+
+    stale_section, scratch_section = result.stdout.split("=== scratch")
+    assert "scratch_old_probe" in scratch_section
+    assert "scratch_new_probe" not in result.stdout  # too young to propose
+    assert "scratch_" not in stale_section.split("=== stale")[1]  # one section only
+
+
 def test_gardener_reports_exact_duplicate_bodies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

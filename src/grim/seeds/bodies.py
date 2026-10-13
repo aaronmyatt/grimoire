@@ -233,13 +233,28 @@ for row in dupes:
 print("=== stale (not seeded, no runs in last 30 days) ===")
 stale = conn.execute(
     "SELECT s.name FROM script s LEFT JOIN script_health h ON h.id = s.id "
-    "WHERE s.archived = 0 AND s.seeded = 0 "
+    "WHERE s.archived = 0 AND s.seeded = 0 AND s.name NOT GLOB 'scratch_*' "
     "AND (h.last_used IS NULL OR h.last_used < datetime('now', '-30 days')) "
     "ORDER BY s.name"
 ).fetchall()
 if not stale:
     print("  (none)")
 for row in stale:
+    print(f"  {row['name']}")
+
+# scratch_* names mark one-offs (probes, checks): find already hides them,
+# so they go stale fast — a week idle, and a week old, is enough.
+print("=== scratch (scratch_* one-offs, idle and older than 7 days) ===")
+scratch = conn.execute(
+    "SELECT s.name FROM script s LEFT JOIN script_health h ON h.id = s.id "
+    "WHERE s.archived = 0 AND s.name GLOB 'scratch_*' "
+    "AND s.created_at < datetime('now', '-7 days') "
+    "AND (h.last_used IS NULL OR h.last_used < datetime('now', '-7 days')) "
+    "ORDER BY s.name"
+).fetchall()
+if not scratch:
+    print("  (none)")
+for row in scratch:
     print(f"  {row['name']}")
 '''
 

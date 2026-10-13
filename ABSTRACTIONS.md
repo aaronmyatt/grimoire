@@ -87,3 +87,19 @@ mechanically.
   drift here is a bug, not a style choice. The abstraction might be a
   shared-kernel `repo_scope()`; it would also absorb the FTS-helper
   family above's callers. The human decides, as its own task.
+- **`scratch_` one-off prefix, three copies.** The "name starts with
+  `scratch_`" rule that hides one-off scripts lives in `verbs/find.py`
+  (`SCRATCH_PREFIX`, find's filter), `adapter/agent.py` (`_SCRATCH_GLOB`,
+  strong matches + `--continue` recall), and the `gardener` seed body in
+  `seeds/bodies.py` (a SQL `GLOB 'scratch_*'` literal, since a seed is
+  standalone script text). Deliberate: slices don't import each other, and
+  the seed can't import anything. The three must agree or a one-off leaks
+  into retrieval. The abstraction might be a shared-kernel constant (and a
+  `scratch` flag on `script` if the prefix proves too loose) — the human
+  decides, as its own task.
+- **Session metadata env names, two copies.** `GRIM_SESSION_MODEL` /
+  `GRIM_SESSION_TASK` are spelled in `verbs/_shared.py` (read by
+  `ensure_session`) and `adapter/environment.py` (exported by
+  `_metadata_env`), like `GRIM_SESSION` / `GRIM_CWD` before them. The
+  abstraction might be the single message registry root CLAUDE.md §2
+  describes — the human decides, as its own task.
