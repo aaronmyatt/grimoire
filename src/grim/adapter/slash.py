@@ -29,6 +29,7 @@ GRIM_CLI_VERBS = (
     "favourite",
     "unfavourite",
     "favourites",
+    "stats",
     "write",
     "update",
     "read",

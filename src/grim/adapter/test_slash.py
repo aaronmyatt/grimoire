@@ -21,6 +21,7 @@ from grim.adapter.slash import parse_slash_command, run_slash_command
         ),
         ('/find "disk space" --limit 3', ("find", ["disk space", "--limit", "3"])),
         ("/list", ("list", [])),
+        ("/stats weekly --format csv", ("stats", ["weekly", "--format", "csv"])),
     ],
 )
 def test_parse_recognizes_grim_verbs(text: str, expected: tuple[str, list[str]]) -> None:

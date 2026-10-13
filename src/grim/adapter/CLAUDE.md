@@ -121,7 +121,7 @@ D6 revised → native tool-calling).
   confirm-mode matching, and the trajectory are untouched.
 - `slash.py` — `GRIM_CLI_VERBS` (a small, intentional duplicate of
   `cli.py`'s subcommand names — `init`/`config`/`doctor`/`near`/`recent`/
-  `edit`/`tag`/`untag`/`tags`/`tagged`/`favourite`/`unfavourite`/
+  `edit`/`tag`/`untag`/`tags`/`tagged`/`favourite`/`unfavourite`/`stats`/
   `favourites`/the six data verbs) and `run_slash_command(text, session_id)
   -> str | None`. `/verb args...` dispatches straight to `cli.main` in-process
   via the same `environment._invoke` bang.py uses — a human side-channel,
