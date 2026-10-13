@@ -12,6 +12,10 @@ from grim.verbs import _shared
 from grim.verbs.update import UpdateRequest, resolve_language, update_script
 from grim.verbs.write import WriteRequest, write_script
 
+# Tests about bash<->python interplay opt bash back in explicitly: the
+# python-only default makes bash run-only (exec/dispatch.base_languages).
+_BOTH_BUILTINS = "python,bash"
+
 
 def _migrated_conn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
     monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
@@ -94,12 +98,13 @@ def test_ungated_update_converges_a_script_outside_the_writable_set(
 # --- resolve_language: pure, so tested without a database -------------------
 
 
-def test_resolve_language_defaults_to_the_current_one() -> None:
+def test_resolve_language_defaults_to_the_current_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", _BOTH_BUILTINS)
     assert resolve_language(None, "bash") == "bash"
 
 
 def test_resolve_language_accepts_an_enabled_override() -> None:
-    # python/bash are the builtin pair, writable in every configuration.
+    # python is writable in every configuration.
     assert resolve_language("python", "bash") == "python"
 
 
@@ -139,6 +144,7 @@ def test_update_can_rewrite_a_script_in_another_language(
     # The regression: a python body on a bash script used to fail the bash
     # lint with no way to override, so agents forked a near-duplicate *_py
     # sibling instead of rewriting in place.
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", _BOTH_BUILTINS)  # bash opted back in
     conn = _migrated_conn(tmp_path, monkeypatch)
     write_script(
         conn,
@@ -172,6 +178,7 @@ def test_language_change_leaves_earlier_versions_dispatchable(
     # The reason language lives on the version: resolving v1 after the change
     # must still say 'bash', or `grim run foo_bar@1` feeds a bash body to the
     # python runner.
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", _BOTH_BUILTINS)  # bash opted back in
     conn = _migrated_conn(tmp_path, monkeypatch)
     write_script(
         conn,
@@ -208,6 +215,7 @@ def test_update_lints_the_new_body_against_the_new_language(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Switching language does not switch off the lint — it retargets it.
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", _BOTH_BUILTINS)  # bash opted back in
     conn = _migrated_conn(tmp_path, monkeypatch)
     _seed_script(conn)
     with pytest.raises(ValueError, match="syntax error"):

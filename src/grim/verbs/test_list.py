@@ -115,6 +115,7 @@ def test_list_scripts_returns_all_by_default(
 
 
 def test_list_scripts_filters_by_language(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "python,bash")  # bash is run-only by default
     conn = _migrated_conn(tmp_path, monkeypatch)
     _write(conn, "foo_bar", language="python")
     _write(conn, "baz_qux", language="bash")
