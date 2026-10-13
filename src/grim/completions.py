@@ -38,7 +38,7 @@ _grim() {
     if (( COMP_CWORD == 1 )); then
         local verbs="run write update read list find init config doctor"
         verbs+=" near recent edit tag untag tags tagged favourite unfavourite"
-        verbs+=" favourites completion"
+        verbs+=" favourites completion stats"
         COMPREPLY=( $(compgen -W "$verbs" -- "$cur") )
         return 0
     fi
@@ -111,7 +111,7 @@ _grim() {
     if (( CURRENT == 2 )); then
         local -a verbs=(run write update read list find init config doctor)
         verbs+=(near recent edit tag untag tags tagged favourite unfavourite)
-        verbs+=(favourites completion)
+        verbs+=(favourites completion stats)
         compadd -- "${verbs[@]}"
         return 0
     fi
