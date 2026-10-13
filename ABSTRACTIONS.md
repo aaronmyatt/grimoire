@@ -103,3 +103,14 @@ mechanically.
   `_metadata_env`), like `GRIM_SESSION` / `GRIM_CWD` before them. The
   abstraction might be the single message registry root CLAUDE.md §2
   describes — the human decides, as its own task.
+- **Escape-hatch script names, three copies.** `("shell", "run_sh",
+  "run_cmd", "run_py")` is spelled in the `stats` seed body
+  (`seeds/bodies.py`), `metrics/queries.py` (`ESCAPE_HATCHES`), and
+  `evals/harness_health.py`. The span-log path (`$GRIM_INSTRUMENT_FILE`,
+  else `~/.grimoire/instrumentation.jsonl`) is likewise spelled in
+  `adapter/trace.py`, `metrics/spans.py`, and `evals/harness_health.py`.
+  Deliberate: slices don't import each other, and a seed and an eval
+  script can't import anything. They must agree or the escape rate and
+  span metrics silently disagree. The abstraction might be shared-kernel
+  constants — or `harness_health.py` and the `stats` seed becoming thin
+  callers of `grim stats` — the human decides, as its own task.
