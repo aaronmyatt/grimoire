@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import os
 import re
 import sqlite3
 import subprocess
+import sys
 
 from grim import db
 
@@ -33,6 +35,10 @@ _SCOPE_HEX_CHARS = 12  # truncation length of the root-commit hash in scope
 SESSION_MODEL_ENV = "GRIM_SESSION_MODEL"
 SESSION_TASK_ENV = "GRIM_SESSION_TASK"
 _SESSION_TASK_MAX_CHARS = 500
+
+# Opening line of a PEP 723 inline-metadata block (`# /// script`).
+# Ref: https://peps.python.org/pep-0723/#specification
+_PEP723_OPEN_RE = re.compile(r"^# /// script[ \t]*$", re.MULTILINE)
 
 
 # language -> syntax-checker argv (body fed on stdin). Keep the set small:
@@ -84,7 +90,7 @@ def lint(language: str, body: str) -> str | None:
             compile(body, "<grim write>", "exec")
         except SyntaxError as exc:
             return f"python syntax error: {exc}"
-        return None
+        return _undeclared_imports_error(body)
     if language == "bash":
         result = subprocess.run(
             ["bash", "-n"], input=body, capture_output=True, text=True, check=False
@@ -95,6 +101,44 @@ def lint(language: str, body: str) -> str | None:
     if language in _SUBPROCESS_LINT:
         return _subprocess_lint(_SUBPROCESS_LINT[language], body, language)
     return None
+
+
+def undeclared_imports(body: str) -> list[str]:
+    """Non-stdlib top-level modules a python body imports at module level
+    without a PEP 723 header — modules that won't exist when it runs, since
+    exec/dispatch.py runs python via `uv run --no-project` (no ambient env;
+    only a `# /// script` header gets the script its own deps). Imports nested
+    in try/if/def are skipped: those are deliberately optional. Relative
+    imports are skipped too, and so is a body that edits sys.path — it is
+    importing local modules no header could declare. Caller has already
+    compiled `body`.
+    Ref: https://peps.python.org/pep-0723/#specification
+    Ref: https://docs.python.org/3/library/sys.html#sys.stdlib_module_names
+    """
+    if _PEP723_OPEN_RE.search(body) or "sys.path" in body:
+        return []
+    names: set[str] = set()
+    for node in ast.parse(body).body:
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module.split(".")[0])
+    missing = sorted(name for name in names if name not in sys.stdlib_module_names)
+    assert all(name not in sys.stdlib_module_names for name in missing), "stdlib never flagged"
+    return missing
+
+
+def _undeclared_imports_error(body: str) -> str | None:
+    """The lint diagnostic for undeclared_imports, with the fix spelled out."""
+    missing = undeclared_imports(body)
+    if not missing:
+        return None
+    return (
+        f"python imports non-stdlib module(s) {', '.join(missing)} with no PEP 723 header, "
+        "so they won't be installed when the script runs. Declare the PyPI package(s) "
+        'that provide them at the top of the body:\n# /// script\n# dependencies = ["<package>"]'
+        "\n# ///"
+    )
 
 
 def body_hash(body: str) -> str:

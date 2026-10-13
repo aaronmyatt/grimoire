@@ -67,6 +67,31 @@ def test_lint_bash_accepts_valid_and_rejects_invalid() -> None:
     assert "syntax error" in error
 
 
+def test_lint_python_accepts_stdlib_relative_and_optional_imports() -> None:
+    body = (
+        "import os, json\nfrom pathlib import Path\nfrom . import sibling\n"
+        "try:\n    import yaml\nexcept ImportError:\n    yaml = None\n"
+    )
+    assert _shared.lint("python", body) is None
+
+
+def test_lint_python_rejects_undeclared_third_party_imports() -> None:
+    error = _shared.lint("python", "import requests\nfrom bs4 import BeautifulSoup\n")
+    assert error is not None
+    assert "bs4, requests" in error
+    assert "# /// script" in error
+
+
+def test_lint_python_accepts_third_party_imports_with_a_pep723_header() -> None:
+    body = '# /// script\n# dependencies = ["requests"]\n# ///\nimport requests\n'
+    assert _shared.lint("python", body) is None
+
+
+def test_lint_python_skips_bodies_that_load_local_modules_via_sys_path() -> None:
+    body = "import sys\nsys.path.insert(0, '/opt/bot')\nimport quizbot_bot\n"
+    assert _shared.lint("python", body) is None
+
+
 def test_lint_unknown_language_passes_through() -> None:
     # janet is catalogued but has no cheap offline checker, so it passes
     # silently like any language outside the lint map.

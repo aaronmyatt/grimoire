@@ -82,3 +82,8 @@ surface.
 - `find` leaves out `scratch_*` scripts (`find.SCRATCH_PREFIX`) unless the
   query itself starts with "scratch" — one-offs stay runnable, recorded,
   and listable (`list` is unchanged), but never crowd retrieval.
+- The python lint (write and update) also rejects module-level imports of
+  non-stdlib modules when the body has no PEP 723 `# /// script` header
+  (`_shared.undeclared_imports`): python runs via `uv run --no-project`,
+  so only a header gets a script its dependencies. Imports nested in
+  try/if/def, relative imports, and bodies that edit `sys.path` are exempt.
