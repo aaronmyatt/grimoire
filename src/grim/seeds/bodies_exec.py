@@ -126,3 +126,22 @@ if shutil.which(argv[0]) is None:
     sys.exit(127)
 sys.exit(subprocess.run(argv, check=False).returncode)
 '''
+
+RUN_PY = '''"""run_py — run a one-off python snippet, read from stdin, as __main__;
+any ARGs become sys.argv[1:]. The quick path for chaining and filtering that
+used to be a shell pipeline (subprocess.run for programs, pathlib/re/json for
+the rest). The snippet IS stdin, so it reads data from files, not stdin.
+Stdlib only: for third-party packages write a named script with a PEP 723
+`# /// script` header. If you'd run it twice, make it a named script.
+Usage: run_py [ARG...]   (snippet on stdin)
+Ref: https://docs.python.org/3/library/functions.html#exec"""
+import sys
+
+source = sys.stdin.read()
+if not source.strip():
+    print("usage: run_py [ARG...]  (python snippet on stdin)", file=sys.stderr)
+    sys.exit(2)
+sys.argv = ["run_py", *sys.argv[1:]]
+code = compile(source, "<run_py>", "exec")
+exec(code, {"__name__": "__main__", "__builtins__": __builtins__})
+'''

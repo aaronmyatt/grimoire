@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from grim.seeds.bodies_exec import RUN_BG, RUN_CMD
+from grim.seeds.bodies_exec import RUN_BG, RUN_CMD, RUN_PY
 
 
 @dataclass(frozen=True)
@@ -388,6 +388,13 @@ SEEDS: list[SeedSpec] = [
         description="run one program with its arguments, no shell: run_cmd git status — "
         "the escape hatch for CLIs (git, uv, curl, ssh, docker); no pipes or &&",
         body=RUN_CMD,
+    ),
+    SeedSpec(
+        name="run_py",
+        language="python",
+        description="run a one-off python snippet from stdin (args become sys.argv) — "
+        "the quick path for chaining/filtering that used to be a shell pipeline",
+        body=RUN_PY,
     ),
     SeedSpec(
         name="shell",

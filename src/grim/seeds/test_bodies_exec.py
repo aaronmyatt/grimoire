@@ -16,6 +16,7 @@ _TIMEOUT_S = 10.0
 _USAGE_EXIT_CODE = 2
 _NOT_FOUND_EXIT_CODE = 127
 _FALSE_EXIT_CODE = 1
+_SNIPPET_EXIT_CODE = 3
 
 
 def _run(name: str, argv: list[str], stdin: str | None = None) -> ExecutionResult:
@@ -66,3 +67,23 @@ def test_run_cmd_points_a_library_script_name_at_run() -> None:
     result = _run("run_cmd", ["list_open_ports_xyz"])
     assert result.exit_code == _NOT_FOUND_EXIT_CODE
     assert 'run(name="list_open_ports_xyz")' in result.stderr
+
+
+def test_run_py_runs_a_stdin_snippet_with_argv() -> None:
+    snippet = "import sys\nprint(__name__, sys.argv[1:])\n"
+    result = _run("run_py", ["a", "b c"], stdin=snippet)
+    assert result.exit_code == 0
+    assert result.stdout == "__main__ ['a', 'b c']\n"
+
+
+def test_run_py_propagates_sys_exit_and_tracebacks() -> None:
+    assert _run("run_py", [], stdin="import sys\nsys.exit(3)\n").exit_code == _SNIPPET_EXIT_CODE
+    broken = _run("run_py", [], stdin="def broken(:\n")
+    assert broken.exit_code != 0
+    assert "SyntaxError" in broken.stderr
+
+
+def test_run_py_without_a_snippet_exits_with_usage() -> None:
+    result = _run("run_py", [], stdin="  \n")
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "usage: run_py" in result.stderr
