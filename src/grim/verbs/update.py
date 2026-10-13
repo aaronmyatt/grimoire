@@ -34,16 +34,25 @@ def resolve_language(requested: str | None, current: str) -> str:
     """The language this new version is written in: the explicit override, or
     the current version's language when omitted.
 
-    An override is gated exactly as `write` gates a new script — the writable
-    set (GRIM_LANGUAGES / GRIM_BASE_LANGUAGES) first, then the runner catalog
-    — so `update --lang` can never reach a language `write` would have
-    refused. Pure over its two inputs; the env reads live in dispatch.
+    Either way it is gated exactly as `write` gates a new script — the
+    writable set (GRIM_LANGUAGES / GRIM_BASE_LANGUAGES) first, then the
+    runner catalog — so update is never a side door into a language `write`
+    would refuse. Omitting --lang on a script whose language has left the
+    writable set (e.g. legacy bash after the python-only default) is refused
+    with a port instruction: legacy scripts still run, but every edit ports.
+    Pure over its two inputs; the env reads live in dispatch.
     """
     assert current, "an existing version always resolves to a language"
+    supported = ", ".join(sorted(dispatch.supported_languages()))
     if requested is None:
+        if current not in dispatch.supported_languages():
+            raise ValueError(
+                f"{current!r} is no longer writable, so this script can't be edited "
+                f"as {current} — port it: rewrite the body in one of {supported} and "
+                "pass that language (update --lang python)"
+            )
         return current
     if requested not in dispatch.supported_languages():
-        supported = ", ".join(sorted(dispatch.supported_languages()))
         raise ValueError(f"unsupported language {requested!r} — supported: {supported}")
     # language_tool() returns '' outside the runner catalog — the floor that
     # holds even when the writable set has been widened by env.

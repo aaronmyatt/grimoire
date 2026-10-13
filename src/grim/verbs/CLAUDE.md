@@ -43,7 +43,10 @@ surface.
   *current* language only: what `find`/`list` display and what `write`'s
   gate reads. `update --lang` changes both (new version row + the script
   row) and leaves every earlier version's row untouched; omitting `--lang`
-  keeps the current version's language, which is the common case.
+  keeps the current version's language, which is the common case — but
+  only while that language is still writable: a legacy script whose
+  language left the writable set is refused with a port instruction
+  (`update --lang python`), so it still runs but every edit ports it.
   `update.resolve_language` applies exactly the gate `write` applies —
   writable set, then runner catalog — so update is never a side door into
   a language `write` would have refused. The lint is retargeted at the new

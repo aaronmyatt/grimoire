@@ -97,6 +97,18 @@ def test_resolve_language_rejects_a_language_outside_the_writable_set(
         resolve_language("bash", "python")
 
 
+def test_resolve_language_omitted_refuses_a_language_no_longer_writable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The side door this closes: a legacy bash script edited as bash after
+    # bash left the writable set. The error tells the agent how to port.
+    monkeypatch.setenv("GRIM_LANGUAGES", "")
+    monkeypatch.setenv("GRIM_BASE_LANGUAGES", "python")
+    with pytest.raises(ValueError, match=r"no longer writable.*update --lang python"):
+        resolve_language(None, "bash")
+    assert resolve_language("python", "bash") == "python"
+
+
 def test_resolve_language_rejects_a_language_outside_the_runner_catalog() -> None:
     with pytest.raises(ValueError, match="unsupported language|runner catalog"):
         resolve_language("brainfuck", "python")
