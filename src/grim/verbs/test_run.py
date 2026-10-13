@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from grim import db
+from grim.exec.dispatch import TIMEOUT_EXIT_CODE
 from grim.verbs import _shared
 from grim.verbs.run import (
     DEFAULT_TIMEOUT_S,
@@ -22,6 +23,7 @@ from grim.verbs.run import (
     clamp_stream,
     cmd_run,
     cwd_from_env,
+    failure_hints,
     resolve_timeout,
     run_script,
 )
@@ -176,6 +178,32 @@ def test_run_script_propagates_exit_code(tmp_path: Path, monkeypatch: pytest.Mon
     _seed_script(conn, body=f"import sys; sys.exit({expected_exit_code})")
     result = run_script(conn, _request())
     assert result.exit_code == expected_exit_code
+
+
+def test_failure_hints_timeout_points_at_run_bg() -> None:
+    hints = failure_hints(TIMEOUT_EXIT_CODE, "", 120.0)
+    assert len(hints) == 1
+    assert "120s timeout" in hints[0] and "run_bg" in hints[0]
+
+
+def test_failure_hints_silent_failure_asks_for_stderr() -> None:
+    hints = failure_hints(1, "  \n", 30.0)
+    assert len(hints) == 1
+    assert "empty stderr" in hints[0]
+
+
+def test_failure_hints_none_on_success_or_explained_failure() -> None:
+    assert failure_hints(0, "", 30.0) == []
+    assert failure_hints(2, "usage: foo_bar PATH", 30.0) == []
+
+
+def test_run_script_appends_the_hint_to_the_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _seed_script(conn, body="import sys; sys.exit(4)")
+    result = run_script(conn, _request())
+    assert result.observation.rstrip().endswith(failure_hints(4, "", 30.0)[0])
 
 
 def test_run_script_passes_argv_and_stdin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

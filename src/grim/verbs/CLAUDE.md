@@ -72,3 +72,7 @@ surface.
   agent sessions only, `model`/`task` from `$GRIM_SESSION_MODEL` /
   `$GRIM_SESSION_TASK` (the adapter exports both beside `$GRIM_SESSION`;
   task capped at 500 chars). An existing row is never rewritten.
+- `run` appends at most one `[grim] hint:` line to a failed run's
+  observation (`failure_hints`, pure): exit 124 points at `run_bg`; any
+  other nonzero exit with an empty stderr asks the script to print why.
+  Stored stdout/stderr are untouched — hints live in the observation only.

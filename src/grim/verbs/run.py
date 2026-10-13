@@ -189,6 +189,30 @@ def clamp_stream(text: str, limit_chars: int | None = None) -> str:
     return clamped
 
 
+def failure_hints(exit_code: int, stderr: str, timeout: float) -> list[str]:
+    """One-line nudges appended to a failed run's observation, aimed at the
+    two classes the run log showed agents not recovering from cheaply: a
+    blocking run killed at the timeout (132 runs, ~120 s each — mostly
+    servers and sleep-polling that belonged in a background job), and a
+    nonzero exit with nothing on stderr (186 python runs — no cause to fix).
+    Pure over its inputs; [] on success."""
+    assert timeout > 0, "a run always has a positive timeout"
+    hints: list[str] = []
+    if exit_code == dispatch.TIMEOUT_EXIT_CODE:
+        hints.append(
+            f"[grim] hint: killed at the {timeout:g}s timeout. Long-lived work "
+            '(servers, watchers, polling loops) belongs in run(name="run_bg"); '
+            'check on it with run(name="list_bg").'
+        )
+    elif exit_code != 0 and not stderr.strip():
+        hints.append(
+            f"[grim] hint: exited {exit_code} with an empty stderr. Have the script "
+            "print why it failed to stderr, so the next fix is informed."
+        )
+    assert len(hints) <= 1, "at most one hint per run"
+    return hints
+
+
 def _next_seq(conn: sqlite3.Connection, session_id: str) -> int:
     row = conn.execute(
         "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM execution WHERE session_id = ?", (session_id,)
@@ -272,8 +296,14 @@ def run_script(conn: sqlite3.Connection, request: RunRequest) -> RunResult:
     body = envelope.truncate(
         stdout_stored, stderr_stored, head_lines=request.head_lines, tail_lines=request.tail_lines
     )
+    # Hints go last: the line the agent reads right before deciding what next.
+    hints = "".join(
+        f"\n{h}" for h in failure_hints(result.exit_code, result.stderr, request.timeout)
+    )
     return RunResult(
-        execution_id=cursor.lastrowid, exit_code=result.exit_code, observation=f"{header}\n{body}"
+        execution_id=cursor.lastrowid,
+        exit_code=result.exit_code,
+        observation=f"{header}\n{body}{hints}",
     )
 
 
