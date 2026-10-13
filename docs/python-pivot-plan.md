@@ -171,3 +171,22 @@ Refs: [subprocess, shell=False](https://docs.python.org/3/library/subprocess.htm
 [PEP 723 inline script metadata](https://peps.python.org/pep-0723/) ·
 [uv run --no-project](https://docs.astral.sh/uv/reference/cli/#uv-run) ·
 [atexit](https://docs.python.org/3/library/atexit.html)
+
+## 10. Status — 2026-10-13
+
+All tasks landed on branch `python-pivot`, one slice per commit, suite green.
+Deviations from the plan above:
+
+- **F7a** moved the `--continue` snippet (not the budget helpers) out of
+  `context.py` into `previous_session.py` — a smaller, self-contained move.
+- **P0 dropped.** `bodies.py` got under the cap without a split: `run_bg`
+  moved to the new `bodies_exec.py` (with `run_cmd`/`run_py`), and `shell`
+  was removed.
+- **Extra fix.** P7a (update gates an omitted `--lang`) broke `grim init`'s
+  seed re-sync when an eval arm makes python unwritable. `update_script`
+  gained `enforce_language_gate` (like `write_script`) and the loader uses it.
+- **D3** is met by default only: extended languages stay opt-in via config,
+  not hard-disabled.
+- **Phase 1 A/B** is now `main` vs `python-pivot` on the same evals (cold
+  DB); the in-branch knobs can no longer reproduce the old harness, since
+  `shell` is retired.

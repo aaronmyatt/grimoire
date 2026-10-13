@@ -54,8 +54,9 @@ touches your real `~/.grimoire`. Which DB it points at is the experiment's knob:
 
 `run-grim` pins `GRIM_LANGUAGES` the same way it pins `GRIM_DB`, so the set
 of languages the agent may write never leaks from the operator's
-`~/.grimoire/config.toml`. The default is the baseline pair `python,bash`
-(both are always in the agent's schema anyway); a task opts into more by
+`~/.grimoire/config.toml`. The default is `python` alone (the harness's
+python-only default; `GRIM_EVAL_BASE_LANGUAGES=python,bash` opts bash back
+in); a task opts into more by
 declaring a `grim_languages:` key (smevals uppercases it to
 `SMEVALS_TASK_GRIM_LANGUAGES` for the runner, and it lands in `run.yaml`),
 e.g. `grim_languages: python,bash,jq`.

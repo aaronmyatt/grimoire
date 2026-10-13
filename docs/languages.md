@@ -5,8 +5,8 @@ janet, racket, hy, nim, ruby, bun (node), php, go, perl, jq, sql, awk,
 osascript, lua/luajit, fennel, zig, duckdb + prql, typst, bc/dc, tcl/expect.
 
 All of them are **off by default**. `grim write --lang` accepts only
-`python` and `bash` until you opt in, and the agent's tool schema only
-proposes languages you've enabled.
+`python` until you opt in (bash too is run-only by default — see below),
+and the agent's tool schema only proposes languages you've enabled.
 
 ## Enabling a language
 
@@ -41,14 +41,16 @@ global config enables some.
 ## Subsetting the builtins (experiments)
 
 `GRIM_BASE_LANGUAGES` (env-only, no config surface) subsets which BUILTIN
-languages `grim write` accepts: unset keeps both python and bash (the
-default everywhere); a set value names the subset to keep; `""` keeps
-none — the solo-language knob the eval sweeps use (`evals/sweep-langs`).
-It only ever narrows the builtin pair — extended languages still arrive
-via `GRIM_LANGUAGES` — and if the two knobs together would leave nothing
-writable, the write gate falls back to python+bash rather than bricking
-the agent. Like the extended toggle, it gates *writing* only: scripts
-already in the library (including the python seeds) always run.
+languages `grim write` accepts: unset keeps python only (the python-only
+default, docs/python-pivot-plan.md); a set value names the subset to keep
+— `python,bash` opts bash back in; `""` keeps none — the solo-language
+knob the eval sweeps use (`evals/sweep-langs`). It only ever selects from
+the builtin pair — extended languages still arrive via `GRIM_LANGUAGES` —
+and if the two knobs together would leave nothing writable, the write
+gate falls back to python rather than bricking the agent. Like the
+extended toggle, it gates *writing* only: scripts already in the library
+(legacy bash scripts included) always run. `update` counts as writing:
+editing a legacy bash script means porting it (`update --lang python`).
 
 ## Platform-specific languages
 

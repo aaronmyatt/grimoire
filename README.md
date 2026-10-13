@@ -17,8 +17,10 @@ languages is better — and a persistent, searchable corpus of the agent's
 own scripts compounds, saving tokens on repeat work and leaving the human
 a usable library behind.
 
-Bash isn't banned — it's demoted. `sh` (run one shell command) ships as
-just another seeded script in the corpus, not a privileged escape hatch.
+The agent writes python, not shell. Its escape hatches — `run_cmd` (one
+program and its arguments, no shell) and `run_py` (a one-off python
+snippet) — ship as ordinary seeded scripts, not privileged verbs. Legacy
+bash scripts still run, and are ported to python on their next edit.
 
 ## Architecture
 
@@ -34,7 +36,7 @@ just another seeded script in the corpus, not a privileged escape hatch.
 ├─────────────────────────────┤
 │ grimoire.db (SQLite)        │  scripts · versions · executions · sessions · FTS
 ├─────────────────────────────┤
-│ seed library                │  sh, read_file, apply_patch… + stats/gardener/export
+│ seed library                │  run_cmd, run_py, read_file… + stats/gardener/export
 ├─────────────────────────────┤
 │ human surfaces              │  same CLI · Datasette · fzf one-liner · TUI (review queue)
 └─────────────────────────────┘
@@ -61,7 +63,7 @@ truth for its invariants; this is a summary.
 | **`verbs/`** | The six agent-facing verbs — the entire closed set the agent may invoke | one module per verb (`write.py`, `update.py`, `read.py`, `list.py`, `find.py`, `run.py`) |
 | **`exec/`** | Language dispatch table (`python → uv run`, `bash → bash`, `js/ts → bun`, else → `run --json`) and output truncation | `dispatch.dispatch(...)`, `envelope.truncate(...)` |
 | **`adapter/`** | Subclasses mini-swe-agent's environment so model actions are parsed and dispatched to `grim` in-process — the hard enforcement point for the six-verb constraint | `environment.GrimEnvironment`, `grimoire.yaml` |
-| **`seeds/`** | Seed script bodies loaded on `grim init` (`sh`, `read_file`, `apply_patch`, `stats`, `gardener`, …) — meta-tooling ships as library scripts, never new CLI verbs | `loader.load_seeds(db)` |
+| **`seeds/`** | Seed script bodies loaded on `grim init` (`run_cmd`, `run_py`, `read_file`, `apply_patch`, `stats`, `gardener`, …) — meta-tooling ships as library scripts, never new CLI verbs | `loader.load_seeds(db)` |
 
 The shared kernel (`db.py`, `cli.py`, `config.py`) is tiny, frozen, and
 versioned like a third-party library: slices depend on it or on nothing,

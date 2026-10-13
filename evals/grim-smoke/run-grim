@@ -22,14 +22,15 @@ export GRIM_TRAJ_DIR="$SMEVALS_RUN_DIR"   # keep the trajectory JSON as a Run ar
 # Language availability is pinned for the same isolation reason as GRIM_DB:
 # without this, the languages the agent may write leak from the operator's
 # ~/.grimoire config. Task key `grim_languages:` wins; the default baseline
-# is python+bash (both are always in the schema regardless).
+# is python only, matching the harness default (bash is run-only).
 # Sweep arm knob: GRIM_EVAL_LANGUAGES widens the set per batch (task key
 # still wins) — same operator-override slot GRIM_EVAL_DB occupies.
-export GRIM_LANGUAGES="${SMEVALS_TASK_GRIM_LANGUAGES:-${GRIM_EVAL_LANGUAGES:-python,bash}}"
+export GRIM_LANGUAGES="${SMEVALS_TASK_GRIM_LANGUAGES:-${GRIM_EVAL_LANGUAGES:-python}}"
 # Its pair: GRIM_EVAL_BASE_LANGUAGES SUBSETS the python/bash builtins the
-# agent may write ('' removes them — solo-language arms). `-` not `:-`:
+# agent may write (python,bash opts bash back in; '' removes them — solo-
+# language arms). `-` not `:-`:
 # empty string is meaningful here and must survive the chain.
-export GRIM_BASE_LANGUAGES="${SMEVALS_TASK_GRIM_BASE_LANGUAGES-${GRIM_EVAL_BASE_LANGUAGES-python,bash}}"
+export GRIM_BASE_LANGUAGES="${SMEVALS_TASK_GRIM_BASE_LANGUAGES-${GRIM_EVAL_BASE_LANGUAGES-python}}"
 
 # db-mode label for the run-identity artifact below (mirrors grim-debug).
 if [ -n "${SMEVALS_TASK_GRIM_DB:-}" ]; then DB_MODE="grouped"
