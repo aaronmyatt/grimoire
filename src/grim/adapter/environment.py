@@ -75,10 +75,14 @@ class GrimEnvironment(LocalEnvironment):
         assert "tool" in action, "tool-calling only: an action must carry a 'tool'"
         tool = action["tool"]
         args = action.get("args", {})
-        with trace.span("tool." + tool, args=_tool_args_snippet(args)):
+        with trace.span("tool." + tool, args=_tool_args_snippet(args)) as sp:
             # mini rarely passes a cwd; the pin captured at startup is the
             # default so every action shares one stable working directory.
-            return self._execute(tool, args, cwd or self.cwd, timeout)
+            output = self._execute(tool, args, cwd or self.cwd, timeout)
+            # The span's returncode is what lets the log rank failing tools
+            # without re-joining against the DB's execution rows.
+            sp.update(returncode=output["returncode"])
+            return output
         raise AssertionError("unreachable: _execute always returns or raises")
 
     def _execute(

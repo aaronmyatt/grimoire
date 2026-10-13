@@ -5,6 +5,7 @@ structured {tool, args} action dicts against a real tmp GRIM_DB.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -16,7 +17,10 @@ pytest.importorskip("minisweagent")  # adapter/ needs the optional `adapter` ext
 
 from minisweagent.exceptions import Submitted  # noqa: E402
 
+from grim.adapter import trace  # noqa: E402
 from grim.adapter.environment import GrimEnvironment  # noqa: E402
+
+_FAIL_LOUD_EXIT = 3
 
 
 @pytest.fixture(autouse=True)
@@ -125,3 +129,24 @@ def test_bad_arg_value_returns_error_observation_not_systemexit() -> None:
     run = env.execute(_tool("run", {"name": "greet", "timeout": "notanumber"}))
     assert run["returncode"] != 0
     assert "usage:" in run["output"]
+
+
+def test_tool_span_records_the_observation_returncode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Instrumentation is auto-off under pytest and the verdict is cached in
+    # trace's globals, so force it on and reset that cache for this test only.
+    log = tmp_path / "instrumentation.jsonl"
+    monkeypatch.setenv("GRIM_INSTRUMENT", "1")
+    monkeypatch.setenv("GRIM_INSTRUMENT_FILE", str(log))
+    monkeypatch.setattr(trace, "_disabled", False)
+    monkeypatch.setattr(trace, "_handle", None)
+    env = GrimEnvironment(session_id="s1")
+    _write(env, "fail_loud", "python", "import sys\nsys.exit(3)")
+    env.execute(_tool("run", {"name": "fail_loud"}))
+    trace._flush()
+
+    spans = [json.loads(line) for line in log.read_text().splitlines()]
+    by_phase = {span["phase"]: span for span in spans if span.get("kind") == "span"}
+    assert by_phase["tool.write"]["returncode"] == 0
+    assert by_phase["tool.run"]["returncode"] == _FAIL_LOUD_EXIT
