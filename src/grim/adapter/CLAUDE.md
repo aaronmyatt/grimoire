@@ -50,7 +50,10 @@ D6 revised → native tool-calling).
 - `deadline.py` — the run's wall-clock budget, pure over (elapsed, budget):
   `budget_s(raw)` parses `$GRIM_TIME_BUDGET_S` (unset/garbage → None, else
   clamped to [60, 86400]), `remaining_s`, `wrap_up_due` (past
-  `WRAP_UP_SHARE` = 0.8), and `time_note`. A caller that hard-kills the
+  `WRAP_UP_SHARE` = 0.8), `time_note`, and `clamp_run_timeout` — which
+  `GrimEnvironment.fit_run_to_budget` applies to every `run` action, so no
+  single run (a long sleep, a model-chosen `timeout: 900`) outlives the
+  budget. Its default-timeout constant is a copy of verbs/run.py's. A caller that hard-kills the
   agent (the Telegram bot's 900s cap) sets the env so the model can see the
   clock and hand off before the kill. Unset changes nothing.
 - `environment.py` — `GrimEnvironment`, subclassing mini-swe-agent's

@@ -18,6 +18,10 @@ BUDGET_MAX_S = 86_400
 # Share of the budget after which every observation says "submit now".
 # 0.8 of the bot's budget leaves ~170s: enough for one or two turns.
 WRAP_UP_SHARE = 0.8
+# verbs/run.py's DEFAULT_TIMEOUT_S — a deliberate copy (slices never import
+# each other, root CLAUDE.md §2): what a run with no explicit timeout gets.
+RUN_DEFAULT_TIMEOUT_S = 120.0
+RUN_MIN_TIMEOUT_S = 5.0
 
 
 def budget_s(raw: str | None) -> int | None:
@@ -67,3 +71,18 @@ def time_note(elapsed_s: float, budget: int) -> str:
         )
     assert note.startswith("[grim] time"), "the note is always grim-branded"
     return note
+
+
+def clamp_run_timeout(requested_s: float | None, left_s: float) -> float | None:
+    """The timeout a `run` call gets so it cannot outlive the budget. A call
+    that already fits the time left is unchanged (None stays None, i.e. the
+    verb's default); otherwise it gets the time left, floored at
+    RUN_MIN_TIMEOUT_S. A model-chosen timeout=900 in a 900s run, or a
+    `sleep 240` with 100s left, is cut to what is actually left."""
+    assert left_s >= 0.0, "time left is never negative"
+    effective = requested_s if requested_s and requested_s > 0 else RUN_DEFAULT_TIMEOUT_S
+    if effective <= left_s:
+        return requested_s
+    clamped = max(left_s, RUN_MIN_TIMEOUT_S)
+    assert clamped <= max(effective, RUN_MIN_TIMEOUT_S), "clamping never extends a timeout"
+    return clamped

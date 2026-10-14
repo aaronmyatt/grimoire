@@ -23,7 +23,7 @@ from minisweagent.exceptions import Submitted
 from pydantic import BaseModel
 
 from grim import cli, db
-from grim.adapter import trace
+from grim.adapter import deadline, trace
 from grim.adapter.tools import SUBMIT_TOOL_NAME, tool_call_to_argv
 
 _ARGS_PREVIEW_LIMIT = 200
@@ -67,6 +67,9 @@ class GrimEnvironment(LocalEnvironment):
         # stamps it; exported around each verb call (_metadata_env).
         self.session_model = ""
         self.session_task = ""
+        # Start of this run's clock for $GRIM_TIME_BUDGET_S (deadline.py).
+        # Ref: https://docs.python.org/3/library/time.html#time.monotonic
+        self.started_s = time.monotonic()
         conn = db.connect()  # no `init` verb reaches the agent (D12) — ensure schema exists
         try:
             db.migrate(conn)
@@ -109,12 +112,30 @@ class GrimEnvironment(LocalEnvironment):
                     "extra": {"exit_status": "Submitted", "submission": result},
                 }
             )
+        if tool == "run":
+            args = self.fit_run_to_budget(args)
         argv, stdin = tool_call_to_argv(tool, args)
         with _metadata_env(self.session_model, self.session_task):
             text, exit_code = _invoke(argv, stdin or "", self.session_id, cwd)
         output = {"output": text, "returncode": exit_code, "exception_info": ""}
         assert "output" in output, "execute() must always return an 'output' key"
         return output
+
+    def fit_run_to_budget(self, args: dict[str, Any]) -> dict[str, Any]:
+        """A run's args with its timeout cut to the time left, when
+        $GRIM_TIME_BUDGET_S is set — so no single run (a long sleep, a
+        model-chosen timeout=900) can outlive the caller's hard kill.
+        Unchanged when there is no budget or the run already fits."""
+        budget = deadline.budget_s(os.environ.get(deadline.BUDGET_ENV))
+        if budget is None:
+            return args
+        left = deadline.remaining_s(time.monotonic() - self.started_s, budget)
+        timeout = deadline.clamp_run_timeout(args.get("timeout"), left)
+        if timeout == args.get("timeout"):
+            return args
+        fitted = {**args, "timeout": timeout}
+        assert fitted["name"] == args["name"], "fitting only ever touches the timeout"
+        return fitted
 
     def stamp_session(self, model: str, task: str) -> None:
         """Record what this session is, so the first verb call stamps it on

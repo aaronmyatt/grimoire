@@ -172,3 +172,25 @@ def test_tool_span_records_the_observation_returncode(
     by_phase = {span["phase"]: span for span in spans if span.get("kind") == "span"}
     assert by_phase["tool.write"]["returncode"] == 0
     assert by_phase["tool.run"]["returncode"] == _FAIL_LOUD_EXIT
+
+
+_BUDGET_S = "900"
+_LEFT_S = 100.0
+
+
+def test_no_time_budget_leaves_run_args_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GRIM_TIME_BUDGET_S", raising=False)
+    env = GrimEnvironment(session_id="s1")
+    args = {"name": "greet", "timeout": 900}
+    assert env.fit_run_to_budget(args) is args
+
+
+def test_run_timeout_is_cut_to_the_time_left(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_TIME_BUDGET_S", _BUDGET_S)
+    env = GrimEnvironment(session_id="s1")
+    env.started_s -= float(_BUDGET_S) - _LEFT_S  # pretend 800s have passed
+    fitted = env.fit_run_to_budget({"name": "greet", "timeout": 900})
+    assert fitted["name"] == "greet"
+    assert _LEFT_S - 5 < fitted["timeout"] <= _LEFT_S
+    unset = env.fit_run_to_budget({"name": "greet"})
+    assert unset["timeout"] <= _LEFT_S  # the 120s default no longer fits either

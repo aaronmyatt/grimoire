@@ -41,3 +41,18 @@ def test_late_note_orders_a_progress_handoff() -> None:
     note = deadline.time_note(_LATE_S, _BUDGET)
     assert "140s left" in note
     assert "Call submit now" in note
+
+
+def test_a_run_that_fits_the_time_left_is_unchanged() -> None:
+    assert deadline.clamp_run_timeout(None, 500.0) is None
+    assert deadline.clamp_run_timeout(30.0, 500.0) == 30.0  # noqa: PLR2004
+
+
+def test_a_run_longer_than_the_time_left_is_cut_to_it() -> None:
+    assert deadline.clamp_run_timeout(900.0, 300.0) == 300.0  # noqa: PLR2004
+    assert deadline.clamp_run_timeout(None, 50.0) == 50.0  # noqa: PLR2004 - default 120 > 50
+    assert deadline.clamp_run_timeout(0.0, 50.0) == 50.0  # noqa: PLR2004 - 0 means default
+
+
+def test_a_clamped_run_keeps_a_minimum_timeout() -> None:
+    assert deadline.clamp_run_timeout(60.0, 0.0) == deadline.RUN_MIN_TIMEOUT_S

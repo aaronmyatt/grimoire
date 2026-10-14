@@ -92,6 +92,12 @@ agent:
     them and run(name="stop_bg") to end them. A one-shot task that simply
     takes a while is fine as a normal run.
 
+    Never wait in the foreground: no sleep-then-check over ~30s, and no
+    search that walks / or ~ (it hits the run timeout and returns nothing).
+    When something takes minutes (a deploy, a crawl, a build), start it with
+    run_bg and submit with how to check on it. If observations show a time
+    budget, finish inside it.
+
     Two escape hatches cover work no script fits yet — neither is a shell.
     One CLI call: run(name="run_cmd", args=["git", "status"]) — one program
     and its arguments; pipes, redirects, && and shell interpreters are
