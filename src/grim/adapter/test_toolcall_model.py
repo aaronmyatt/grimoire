@@ -220,3 +220,41 @@ def test_prose_turn_observation_is_a_nudge_not_a_tool_result() -> None:
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
     assert "submit" in messages[0]["content"]
+
+
+# Default GRIM_MAX_OBSERVATION (20000) plus room for the paging-hint line.
+_CAPPED_MAX_CHARS = 21_000
+
+
+def _observations(output: str) -> list[dict[str, object]]:
+    message = {"extra": {"actions": [{"tool": "run", "args": {}, "tool_call_id": "c1"}]}}
+    outputs = [{"output": output, "returncode": 0, "exception_info": ""}]
+    return _model().format_observation_messages(message, outputs, {})
+
+
+def test_small_tool_result_enters_history_verbatim() -> None:
+    (msg,) = _observations("[grim] exec #7 · greet@1\nhi")
+    assert msg["role"] == "tool"
+    assert (
+        msg["content"]
+        == "<returncode>0</returncode>\n<output>\n[grim] exec #7 · greet@1\nhi</output>"
+    )
+
+
+def test_huge_tool_result_is_capped_before_it_enters_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GRIM_COMPACT", raising=False)
+    monkeypatch.delenv("GRIM_MAX_OBSERVATION", raising=False)
+    huge = "[grim] exec #7 · grep@1\n" + "z" * 2_000_000
+    (msg,) = _observations(huge)
+    assert len(str(msg["content"])) < _CAPPED_MAX_CHARS
+    assert "read(exec=7, page=N)" in str(msg["content"])
+    assert msg["extra"]["raw_output"] == huge  # type: ignore[index]
+
+
+def test_compaction_off_leaves_tool_results_uncapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_COMPACT", "0")
+    huge = "z" * 100_000
+    (msg,) = _observations(huge)
+    assert huge in str(msg["content"])

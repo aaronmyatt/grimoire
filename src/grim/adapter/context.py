@@ -11,6 +11,7 @@ GRIM_COMPACT=0 restores the pre-awareness behavior byte-for-byte.
 Env knobs (validated/clamped, never trusted): GRIM_COMPACT (1|0, on),
 GRIM_COMPACT_AT (0.75), GRIM_COMPACT_MAX_TOKENS (120000, an absolute cap
 beside the window share), GRIM_COMPACT_KEEP (6), GRIM_MAX_TOOL_OUTPUT (4096),
+GRIM_MAX_OBSERVATION (20000, the cap on ONE new tool result),
 GRIM_COMPACT_MODEL (unset = no LLM tail summary; the grim-native summary
 always runs). The ladder is cheap-first: trim tool results -> drop stale
 results -> replace the old span with a grim-native summary (task +
@@ -21,6 +22,7 @@ crashes.
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from typing import Any
 
@@ -33,6 +35,7 @@ _COMPACT_AT_ENV = "GRIM_COMPACT_AT"
 _COMPACT_MAX_TOKENS_ENV = "GRIM_COMPACT_MAX_TOKENS"
 _COMPACT_KEEP_ENV = "GRIM_COMPACT_KEEP"
 _MAX_TOOL_OUTPUT_ENV = "GRIM_MAX_TOOL_OUTPUT"
+_MAX_OBSERVATION_ENV = "GRIM_MAX_OBSERVATION"
 _COMPACT_MODEL_ENV = "GRIM_COMPACT_MODEL"
 
 _DEFAULT_WINDOW = 128_000
@@ -112,6 +115,37 @@ def keep() -> int:
 def max_tool_output() -> int:
     """Bytes cap for tool results kept in history, clamped to [512, 65536]."""
     return _env_int(_MAX_TOOL_OUTPUT_ENV, 4096, 512, 65536)
+
+
+def max_observation() -> int:
+    """Chars cap for ONE new tool result as it enters history, clamped to
+    [4096, 262144]. It bounds the raw history itself: prompt_tokens() sizes
+    the raw list, so one uncapped 1.9 MB result made every later call
+    compact down to the last few turns (the 2026-10-14 re-read loop)."""
+    return _env_int(_MAX_OBSERVATION_ENV, 20_000, 4_096, 262_144)
+
+
+# `grim run` stamps its stored execution id in the observation header
+# ("[grim] exec #11126 · ..."); `read(exec=…)` pages that stored output.
+_EXEC_ID_RE = re.compile(r"exec #(\d+)")
+_EXEC_ID_SCAN_CHARS = 500
+
+
+def cap_observation(text: str, limit: int) -> str:
+    """Head + tail of one tool result, plus a line naming how to see the
+    rest. Text within `limit` is returned unchanged."""
+    assert limit > 0, "the observation cap is positive"
+    if len(text) <= limit:
+        return text
+    match = _EXEC_ID_RE.search(text[:_EXEC_ID_SCAN_CHARS])
+    hint = (
+        f"call read(exec={match.group(1)}, page=N) to page the full output"
+        if match
+        else "rerun with head/tail, or a narrower query, to see the rest"
+    )
+    trimmed = _trim_text(text, limit)
+    assert len(trimmed) <= limit, "the kept head + tail fit the cap"
+    return trimmed + f"\n[grim] observation capped at {limit} chars; {hint}."
 
 
 def compact_model() -> str | None:

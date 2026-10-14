@@ -37,6 +37,13 @@ D6 revised → native tool-calling).
   `format_observation_messages` is overridden to match: tool results as usual,
   but a prose turn (no actions, so no `tool_call_id` to correlate) gets a
   single `role: "user"` nudge, preserving the alternation chat APIs require.
+  Each tool result is capped as it enters history (`context.cap_observation`
+  at `context.max_observation()`, `$GRIM_MAX_OBSERVATION`, default 20000
+  chars): head + tail + a `read(exec=N)` paging hint. The full text stays in
+  `extra.raw_output` and the stored execution. Without this, one huge result
+  sat in the raw history that `context.prompt_tokens` sizes, so every later
+  call compacted to the last few turns and the agent re-read files in a loop.
+  `GRIM_COMPACT=0` skips the cap, like the rest of the context budget.
 - `environment.py` — `GrimEnvironment`, subclassing mini-swe-agent's
   `LocalEnvironment` and overriding `execute(action, cwd="", *,
   timeout=None)`. The launch directory is captured once at construction

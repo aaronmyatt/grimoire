@@ -43,6 +43,7 @@ def _context_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "GRIM_COMPACT_AT",
         "GRIM_COMPACT_KEEP",
         "GRIM_MAX_TOOL_OUTPUT",
+        "GRIM_MAX_OBSERVATION",
         "GRIM_COMPACT_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -216,3 +217,40 @@ def test_is_context_error_classification() -> None:
     assert not context.is_context_error(
         litellm.exceptions.BadRequestError("bad json", "gpt-4o", "openai")
     )
+
+
+# --- observation cap (one new tool result, at ingestion) ---------------------
+
+_OBS_LIMIT = 4_096
+_OBS_DEFAULT = 20_000
+_OBS_MAX = 262_144
+
+
+def test_cap_observation_leaves_short_text_unchanged() -> None:
+    text = "<returncode>0</returncode>\n<output>\nhi\n</output>"
+    assert context.cap_observation(text, _OBS_LIMIT) == text
+
+
+def test_cap_observation_keeps_head_and_tail_and_names_the_exec_to_page() -> None:
+    text = "<output>\n[grim] exec #4242 · grep@1\nHEAD" + "x" * 50_000 + "TAIL\n</output>"
+    capped = context.cap_observation(text, _OBS_LIMIT)
+    assert capped.startswith("<output>\n[grim] exec #4242")
+    assert "TAIL\n</output>" in capped
+    assert "read(exec=4242, page=N)" in capped
+    assert len(capped) < _OBS_LIMIT + 200
+
+
+def test_cap_observation_without_an_exec_id_points_at_head_tail() -> None:
+    capped = context.cap_observation("y" * 10_000, _OBS_LIMIT)
+    assert "head/tail" in capped
+    assert "read(exec=" not in capped
+
+
+def test_max_observation_default_and_clamps(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert context.max_observation() == _OBS_DEFAULT
+    monkeypatch.setenv("GRIM_MAX_OBSERVATION", "10")
+    assert context.max_observation() == _OBS_LIMIT
+    monkeypatch.setenv("GRIM_MAX_OBSERVATION", "99999999")
+    assert context.max_observation() == _OBS_MAX
+    monkeypatch.setenv("GRIM_MAX_OBSERVATION", "lots")
+    assert context.max_observation() == _OBS_DEFAULT

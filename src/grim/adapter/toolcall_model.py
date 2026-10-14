@@ -208,7 +208,8 @@ class GrimToolcallModel(LitellmModel):
         """
         actions = message.get("extra", {}).get("actions", [])
         if actions:
-            return super().format_observation_messages(message, outputs, template_vars)
+            rendered = super().format_observation_messages(message, outputs, template_vars)
+            return _capped(rendered) if context.enabled() else rendered
         assert not outputs, "a turn with no actions cannot have produced outputs"
         return [{"role": "user", "content": PROSE_NUDGE}]
 
@@ -293,6 +294,22 @@ class GrimToolcallModel(LitellmModel):
         return FormatError(
             {"role": "user", "content": content, "extra": {"interrupt_type": "FormatError"}}
         )
+
+
+def _capped(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cap each tool result's content as it enters history (the API-bound
+    text only — mini keeps the full output in extra.raw_output, and the DB
+    keeps the stored execution). GRIM_COMPACT=0 skips this, like the rest
+    of the context budget."""
+    limit = context.max_observation()
+    out = [
+        {**m, "content": context.cap_observation(m["content"], limit)}
+        if isinstance(m.get("content"), str)
+        else m
+        for m in messages
+    ]
+    assert len(out) == len(messages), "capping never adds or drops a message"
+    return out
 
 
 def _usage_fields(response: Any) -> dict[str, object]:
