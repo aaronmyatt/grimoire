@@ -114,3 +114,10 @@ mechanically.
   span metrics silently disagree. The abstraction might be shared-kernel
   constants — or `harness_health.py` and the `stats` seed becoming thin
   callers of `grim stats` — the human decides, as its own task.
+- **Default run timeout, two copies.** `120` seconds is spelled in
+  `verbs/run.py` (`DEFAULT_TIMEOUT_S`, what a run gets with no `--timeout`)
+  and `adapter/deadline.py` (`RUN_DEFAULT_TIMEOUT_S`, used to decide whether
+  that default still fits the time budget). Deliberate: slices don't import
+  each other. If they drift, the adapter cuts timeouts it didn't need to,
+  or misses ones it should cut. The abstraction might be a shared-kernel
+  constant — the human decides, as its own task.
