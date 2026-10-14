@@ -258,3 +258,25 @@ def test_compaction_off_leaves_tool_results_uncapped(monkeypatch: pytest.MonkeyP
     huge = "z" * 100_000
     (msg,) = _observations(huge)
     assert huge in str(msg["content"])
+
+
+def test_no_time_budget_means_no_time_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GRIM_TIME_BUDGET_S", raising=False)
+    (msg,) = _observations("hi")
+    assert "[grim] time" not in str(msg["content"])
+
+
+def test_time_budget_note_ends_the_last_observation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_TIME_BUDGET_S", "900")
+    message = {"extra": {"actions": [{"tool_call_id": "a"}, {"tool_call_id": "b"}]}}
+    outputs = [{"output": text, "returncode": 0, "exception_info": ""} for text in ("one", "two")]
+    first, last = _model().format_observation_messages(message, outputs, {"elapsed_seconds": 760})
+    assert "[grim] time" not in str(first["content"])
+    assert str(last["content"]).endswith("how to continue.")
+    assert "140s left" in str(last["content"])
+
+
+def test_prose_nudge_also_carries_the_time_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GRIM_TIME_BUDGET_S", "900")
+    (msg,) = _model().format_observation_messages({"extra": {"actions": []}}, [], {})
+    assert "900s left" in str(msg["content"])

@@ -16,6 +16,7 @@ Ref: https://docs.litellm.ai/docs/completion/function_call
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import litellm
@@ -23,7 +24,7 @@ from jinja2 import StrictUndefined, Template
 from minisweagent.exceptions import FormatError
 from minisweagent.models.litellm_model import LitellmModel
 
-from grim.adapter import context, trace
+from grim.adapter import context, deadline, trace
 from grim.adapter.tools import GRIM_TOOLS, render_command
 
 _TOOL_NAMES = frozenset(t["function"]["name"] for t in GRIM_TOOLS)
@@ -209,9 +210,11 @@ class GrimToolcallModel(LitellmModel):
         actions = message.get("extra", {}).get("actions", [])
         if actions:
             rendered = super().format_observation_messages(message, outputs, template_vars)
-            return _capped(rendered) if context.enabled() else rendered
-        assert not outputs, "a turn with no actions cannot have produced outputs"
-        return [{"role": "user", "content": PROSE_NUDGE}]
+            messages = _capped(rendered) if context.enabled() else rendered
+        else:
+            assert not outputs, "a turn with no actions cannot have produced outputs"
+            messages = [{"role": "user", "content": PROSE_NUDGE}]
+        return _with_time_note(messages, template_vars or {})
 
     def _parse_one(self, tool_call: Any, finish_reason: Any) -> dict[str, Any]:
         name = tool_call.function.name
@@ -309,6 +312,23 @@ def _capped(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for m in messages
     ]
     assert len(out) == len(messages), "capping never adds or drops a message"
+    return out
+
+
+def _with_time_note(
+    messages: list[dict[str, Any]], template_vars: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Append the time-budget line (deadline.py) to the turn's last
+    observation when $GRIM_TIME_BUDGET_S is set; unchanged otherwise.
+    `elapsed_seconds` is mini's own clock, from DefaultAgent.get_template_vars."""
+    budget = deadline.budget_s(os.environ.get(deadline.BUDGET_ENV))
+    if budget is None or not messages:
+        return messages
+    elapsed = float(template_vars.get("elapsed_seconds", 0) or 0)
+    last = messages[-1]
+    note = deadline.time_note(elapsed, budget)
+    out = [*messages[:-1], {**last, "content": f"{last.get('content', '')}\n{note}"}]
+    assert len(out) == len(messages), "the note never adds a message"
     return out
 
 

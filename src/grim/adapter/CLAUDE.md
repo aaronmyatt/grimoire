@@ -44,6 +44,15 @@ D6 revised → native tool-calling).
   sat in the raw history that `context.prompt_tokens` sizes, so every later
   call compacted to the last few turns and the agent re-read files in a loop.
   `GRIM_COMPACT=0` skips the cap, like the rest of the context budget.
+  When `$GRIM_TIME_BUDGET_S` is set, the turn's last observation (tool
+  result or prose nudge) also ends with `deadline.time_note` — time left,
+  or past the wrap-up point an order to submit a hand-off now.
+- `deadline.py` — the run's wall-clock budget, pure over (elapsed, budget):
+  `budget_s(raw)` parses `$GRIM_TIME_BUDGET_S` (unset/garbage → None, else
+  clamped to [60, 86400]), `remaining_s`, `wrap_up_due` (past
+  `WRAP_UP_SHARE` = 0.8), and `time_note`. A caller that hard-kills the
+  agent (the Telegram bot's 900s cap) sets the env so the model can see the
+  clock and hand off before the kill. Unset changes nothing.
 - `environment.py` — `GrimEnvironment`, subclassing mini-swe-agent's
   `LocalEnvironment` and overriding `execute(action, cwd="", *,
   timeout=None)`. The launch directory is captured once at construction
