@@ -280,3 +280,18 @@ def test_prose_nudge_also_carries_the_time_note(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("GRIM_TIME_BUDGET_S", "900")
     (msg,) = _model().format_observation_messages({"extra": {"actions": []}}, [], {})
     assert "900s left" in str(msg["content"])
+
+
+def test_update_with_old_and_new_is_a_valid_action() -> None:
+    args = {"name": "greet", "changelog": "fix", "old": "hi", "new": "hello"}
+    (action,) = _model()._parse_actions(_response([_tool_call("update", args)]))
+    assert action["tool"] == "update"
+    assert action["args"] == args
+
+
+def test_update_with_both_body_and_old_new_is_a_format_error() -> None:
+    args = {"name": "greet", "changelog": "fix", "body": "x", "old": "hi", "new": "hello"}
+    with pytest.raises(FormatError):
+        _model()._parse_actions(_response([_tool_call("update", args)]))
+    with pytest.raises(FormatError):
+        _model()._parse_actions(_response([_tool_call("update", {"name": "g", "changelog": "c"})]))

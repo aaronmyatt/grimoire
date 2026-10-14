@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from grim import cli, db
 from grim.adapter import deadline, trace
-from grim.adapter.tools import SUBMIT_TOOL_NAME, tool_call_to_argv
+from grim.adapter.tools import SUBMIT_TOOL_NAME, replace_once, tool_call_to_argv
 
 _ARGS_PREVIEW_LIMIT = 200
 # Read by verbs/_shared.py's ensure_session (deliberate duplicate of its
@@ -114,6 +114,12 @@ class GrimEnvironment(LocalEnvironment):
             )
         if tool == "run":
             args = self.fit_run_to_budget(args)
+        if tool == "update" and "body" not in args:
+            try:
+                args = _resolve_update_edit(args)
+            except ValueError as exc:
+                note = f"[grim] update {args['name']}: {exc}\n"
+                return {"output": note, "returncode": 1, "exception_info": ""}
         argv, stdin = tool_call_to_argv(tool, args)
         with _metadata_env(self.session_model, self.session_task):
             text, exit_code = _invoke(argv, stdin or "", self.session_id, cwd)
@@ -144,6 +150,32 @@ class GrimEnvironment(LocalEnvironment):
         self.session_task = task.strip()[:_SESSION_TASK_EXPORT_CHARS]
         assert len(self.session_task) <= _SESSION_TASK_EXPORT_CHARS, "task export is capped"
         assert self.session_model == self.session_model.strip(), "model is stripped"
+
+
+def _resolve_update_edit(args: dict[str, Any]) -> dict[str, Any]:
+    """Turn an update(old=…, new=…) call into the full-body update the verb
+    takes: the script's latest body with one exact replacement applied
+    (tools.replace_once). Lets the model fix one line without resending the
+    whole script — full-body rewrites were a quarter of the time in runs the
+    bot killed at 900s. Raises ValueError, as an observation, when the
+    script or the snippet can't be found."""
+    name = str(args["name"])
+    conn = db.connect()
+    try:
+        row = conn.execute(
+            "SELECT v.body FROM script s JOIN script_version v ON v.script_id = s.id "
+            "WHERE s.name = ? ORDER BY v.version DESC LIMIT 1",
+            (name,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise ValueError("no script by that name; check it with find, or write it first")
+    body = replace_once(str(row[0]), str(args["old"]), str(args["new"]))
+    resolved = {k: v for k, v in args.items() if k not in ("old", "new")} | {"body": body}
+    assert "old" not in resolved and "new" not in resolved, "the verb only ever sees a body"
+    assert resolved["name"] == name, "resolving never renames the script"
+    return resolved
 
 
 @contextlib.contextmanager

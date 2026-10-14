@@ -19,7 +19,12 @@ D6 revised → native tool-calling).
   enum but is OPTIONAL — omitted means "keep the script's current
   language", set means "this body is written in a different one". Without
   it the agent's only way to change a script's language was a
-  near-duplicate fork under a new name. Text/data in, data out; no mini-swe-agent import. This is
+  near-duplicate fork under a new name. `update` takes EITHER `body` (full
+  source) OR `old` + `new` (one exact, unique replacement) —
+  `update_shape_error` states the rule and `toolcall_model` enforces it;
+  `GrimEnvironment` turns old/new into a full body (`replace_once` over the
+  latest version, read from the DB) before the verb runs, so the verb and
+  the library still only ever see whole versions. Text/data in, data out; no mini-swe-agent import. This is
   the successor to the old text-based `parse.py`.
 - `toolcall_model.py` — `GrimToolcallModel(LitellmModel)`. Overrides
   `_query` (hands the model `GRIM_TOOLS` instead of the single `bash`

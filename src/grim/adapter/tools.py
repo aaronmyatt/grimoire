@@ -101,7 +101,9 @@ def tool_call_to_argv(tool: str, args: dict[str, Any]) -> tuple[list[str], str |
         case "update":
             argv = ["update", _str(args["name"]), "--changelog", _str(args["changelog"])]
             argv += _opt("--lang", args.get("lang"))
-            return argv, args["body"]
+            # body is absent only on an old/new call that GrimEnvironment has
+            # not resolved yet (render_command at parse time) — see replace_once.
+            return argv, args.get("body")
         case "read":
             argv = ["read", *([_str(args["name"])] if args.get("name") else [])]
             argv += _opt("--exec", args.get("exec")) + _opt("--page", args.get("page"))
@@ -124,6 +126,42 @@ def tool_call_to_argv(tool: str, args: dict[str, Any]) -> tuple[list[str], str |
                 argv += ["--", *(_str(a) for a in script_args)]
             return argv, args.get("stdin")
     raise AssertionError(f"unhandled data verb {tool!r}")  # unreachable past the guard
+
+
+def update_shape_error(args: dict[str, Any]) -> str | None:
+    """Why an `update` call's args can't be acted on, or None: it needs
+    exactly one of `body` (full source) or `old` + `new` (one replacement)."""
+    has_body = "body" in args
+    has_old, has_new = "old" in args, "new" in args
+    if has_body and (has_old or has_new):
+        return "send either body (full source) or old + new (one replacement), not both"
+    if not has_body and not (has_old and has_new):
+        return "send body (full new source), or both old and new (one exact replacement)"
+    assert has_body != (has_old and has_new), "exactly one update shape remains"
+    assert not (has_body and has_old), "body never travels with old"
+    return None
+
+
+def replace_once(body: str, old: str, new: str) -> str:
+    """`body` with the single occurrence of `old` replaced by `new`. Raises
+    ValueError with a message the model can act on when `old` is empty,
+    missing, or not unique — never guesses which match was meant."""
+    if not old:
+        raise ValueError("old is empty; copy the exact text to replace from read(name=...)")
+    count = body.count(old)
+    if count == 0:
+        raise ValueError(
+            "old was not found in the current version; read the script and copy "
+            "the exact text, including whitespace"
+        )
+    if count > 1:
+        raise ValueError(
+            f"old matches {count} places; include more surrounding lines so it matches once"
+        )
+    result = body.replace(old, new, 1)
+    assert len(result) == len(body) - len(old) + len(new), "exactly one replacement happened"
+    assert new in result, "the new text lands in the result"
+    return result
 
 
 def render_command(tool: str, args: dict[str, Any]) -> str:
@@ -185,15 +223,23 @@ GRIM_TOOLS: list[dict[str, Any]] = [
     _fn(
         "update",
         "Append a new version of an existing script (e.g. to fix a bug found by run). "
-        "changelog is a required one-line note on why this version exists; body is the "
-        "full new source. Set lang only to rewrite the script in a different language — "
-        "do that instead of forking a near-duplicate script under a new name. A legacy "
-        "script in a language that is no longer enabled (e.g. bash) must be ported: "
-        "rewrite it in python and set lang to python.",
+        "changelog is a required one-line note on why this version exists. Send EITHER "
+        "old + new — replace one exact snippet of the current version, the fast way to "
+        "make a small fix — OR body, the full new source, for a rewrite. Resending a "
+        "whole script for a small change is slow. Set lang only to rewrite the script "
+        "in a different language — do that instead of forking a near-duplicate script "
+        "under a new name. A legacy script in a language that is no longer enabled "
+        "(e.g. bash) must be ported: rewrite it in python and set lang to python.",
         {
             "name": _STR,
             "changelog": {**_STR, "description": "why this version exists"},
-            "body": {**_STR, "description": "full new script source"},
+            "old": {
+                **_STR,
+                "description": "exact text in the current version, matching once; "
+                "include enough surrounding lines to make it unique",
+            },
+            "new": {**_STR, "description": "text that replaces old"},
+            "body": {**_STR, "description": "full new script source (instead of old + new)"},
             "lang": {
                 "type": "string",
                 "enum": lang_enum(),
@@ -201,7 +247,7 @@ GRIM_TOOLS: list[dict[str, Any]] = [
                 "set it only when this new body is written in a different one",
             },
         },
-        ["name", "changelog", "body"],
+        ["name", "changelog"],
     ),
     _fn(
         "read",

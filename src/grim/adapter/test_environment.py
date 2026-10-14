@@ -194,3 +194,36 @@ def test_run_timeout_is_cut_to_the_time_left(monkeypatch: pytest.MonkeyPatch) ->
     assert _LEFT_S - 5 < fitted["timeout"] <= _LEFT_S
     unset = env.fit_run_to_budget({"name": "greet"})
     assert unset["timeout"] <= _LEFT_S  # the 120s default no longer fits either
+
+
+def _edit(env: GrimEnvironment, old: str, new: str) -> dict[str, Any]:
+    args = {"name": "greet", "changelog": "edit", "old": old, "new": new}
+    return env.execute(_tool("update", args))
+
+
+def test_update_old_new_appends_a_version_with_one_replacement() -> None:
+    env = GrimEnvironment(session_id="s1")
+    _write(env, "greet", "python", "print('hi')\nprint('bye')\n")
+    edited = _edit(env, "print('hi')", "print('hello')")
+    assert edited["returncode"] == 0
+    run = env.execute(_tool("run", {"name": "greet"}))
+    assert "hello" in run["output"]
+    assert "bye" in run["output"]
+
+
+def test_update_old_new_reports_a_missing_or_ambiguous_snippet() -> None:
+    env = GrimEnvironment(session_id="s1")
+    _write(env, "greet", "python", "print('x')\nprint('x')\n")
+    missing = _edit(env, "nope", "x")
+    assert missing["returncode"] == 1
+    assert "not found" in missing["output"]
+    twice = _edit(env, "print('x')", "print('y')")
+    assert twice["returncode"] == 1
+    assert "matches 2 places" in twice["output"]
+
+
+def test_update_old_new_on_an_unknown_script_is_an_observation() -> None:
+    env = GrimEnvironment(session_id="s1")
+    result = _edit(env, "a", "b")
+    assert result["returncode"] == 1
+    assert "no script by that name" in result["output"]

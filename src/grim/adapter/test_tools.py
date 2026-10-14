@@ -12,7 +12,9 @@ from grim.adapter.tools import (
     SUBMIT_TOOL_NAME,
     lang_enum,
     render_command,
+    replace_once,
     tool_call_to_argv,
+    update_shape_error,
 )
 
 
@@ -168,3 +170,34 @@ def test_render_command_tolerates_list_valued_string_fields() -> None:
     assert render_command("find", {"query": ["a", "b"]}) == "grim find " + shlex.join(
         ["['a', 'b']"]
     )
+
+
+def test_update_takes_body_or_old_new_but_not_both_or_neither() -> None:
+    assert update_shape_error({"name": "a", "changelog": "c", "body": "x"}) is None
+    assert update_shape_error({"name": "a", "changelog": "c", "old": "x", "new": "y"}) is None
+    both = update_shape_error({"body": "x", "old": "x", "new": "y"})
+    assert both is not None and "not both" in both
+    assert update_shape_error({"old": "x"}) is not None  # new missing
+    assert update_shape_error({}) is not None
+
+
+def test_an_unresolved_old_new_update_maps_with_no_stdin_yet() -> None:
+    argv, stdin = tool_call_to_argv(
+        "update", {"name": "a", "changelog": "c", "old": "x", "new": "y"}
+    )
+    assert argv == ["update", "a", "--changelog", "c"]
+    assert stdin is None
+
+
+def test_replace_once_swaps_exactly_one_unique_snippet() -> None:
+    assert replace_once("a = 1\nb = 2\n", "b = 2", "b = 3") == "a = 1\nb = 3\n"
+    assert replace_once("x", "x", "") == ""
+
+
+@pytest.mark.parametrize(
+    ("old", "fragment"),
+    [("", "old is empty"), ("zzz", "not found"), ("print", "matches 2 places")],
+)
+def test_replace_once_refuses_what_it_cannot_do_exactly(old: str, fragment: str) -> None:
+    with pytest.raises(ValueError, match=fragment):
+        replace_once("print(1)\nprint(2)\n", old, "x")

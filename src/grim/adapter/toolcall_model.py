@@ -25,7 +25,7 @@ from minisweagent.exceptions import FormatError
 from minisweagent.models.litellm_model import LitellmModel
 
 from grim.adapter import context, deadline, trace
-from grim.adapter.tools import GRIM_TOOLS, render_command
+from grim.adapter.tools import GRIM_TOOLS, render_command, update_shape_error
 
 _TOOL_NAMES = frozenset(t["function"]["name"] for t in GRIM_TOOLS)
 # name -> its required-argument list, precomputed from the schemas so
@@ -239,6 +239,8 @@ class GrimToolcallModel(LitellmModel):
                 f"Tool {name!r} is missing required argument(s): {', '.join(missing)}.",
                 finish_reason,
             )
+        if name == "update" and (shape := update_shape_error(args)):
+            raise self._format_error(f"Tool 'update': {shape}.", finish_reason)
 
         violations = _type_violations(name, args)
         if violations:
