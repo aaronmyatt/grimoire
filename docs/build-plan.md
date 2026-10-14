@@ -6,7 +6,7 @@ Grimoire replaces mini-swe-agent's raw-bash action space with six verbs over a S
 
 The thesis being tested: bash is great, the entire corpus of programming languages is better — and a persistent, searchable corpus of the agent's own scripts compounds, saving tokens on repeat work and leaving the human a usable library behind.
 
-> Status: Phases 0–3 and 2b are done, plus a post-Phase-3 protocol refinement round (language scope, composition, optional `find`, seed list). Since then: adapter hardening (argparse `SystemExit` no longer kills the agent), `grim run` now shows full output by default with opt-in `--head`/`--tail` limits, the composition recursion cap landed (§9 → `GRIM_CALL_DEPTH`), **Phase 5a** (Datasette canned queries + fzf/export docs) shipped, and the adapter migrated from the text-based fenced-block grammar to **native tool-calling** (D6 revised — `GRIM_TOOLS` + a deterministic `submit` stop; the text-based path, including `run.sh --stream`, was removed). **Phase 4 is deliberately deferred** — validating with `python`/`bash` only before extending the runner table. Phase 8's benchmark scaffolding landed early (`evals/grim-swebench/` — SWE-bench Verified through smevals: host-checkout runner, per-repo grouped libraries, official-harness grading); the benchmark runs, ablations, and the vanilla-mini baseline remain. Remaining, in order: Phase 4 (when un-deferred), Phase 5b (TUI), 6, 7, 8.
+> Status: Phases 0–3 and 2b are done, plus a post-Phase-3 protocol refinement round (language scope, composition, optional `find`, seed list). Since then: adapter hardening (argparse `SystemExit` no longer kills the agent), `grim run` now shows full output by default with opt-in `--head`/`--tail` limits, the composition recursion cap landed (§9 → `GRIM_CALL_DEPTH`), **Phase 5a** (Datasette canned queries + fzf/export docs) shipped, and the adapter migrated from the text-based fenced-block grammar to **native tool-calling** (D6 revised — `GRIM_TOOLS` + a deterministic `submit` stop; the text-based path, including `run.sh --stream`, was removed). **Phase 4 is deliberately deferred** — validating with `python`/`bash` only before extending the runner table. Phase 8's benchmark scaffolding landed early (`evals/grim-swebench/` — SWE-bench Verified through smevals: host-checkout runner, per-repo grouped libraries, official-harness grading); the benchmark runs, ablations, and the vanilla-mini baseline remain. The **metrics slice** then landed — §7's report as a human-facing CLI verb: `grim stats [summary|weekly|sessions|runs|scripts] [--format table|json|jsonl|csv|tsv|md] [--since YYYY-MM-DD]`, with its evidence and baselines in `docs/metrics-research.md`. Remaining, in order: Phase 4 (when un-deferred), Phase 5b (TUI), 6, 7, 8.
 
 ---
 
@@ -26,8 +26,8 @@ Locked for v1; all revisitable, but changing them mid-build should require a wri
 | D8 | Execution model | Stateless by default (script = f(argv, stdin)); per-run timeout; full output in DB and, since the full-output change, in the observation too — `--head`/`--tail` opt into a truncated envelope | Matches mini's `subprocess.run` philosophy; executions stay comparable and cacheable. |
 | D9 | Executor dispatch | `python → uv run` (PEP 723 inline deps), `bash → bash`, `js/ts → bun`, everything else → `run --json` (Esubaalew/run) | Self-contained Python scripts; `run`'s `--json` envelope maps 1:1 onto the execution row. |
 | D10 | Scope model | `global` \| `repo:<fingerprint>`. Repo-scoped by default when cwd is a git repo; promotion to global is human-gated | Contains blast radius of injected/stale scripts; makes the TUI the review queue. |
-| D11 | Meta-tooling | Stats, gardener, export ship as *library scripts*, not CLI verbs | The six agent-facing verbs stay closed forever; capability grows in the data plane. |
-| D12 | Agent vs human surface | Agent sees exactly six verbs. Humans additionally get `grim init`, `grim doctor`, `grim draft` (Phase 7); the adapter rejects these from the model | Honors the "only these tools may be invoked" constraint without crippling human ops. (D6-revised: the agent also gets a terminal `submit` control tool — not a data verb, so the six-verb *library* surface is unchanged.) |
+| D11 | Meta-tooling | Stats, gardener, export ship as *library scripts*, not CLI verbs. **Amended by the metrics slice:** `grim stats` is a *human-facing* CLI verb beside the `stats` seed — the agent's tool surface (`GRIM_TOOLS`) is unchanged. | The six agent-facing verbs stay closed forever; agent capability grows in the data plane, human capability in `cli.py`'s commands (the split `curate` already uses). |
+| D12 | Agent vs human surface | Agent sees exactly six verbs. Humans additionally get `grim init`/`config`/`doctor`, the `curate` commands (`near`, `recent`, `edit`, `tag`/`untag`/`tags`/`tagged`, `favourite`/`unfavourite`/`favourites`), the `stats` report (`grim stats`, §7), and later `grim draft` (Phase 7); the adapter rejects these from the model | Honors the "only these tools may be invoked" constraint without crippling human ops. (D6-revised: the agent also gets a terminal `submit` control tool — not a data verb, so the six-verb *library* surface is unchanged.) |
 | D13 | First target | Personal daily driver first; benchmark track (Phase 8) second | Compounding shows up where problems actually recur. Flip this if the research result is the priority. |
 
 ---
@@ -41,16 +41,16 @@ Five components, one database.
 │ mini-swe-agent (unmodified) │  DefaultAgent · linear history · cost limits
 │   └── GrimEnvironment ──────┼──► parses action → calls grim lib in-process
 ├─────────────────────────────┤
-│ grim  (CLI + library)       │  six verbs · init/doctor/draft for humans
+│ grim  (CLI + library)       │  six verbs · init/doctor/stats for humans
 │   ├── verbs/                │
 │   ├── exec/  (dispatch)─────┼──► uv run | bash | bun | run --json
 │   └── db.py  (schema/query) │
 ├─────────────────────────────┤
 │ grimoire.db (SQLite)        │  scripts · versions · executions · sessions · FTS
 ├─────────────────────────────┤
-│ seed library                │  shell, read_file, apply_patch… + stats/gardener/export
+│ seed library                │  run_cmd, run_py, read_file… + stats/gardener/export
 ├─────────────────────────────┤
-│ human surfaces              │  same CLI · Datasette · fzf one-liner · TUI (review queue)
+│ human surfaces              │  same CLI · grim stats · Datasette · fzf · TUI (review queue)
 └─────────────────────────────┘
 ```
 
@@ -189,7 +189,7 @@ grim find   "query" [--limit 5]     # ranked: name · desc · lang · runs · su
 grim run    NAME[@V] [--timeout 120] [--stdin-file F] [-- ARGS...]
 ```
 
-Human-only extras: `grim init [--check]` (create DB, verify FTS5 availability, `run doctor` the toolchains — `init` itself landed in Phase 0; `--check` is Phase 4), `grim doctor`, and later `grim draft` (Phase 7). The adapter rejects these if the model emits them.
+Human-only extras: `grim init [--check]` (create DB, verify FTS5 availability, `run doctor` the toolchains — `init` itself landed in Phase 0; `--check` is Phase 4), `grim doctor`, `grim config`, the `curate` commands (`near`, `recent`, `edit`, `tag`/`untag`/`tags`/`tagged`, `favourite`/`unfavourite`/`favourites`), `grim stats` (§7), and later `grim draft` (Phase 7). The adapter rejects these if the model emits them.
 
 Semantics that matter:
 
@@ -352,7 +352,18 @@ from Phase 1 back this up mechanically rather than by exhortation alone.
 
 ## 7. Metrics
 
-All computable from the DB; `grim run stats` prints them (D11).
+All computable from the DB and the span log. Two surfaces print them, one per
+audience (D11, amended):
+
+- **`grim stats [DATASET] [--format FMT] [--since YYYY-MM-DD]`** — the
+  human-facing CLI verb (metrics slice). DATASET is `summary` (all-time, the
+  table below), `weekly` (one row per ISO week — the scorecard), `sessions`,
+  `runs`, or `scripts`; FMT is `table`, `json`, `jsonl`, `csv`, `tsv`, or
+  `md`; `--since` bounds every dataset by UTC date. Columns and definitions:
+  `src/grim/metrics/CLAUDE.md`; the research, baselines, and the scorecard it
+  answers: `docs/metrics-research.md`.
+- **`grim run stats`** — the agent-facing seed (D11): total runs, escape
+  rate, reuse rate, and active library % from the schema as-is.
 
 | Metric | Definition | Watching for |
 |--------|-----------|--------------|
@@ -363,15 +374,25 @@ All computable from the DB; `grim run stats` prints them (D11).
 | Tokens & steps per task | from mini's cost tracking, joined to sessions | the headline thesis curve |
 | Active library | scripts run in last 30d ÷ total unarchived | gardener effectiveness |
 
-Phase 3's `stats` seed implements reuse rate, shell-escape rate, and
-active library from the schema as-is. Dup pressure is **not yet
-computable** — `write_script`'s similarity nudge (build plan §4) is
-computed and printed at write time only, never persisted, so there's no
-data source for "writes that triggered it" today. Fixing this means
-either a `script.similarity_nudged` column or a lightweight event log,
-either way touching `verbs/write.py` — deliberately deferred rather
-than reopening that already-shipped file as a side effect of Phase 3.
-Find hit rate stays gated on Phase 6 as originally scoped.
+Both compute reuse, escape rate, and active library; `grim stats` adds the
+span-log timing, token, and format-error columns. **They disagree on reuse
+today:** the `stats` seed's query — and the five byte-identical
+`evals/*/run-metrics` checkers — has no `seeded = 0` predicate, so every seed
+run counts as reuse (seeds carry origin `human-adhoc`, not NULL), which is the
+inflated rate `docs/metrics-research.md` documents as gap #3.
+`metrics/queries.py` defines reuse correctly (non-seed, different session);
+the seed and the eval checkers keep the bug until their own changes (seeds +
+evals slices).
+
+Dup pressure is **not yet computable** — `write_script`'s similarity nudge
+(build plan §4) is computed and printed at write time only, never persisted,
+so there's no data source for "writes that triggered it" today. Fixing this
+means either a `script.similarity_nudged` column or a lightweight event log,
+either way touching `verbs/write.py` — deliberately deferred rather than
+reopening that already-shipped file as a side effect of Phase 3. Find hit
+rate stays gated on Phase 6 as originally scoped: the `find` span still
+doesn't log the names it returned (gap #1 in `docs/metrics-research.md`,
+whose gaps table tracks the rest).
 
 ---
 

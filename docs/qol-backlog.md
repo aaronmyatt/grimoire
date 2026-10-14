@@ -39,9 +39,12 @@ substrate it runs on, so both are exempt from the database-ready gate.
 
 - **`recent` seed** — terse CLI feed of the last N executions (script, exit,
   duration, session). *Pure read over the `execution` table.*
-- **`stats --json` / `gardener --apply`** — machine-readable stats for
-  dashboards; a human-gated flag so gardener can act on its archive proposals
-  (today it only proposes). *Seed enhancements.*
+- ✅ **`stats --json`** — shipped as `grim stats --format json|jsonl|csv|tsv`
+  (the `metrics` slice, `docs/metrics-research.md`): a human-facing CLI verb
+  rather than a seed flag, so the report is bounded by `--since` and pipes
+  straight into a notebook or Datasette.
+- **`gardener --apply`** — still open: a human-gated flag so gardener can act
+  on its archive proposals (today it only proposes). *Seed enhancement.*
 - **Persist dup-pressure** — the write-time similarity nudge is printed but
   never recorded (build-plan §7 flags it as not-yet-computable). A
   `script.similarity_nudged` column or an event row unlocks the library-rot

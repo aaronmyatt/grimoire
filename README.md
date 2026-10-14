@@ -29,7 +29,7 @@ bash scripts still run, and are ported to python on their next edit.
 │ mini-swe-agent (unmodified) │  DefaultAgent · linear history · cost limits
 │   └── GrimEnvironment ──────┼──► parses action → calls grim lib in-process
 ├─────────────────────────────┤
-│ grim  (CLI + library)       │  six verbs · init/doctor/draft for humans
+│ grim  (CLI + library)       │  six verbs · init/doctor/stats for humans
 │   ├── verbs/                │
 │   ├── exec/  (dispatch)─────┼──► uv run | bash | bun | run --json
 │   └── db.py  (schema/query) │
@@ -38,7 +38,7 @@ bash scripts still run, and are ported to python on their next edit.
 ├─────────────────────────────┤
 │ seed library                │  run_cmd, run_py, read_file… + stats/gardener/export
 ├─────────────────────────────┤
-│ human surfaces              │  same CLI · Datasette · fzf one-liner · TUI (review queue)
+│ human surfaces              │  same CLI · grim stats · Datasette · fzf · TUI (review queue)
 └─────────────────────────────┘
 ```
 
@@ -64,6 +64,7 @@ truth for its invariants; this is a summary.
 | **`exec/`** | Language dispatch table (`python → uv run`, `bash → bash`, `js/ts → bun`, else → `run --json`) and output truncation | `dispatch.dispatch(...)`, `envelope.truncate(...)` |
 | **`adapter/`** | Subclasses mini-swe-agent's environment so model actions are parsed and dispatched to `grim` in-process — the hard enforcement point for the six-verb constraint | `environment.GrimEnvironment`, `grimoire.yaml` |
 | **`seeds/`** | Seed script bodies loaded on `grim init` (`run_cmd`, `run_py`, `read_file`, `apply_patch`, `stats`, `gardener`, …) — meta-tooling ships as library scripts, never new CLI verbs | `loader.load_seeds(db)` |
+| **`metrics/`** | `grim stats` — raw usage numbers (reuse, escape rate, library hit rate, failures, timing) from the library and the span log, for humans and for a later visualisation layer: `summary`, `weekly`, `sessions`, `runs`, `scripts` in table/json/jsonl/csv/tsv/md | `command.configure(parser)` / `cmd_stats(args)`, `datasets.build(name, source)` |
 
 The shared kernel (`db.py`, `cli.py`, `config.py`) is tiny, frozen, and
 versioned like a third-party library: slices depend on it or on nothing,
@@ -122,6 +123,7 @@ ledger lives in `RATCHET.md`.
 uv sync
 uv run grim init      # creates ~/.grimoire/grimoire.db (or $GRIM_DB) and applies schema v1
 uv run grim completion  # (re)install bash+zsh tab-completion — `grim run <TAB>` reads script names from the db (auto-runs on init)
+uv run grim stats       # usage report over the accumulated library (docs/metrics-research.md)
 uv run pytest         # smoke tests: fresh init + idempotent re-init
 ```
 
@@ -155,10 +157,11 @@ grim-agent "summarize README.md" -m anthropic/claude-sonnet-4-5
 ```
 
 This installs two commands from one package: `grim` (the library CLI — the
-six verbs plus `init`/`doctor`) and `grim-agent` (the harness launcher). The
-run is fully unattended (`-y --exit-immediately`): no per-action confirmation,
-and it exits on `submit` instead of prompting for a new task. Each run writes
-a trajectory JSON under `$GRIM_TRAJ_DIR` (default the system temp dir).
+six verbs plus `init`/`doctor` and the `stats` report) and `grim-agent` (the
+harness launcher). The run is fully unattended (`-y --exit-immediately`): no
+per-action confirmation, and it exits on `submit` instead of prompting for a
+new task. Each run writes a trajectory JSON under `$GRIM_TRAJ_DIR` (default
+the system temp dir).
 
 > **Safety.** `grim-agent` executes model-authored scripts directly on your
 > host with no confirmation — fine for your own tasks, not for untrusted
@@ -206,6 +209,20 @@ dispatches, the entrypoint fails fast when `GRIM_MODEL` is unset):
 
 The whole library is one SQLite file, so the human surfaces are just
 different lenses over it — no separate store to keep in sync (Phase 5a).
+
+**Read the numbers (`grim stats`).** The `metrics` slice answers the
+scorecard in `docs/metrics-research.md` from the same file — five datasets
+(`summary`, `weekly`, `sessions`, `runs`, `scripts`) in six formats
+(`table`, `json`, `jsonl`, `csv`, `tsv`, `md`):
+
+```bash
+grim stats                       # all-time roll-up: reuse, escape rate, library hit rate
+grim stats weekly --format md    # the scorecard, one row per ISO week
+grim stats scripts --format csv  # raw rows for a notebook or a chart
+```
+
+Human-facing, never on the agent's tool surface — and any script can read it
+by shelling out (`subprocess.run(["grim", "stats", ...])`).
 
 **Browse it (Datasette).** Canned queries — recent executions, top scripts
 by use, the failure feed, and the emergent-pipeline affinity view — ship in
