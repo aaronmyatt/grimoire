@@ -1,6 +1,7 @@
 # Surfaces — the concept, as stories and features
 
-Status: **concept, nothing built** (written 2026-11-12). Seed names are examples, not final.
+Status: **built 2026-11-12** on branch `feat/system-driver`: the tmux, delegate and
+browser drivers. The `@eval` scenarios need a model run and have not been run.
 Each scenario is a test to write when its slice is built. `@eval` ones need a model run.
 
 ## 1. What a surface is

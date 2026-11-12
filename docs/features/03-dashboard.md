@@ -1,6 +1,7 @@
 # Feature 3 — tmux is the dashboard
 
-Status: **concept, nothing built** (written 2026-11-12). Seed names are examples, not final.
+Status: **built 2026-11-12** (`src/grim/adapter/home.py`, the prompt). Turn it off with
+`GRIM_HOME=0`. Not checked by eye: a real attended launch from a terminal.
 Concept: [surfaces.md](../surfaces.md). Slice: `adapter`. Build order: 3 of 8.
 
 - As the human, I want one place to watch everything grim drives, and to step in.

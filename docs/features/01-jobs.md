@@ -1,6 +1,7 @@
 # Feature 1 — Jobs are tmux windows
 
-Status: **concept, nothing built** (written 2026-11-12). Seed names are examples, not final.
+Status: **built 2026-11-12.** All 9 scenarios have tests
+(`src/grim/seeds/test_bodies_tmux.py`, `test_loader.py`).
 Concept: [surfaces.md](../surfaces.md). Slice: `seeds`. Build order: 1 of 8.
 
 - As the agent, I want work that outlives one run, so servers and builds don't die at the

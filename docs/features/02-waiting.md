@@ -1,6 +1,7 @@
 # Feature 2 — Wait on a signal
 
-Status: **concept, nothing built** (written 2026-11-12). Seed names are examples, not final.
+Status: **built 2026-11-12.** `tmux_wait`, plus a job-end hook in `tmux_start`. The
+`@adapter` scenario is the run-timeout clamp that already existed (`test_environment.py`).
 Concept: [surfaces.md](../surfaces.md). Slice: `seeds`. Build order: 2 of 8.
 
 - As the agent, I want to wait without sleeping, so I spend no turns on polling.

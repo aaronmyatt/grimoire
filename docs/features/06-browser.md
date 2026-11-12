@@ -1,6 +1,8 @@
 # Feature 6 — Drive one long-lived Chrome
 
-Status: **concept, nothing built** (written 2026-11-12). Seed names are examples, not final.
+Status: **built 2026-11-12.** `web_open` is python; `web_read`, `web_eval`, `web_click`,
+`web_type` and `web_shot` are Go, written for chromedp v0.21.0. Tests drive a real
+headless Chrome (`src/grim/seeds/test_bodies_web.py`).
 Concept: [surfaces.md](../surfaces.md). Slice: `seeds`. Build order: 6 of 8.
 Needs: [01-jobs.md](01-jobs.md) and [05-go-build.md](05-go-build.md).
 

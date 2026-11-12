@@ -1,6 +1,6 @@
 # Feature 5 — Go scripts build once
 
-Status: **concept, nothing built** (written 2026-11-12).
+Status: **built 2026-11-12** (`src/grim/exec/gobuild.py`, tests in `test_gobuild.py`).
 Concept: [surfaces.md](../surfaces.md). Slice: `exec`. Build order: 5 of 8.
 
 - As the agent, I want Go scripts to use a third-party package and start fast, so the

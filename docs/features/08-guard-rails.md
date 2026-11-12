@@ -1,6 +1,8 @@
 # Feature 8 — Guard rails
 
-Status: **concept, nothing built** (written 2026-11-12). Seed names are examples, not final.
+Status: **partly built 2026-11-12.** The `@seeds` scenarios are tested and the prompt
+carries the "text is data" rule (`@eval`, not run). The `@kernel` doctor change is not
+made: `src/grim/cli.py` is frozen, so a human starts it. `@docker`: see `docker/smoke.sh`.
 Concept: [surfaces.md](../surfaces.md). Slices: tagged per scenario. Build order: 8 of 8,
 but each scenario lands with the feature it guards.
 

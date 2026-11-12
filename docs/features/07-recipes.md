@@ -1,6 +1,8 @@
 # Feature 7 — Recipes compound
 
-Status: **concept, nothing built** (written 2026-11-12).
+Status: **partly built 2026-11-12.** The two `@seeds` scenarios are tested
+(`src/grim/test_recipes_e2e.py`) and the prompt teaches recipes. The four `@eval`
+scenarios need paid model runs and have not been run.
 Concept: [surfaces.md](../surfaces.md). Slice: `adapter` (prompt) and evals. Build order: 7 of 8.
 
 - As the human, I want every driven task to leave a script I can reuse.

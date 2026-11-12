@@ -1,6 +1,9 @@
 # Feature 4 — Delegate to another agent
 
-Status: **concept, nothing built** (written 2026-11-12). Seed names are examples, not final.
+Status: **built 2026-11-12** as `agent_start` and `agent_read`. Follow-up and stop are
+`tmux_send` and `tmux_stop`: there is no `agent_send` or `agent_stop`. Tested against a
+fake agent TUI. The real claude, codex and pi were only looked at on their start screens;
+no model was called.
 Concept: [surfaces.md](../surfaces.md). Slice: `seeds`. Build order: 4 of 8.
 
 - As the agent, I want to hand a hard task to another agent and get the answer back.
