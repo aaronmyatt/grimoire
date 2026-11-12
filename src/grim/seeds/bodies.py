@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from grim.seeds.bodies_exec import RUN_BG, RUN_CMD, RUN_PY
+from grim.seeds.bodies_tmux import TMUX_SEEDS
 
 
 @dataclass(frozen=True)
@@ -491,4 +492,5 @@ SEEDS: list[SeedSpec] = [
         description="stop a background job started by run_bg by name, killing its process group",
         body=_STOP_BG,
     ),
+    *(SeedSpec(name, "python", description, body) for name, description, body in TMUX_SEEDS),
 ]
