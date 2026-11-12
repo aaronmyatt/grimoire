@@ -17,6 +17,13 @@ pytest.importorskip("minisweagent")  # launcher.main imports it lazily; skip if 
 from grim.adapter import launcher  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _stay_out_of_tmux(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() moves an attended run into tmux (home.py). Under `pytest -s` in a
+    real terminal that would exec tmux from inside a test, so it is off here."""
+    monkeypatch.setenv("GRIM_HOME", "0")
+
+
 def test_config_path_resolves_to_the_packaged_yaml() -> None:
     path = launcher._config_path()
     assert path.endswith("grimoire.yaml")

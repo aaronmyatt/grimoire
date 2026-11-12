@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from grim import cli, db
-from grim.adapter import trace, trajectories
+from grim.adapter import home, trace, trajectories
 from grim.adapter.mini_prompt_patch import ensure_mini_task_prompt_patch
 
 # grimoire.yaml ships inside this package (see pyproject hatchling config);
@@ -510,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
     init the library, then hand off to mini's loop in-process."""
     raw = list(sys.argv[1:] if argv is None else argv)
     assert isinstance(raw, list), "argv must resolve to a list"
+    user_argv = list(raw)  # untouched copy: what a re-run inside tmux is given
 
     # Grim-branded help: answer before init or the mini import, so `--help`
     # never migrates the DB, seeds the library, or shows mini's Typer screen.
@@ -540,6 +541,10 @@ def main(argv: list[str] | None = None) -> int:
     # init. `--help` short-circuits inside Typer before any config is loaded.
     if _has_token(raw, "--mini-help"):
         return _run_help_app(app)
+
+    # An attended run outside tmux moves into session "grim", window "agent"
+    # (home.py); this call only returns when the agent should run right here.
+    home.go_home(user_argv, print_opts.enabled)
 
     # Print mode keeps stdout clean for the answer, so the banner is withheld;
     # an interactive run still gets it (on stderr, so stdout stays clean too).

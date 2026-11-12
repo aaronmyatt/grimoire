@@ -199,6 +199,17 @@ D6 revised → native tool-calling).
   library recall (sets `GRIM_RECALL`) and reuses the last agent session's id
   (`last_agent_session_id` -> `-c environment.session_id=…`) so executions
   extend that lineage; the flag is stripped before dispatch (`_take_flag`).
+- `home.py` — where the agent runs (docs/features/03-dashboard.md).
+  `go_home(user_argv, print_mode)` is called by `launcher.main` before any
+  setup. An attended run outside tmux is replaced (`os.execvp`) by one tmux
+  call that makes or joins session `grim`, attaches the terminal, and
+  re-runs `grim-agent` in window `agent` (tagged `@grim_kind=agent`) — the
+  session the tmux seeds open jobs in. Inside tmux, headless (print mode or
+  no terminal), with no tmux, or with `$GRIM_HOME=0`, it returns and the
+  agent runs in place. `stays_here`, `carried_names` and `home_command` are
+  pure. The caller's environment reaches the window by NAME only (the
+  session's `update-environment`), so no value is ever put in an argv.
+  `$GRIM_TMUX_SOCKET` picks a private tmux server, as for the seeds.
 
 ## Invariants
 - Known tools validate against their `GRIM_TOOLS` schemas. An unknown
@@ -226,7 +237,13 @@ D6 revised → native tool-calling).
   pre-run setup (before the first turn, never from an action) to
   identify the working repo; it executes nothing the model chose and its
   output is only a SQL filter value. Any further subprocess use requires
-  the same explicit human sign-off.
+  the same explicit human sign-off. Second pre-run case, NOT yet signed
+  off one by one (added 2026-11-12 while building
+  docs/features/03-dashboard.md under the human's "make your decisions"
+  instruction — review it): `home.py` runs one read-only
+  `tmux has-session`, then replaces the process with the tmux client. It
+  runs in `launcher.main` before init and before the first turn, never
+  from an action, and executes nothing the model chose.
 - `-p`/`--output-format`/`--continue` are the human launcher's flags only:
   `parse_print_options`/`_take_flag` strip them from argv before dispatch, so
   the model's argv (and the six-verb contract, D12) is never touched.
