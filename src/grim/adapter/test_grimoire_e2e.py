@@ -185,7 +185,7 @@ def test_seed_list_reads_as_run_calls_and_documents_fallthrough() -> None:
     # call is a supported alias for run(name=...), not a FormatError, so the
     # prompt teaching "not callable directly" would contradict the adapter.
     template = yaml.safe_load(GRIMOIRE_YAML.read_text())["agent"]["system_template"]
-    seeds = ("run_cmd", "run_py", "read_file", "write_file", "edit_file", "list_dir", "run_bg")
+    seeds = ("run_cmd", "run_py", "read_file", "write_file", "edit_file", "list_dir", "tmux_start")
     for seed in seeds:
         assert f"run {seed}" in template, f"{seed} must be shown invoked via run"
     assert "falls through to run" in template
