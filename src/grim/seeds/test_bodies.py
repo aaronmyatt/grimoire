@@ -6,7 +6,6 @@ dispatched exactly the way `grim run` would (exec.dispatch), not just
 from __future__ import annotations
 
 import sqlite3
-import time
 from pathlib import Path
 
 import pytest
@@ -50,9 +49,6 @@ def _run(
         ("stats", ["junk"]),
         ("gardener", ["junk"]),
         ("export_library", ["dir", "junk"]),
-        ("list_bg", ["junk"]),
-        ("stop_bg", ["job", "junk"]),
-        ("stop_bg", []),
     ],
 )
 def test_wrong_arity_is_rejected_with_usage(name: str, argv: list[str]) -> None:
@@ -389,95 +385,3 @@ def test_export_library_writes_latest_bodies_to_disk(
     assert "exported 2 scripts" in result.stdout
     assert (out_dir / "shell.py").read_text() == "b"
     assert (out_dir / "greet.py").read_text() == "b"
-
-
-def test_list_bg_reports_no_jobs_when_run_dir_empty(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
-    result = _run("list_bg")
-    assert result.exit_code == 0
-    assert "no background jobs" in result.stdout
-
-
-def test_run_bg_then_list_then_stop_lifecycle(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    run_dir = tmp_path / "run"
-    monkeypatch.setenv("GRIM_RUN_DIR", str(run_dir))
-
-    # `sleep 30` is the managed workload (not a test-timing sleep): it stays
-    # alive for the ms-scale window until stop_bg kills it, and self-destructs
-    # if the test ever crashes before stopping it.
-    started = _run("run_bg", argv=["job1", "sleep 30"])
-    assert started.exit_code == 0
-    assert "grimbg:job1" in started.stdout
-    assert (run_dir / "job1.pid").is_file()
-
-    listed = _run("list_bg")
-    assert "job1" in listed.stdout
-    assert "running" in listed.stdout
-
-    stopped = _run("stop_bg", argv=["job1"])
-    assert stopped.exit_code == 0
-    assert "job1" in stopped.stdout
-    assert not (run_dir / "job1.pid").is_file()  # pid file removed on stop
-
-
-def test_run_bg_multi_element_argv_preserves_word_boundaries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Regression: run_bg had the same naive " ".join as the shell seed, so a
-    spaced path split into two words. The touch target appearing on disk
-    proves the command line survived re-tokenization intact."""
-    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
-    target = tmp_path / "has space.txt"
-
-    started = _run("run_bg", argv=["job2", "touch", str(target)])
-    assert started.exit_code == 0
-
-    # The job is detached, so its side effect lands asynchronously; poll with
-    # a hard deadline (bounded loop, not a fixed sleep) for the file to appear.
-    deadline = time.monotonic() + _TIMEOUT_S
-    while not target.exists() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert target.exists(), "backgrounded touch never created its spaced-path target"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [["sleep 1 && echo hi"], ["sleep", "1", "|", "cat"], ["bash", "-c", "sleep 1"], ["sh x.sh"]],
-    ids=["and-chain", "pipe", "bash", "sh"],
-)
-def test_run_bg_refuses_shell_syntax_and_shell_programs(
-    command: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    run_dir = tmp_path / "run"
-    monkeypatch.setenv("GRIM_RUN_DIR", str(run_dir))
-    result = _run("run_bg", argv=["job3", *command])
-    assert result.exit_code == _USAGE_EXIT_CODE
-    assert "no shell here" in result.stderr
-    assert not (run_dir / "job3.pid").exists()  # nothing was started
-
-
-def test_run_bg_rejects_a_path_like_job_name(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
-    result = _run("run_bg", argv=["../escape", "sleep", "1"])
-    assert result.exit_code == _USAGE_EXIT_CODE
-    assert "bad job name" in result.stderr
-
-
-def test_run_bg_reports_a_missing_program(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
-    result = _run("run_bg", argv=["job4", "definitely-not-a-real-program-xyz"])
-    assert result.exit_code == _NOT_FOUND_EXIT_CODE
-    assert "not found on PATH" in result.stderr
-
-
-def test_stop_bg_reports_unknown_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
-    result = _run("stop_bg", argv=["nope"])
-    assert result.exit_code == 1
-    assert "no such job" in result.stderr

@@ -18,8 +18,10 @@ _BASE_SEEDS_ENV = "GRIM_BASE_SEEDS"
 # human took over (seeded=0) is theirs to keep. Archived, never deleted: its
 # versions and executions stay readable (D4, append-only). `shell` ran
 # /bin/sh; the python-only pivot (docs/python-pivot-plan.md) replaced it
-# with run_cmd and run_py.
-RETIRED_SEEDS: tuple[str, ...] = ("shell",)
+# with run_cmd and run_py. The background trio (run_bg, list_bg, stop_bg)
+# tracked jobs by pid file; the tmux job seeds replaced it — a job is a
+# tmux window and tmux is the registry (docs/features/01-jobs.md).
+RETIRED_SEEDS: tuple[str, ...] = ("shell", "run_bg", "list_bg", "stop_bg")
 
 
 def enabled_seeds() -> list[SeedSpec]:

@@ -3,18 +3,18 @@
 ## Purpose
 Seed script bodies loaded on `grim init` (`run_cmd`, `run_py`, `read_file`,
 `write_file`, `edit_file`, `apply_patch`, `grep_tree`, `list_dir`,
-`stats`, `gardener`, `export_library`, plus the background-job trio
-`run_bg`/`list_bg`/`stop_bg` — build plan §3 Phase 3, D11). Meta-tooling ships as library scripts here,
-not as new CLI verbs. The background trio tracks detached processes by pid
-file under `$GRIM_RUN_DIR` (default `~/.grimoire/run`; each job also
-carries `GRIMBG_NAME` in its env): the answer to "long-lived work" is a
-background job, not a longer `grim run` timeout (which is hard-capped, see
-verbs/run.py). Program-starting bodies live in `bodies_exec.py` and never
-use a shell: argv only, shell operators and shell interpreters refused.
+`stats`, `gardener`, `export_library` — build plan §3 Phase 3, D11).
+Meta-tooling ships as library scripts here, not as new CLI verbs. The
+answer to "long-lived work" is a tmux job, not a longer `grim run` timeout
+(which is hard-capped, see verbs/run.py); job logs go under
+`$GRIM_RUN_DIR` (default `~/.grimoire/run`). The old pid-file trio
+(`run_bg`/`list_bg`/`stop_bg`) is retired. Program-starting bodies live in
+`bodies_exec.py` and `bodies_tmux.py` and never use a shell: argv only,
+shell operators and shell interpreters refused.
 Surface drivers ship here too (docs/surfaces.md). The first is tmux, in
 `bodies_tmux.py`: `tmux_start`/`tmux_list`/`tmux_read`/`tmux_send`/
 `tmux_stop` (docs/features/01-jobs.md) — a job is a tagged tmux window
-in session `grim`; these replace the background trio — and `tmux_wait`
+in session `grim`; these replaced the background trio — and `tmux_wait`
 (docs/features/02-waiting.md): block on a named signal instead of
 polling; every job signals `grim-JOB` when it ends.
 
@@ -58,7 +58,8 @@ symbols.
   server, or on the private server `$GRIM_TMUX_SOCKET` names (tests always
   set it). A job's program is exec'd as argv, never through a shell; the
   one shell line is the seed's own fixed `cat >> LOG` for `pipe-pane`.
-- `loader.RETIRED_SEEDS` (today: `shell`, which ran `/bin/sh`) names seeds
+- `loader.RETIRED_SEEDS` (today: `shell`, which ran `/bin/sh`, and the
+  pid-file trio `run_bg`/`list_bg`/`stop_bg`) names seeds
   this build no longer ships. `load_seeds` archives such a row only while
   it is still the bundled seed (`seeded=1`, unarchived) and reports it as
   `name (retired)`; a taken-over row (`seeded=0`) is never touched, and

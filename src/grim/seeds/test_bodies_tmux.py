@@ -5,6 +5,7 @@ developer's own tmux is never touched; the fixture kills that server."""
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -55,11 +56,12 @@ def socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[str]:
     monkeypatch.setenv("GRIM_TMUX_SOCKET", name)
     monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
     yield name
-    # kill-server leaves the socket file behind; remove it so runs leave no litter.
-    socket_path = _tmux(name, "display-message", "-p", "#{socket_path}").stdout.strip()
     _tmux(name, "kill-server")
-    if socket_path:
-        Path(socket_path).unlink(missing_ok=True)
+    # A dead server leaves its socket file behind; remove it so runs leave no
+    # litter. tmux keeps -L sockets in $TMUX_TMPDIR (or /tmp) under tmux-UID.
+    # Ref: https://man.openbsd.org/tmux#L
+    socket_dir = Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}"
+    (socket_dir / name).unlink(missing_ok=True)
 
 
 def test_tmux_start_opens_a_tagged_window_and_returns_at_once(socket: str, tmp_path: Path) -> None:

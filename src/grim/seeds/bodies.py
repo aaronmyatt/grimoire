@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from grim.seeds.bodies_exec import RUN_BG, RUN_CMD, RUN_PY
+from grim.seeds.bodies_exec import RUN_CMD, RUN_PY
 from grim.seeds.bodies_tmux import TMUX_SEEDS
 
 
@@ -472,25 +472,6 @@ SEEDS: list[SeedSpec] = [
         language="python",
         description="dump the latest version of every non-archived script to a directory tree",
         body=_EXPORT_LIBRARY,
-    ),
-    SeedSpec(
-        name="run_bg",
-        language="python",
-        description="start a program as a detached background job for long-lived processes "
-        "(servers, watchers): run_bg NAME PROGRAM [ARG...] — no shell",
-        body=RUN_BG,
-    ),
-    SeedSpec(
-        name="list_bg",
-        language="python",
-        description="list background jobs started by run_bg with their pid and running state",
-        body=_LIST_BG,
-    ),
-    SeedSpec(
-        name="stop_bg",
-        language="python",
-        description="stop a background job started by run_bg by name, killing its process group",
-        body=_STOP_BG,
     ),
     *(SeedSpec(name, "python", description, body) for name, description, body in TMUX_SEEDS),
 ]

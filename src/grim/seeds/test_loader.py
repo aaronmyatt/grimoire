@@ -212,10 +212,15 @@ def test_load_seeds_resyncs_drift_even_when_python_is_unwritable(
 
 def _insert_bundled_shell(conn: sqlite3.Connection, seeded: int) -> None:
     """A library from before the pivot: a `shell` row as the old build wrote it."""
+    _insert_old_seed(conn, "shell", seeded)
+
+
+def _insert_old_seed(conn: sqlite3.Connection, name: str, seeded: int) -> None:
+    """A row an older build seeded (or, with seeded=0, one a human owns)."""
     script_id = conn.execute(
         "INSERT INTO script (name, language, description, seeded) "
-        "VALUES ('shell', 'python', 'run any shell command', ?)",
-        (seeded,),
+        "VALUES (?, 'python', 'an old seed', ?)",
+        (name, seeded),
     ).lastrowid
     conn.execute(
         "INSERT INTO script_version (script_id, version, body, body_hash) "
@@ -246,6 +251,29 @@ def test_load_seeds_leaves_a_taken_over_retired_name_alone(
     assert "shell (retired)" not in load_seeds(conn)
     row = conn.execute("SELECT archived FROM script WHERE name = 'shell'").fetchone()
     assert row["archived"] == 0
+
+
+@pytest.mark.parametrize("name", ["run_bg", "list_bg", "stop_bg"])
+def test_load_seeds_retires_the_background_trio_and_deletes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """docs/features/01-jobs.md, "The old background seeds retire": a library
+    that still has the trio gets it archived and reported, a taken-over copy
+    is left alone, and no row or version is ever deleted."""
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    _insert_old_seed(conn, name, seeded=1)
+    _insert_old_seed(conn, f"my_{name}", seeded=0)  # a human's own script: never touched
+
+    assert f"{name} (retired)" in load_seeds(conn)
+
+    rows = dict(conn.execute("SELECT name, archived FROM script WHERE name LIKE ?", (f"%{name}",)))
+    assert rows == {name: 1, f"my_{name}": 0}
+    kept = conn.execute(
+        "SELECT COUNT(*) AS n FROM script_version sv JOIN script s ON s.id = sv.script_id "
+        "WHERE s.name = ?",
+        (name,),
+    ).fetchone()
+    assert kept["n"] == 1  # archived, not deleted: its version is still readable
 
 
 def test_retired_seeds_are_never_bundled() -> None:
