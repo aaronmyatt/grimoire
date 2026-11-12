@@ -146,3 +146,10 @@ mechanically.
   in `tmux_list`. The abstraction might be `agent_start` calling
   `grim run tmux_start` with a kind and a directory, or the shared prelude
   named in the entry above — the human decides, as its own task.
+- **Opening a tagged tmux job window, now three copies.** `web_open`
+  (`seeds/bodies_web.py`) is the third seed to spell the opener named in
+  the entry above (after `tmux_start` and `agent_start`), here for job
+  `chrome` with `@grim_kind=browser`. Its copy leaves out the taken-name
+  check and the stale-wake clearing, because the job name is fixed and it
+  checks the job's state itself. Three copies is the point at which the
+  constitution says to flag again and still not act — the human decides.
