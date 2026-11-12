@@ -18,7 +18,9 @@ split shlex-style). No shell: pipes, redirects, && and shell interpreters are
 refused — put that logic in a python script: tmux_start JOB grim run SCRIPT.
 The job runs in your cwd; its output is logged to <run_dir>/JOB.log
 ($GRIM_RUN_DIR or ~/.grimoire/run). See jobs with tmux_list; a human watches
-with `tmux attach -t grim`. $GRIM_TMUX_SOCKET names a private tmux server.
+with `tmux attach -t grim`. When the job ends, tmux itself signals grim-JOB:
+block on that with tmux_wait grim-JOB instead of polling.
+$GRIM_TMUX_SOCKET names a private tmux server.
 Ref: https://man.openbsd.org/tmux#respawn-pane"""
 import os
 import re
@@ -34,10 +36,11 @@ SHELL_OPERATORS = {"|", "||", "&", "&&", ";", ">", ">>", "<", "<<", "2>", "2>&1"
 SHELLS = {"bash", "sh", "zsh", "dash", "fish", "ksh", "csh", "tcsh"}
 
 
-def tmux(*args):
+def tmux(*args, timeout=None):
     socket = os.environ.get("GRIM_TMUX_SOCKET")
     base = ["tmux", "-L", socket] if socket else ["tmux"]
-    return subprocess.run([*base, *args], capture_output=True, text=True, check=False)
+    command = [*base, *args]
+    return subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)
 
 
 def fail(code, message):
@@ -71,6 +74,15 @@ states = dict(row.split("\t") for row in listed.stdout.splitlines() if row.count
 if job in states:
     state = "dead" if states[job] == "1" else "live"
     fail(1, f"job {job!r} already exists ({state}) in tmux session {SESSION!r}; pick another name")
+if session_exists:
+    # A wake left over from an earlier job of this name would end the next
+    # tmux_wait at once. Signal, then take the signal back: the channel ends
+    # empty. Ref: https://man.openbsd.org/tmux#wait-for
+    tmux("wait-for", "-S", f"grim-{job}")
+    try:
+        tmux("wait-for", f"grim-{job}", timeout=1)
+    except subprocess.TimeoutExpired:
+        pass  # a live waiter took the signal instead; nothing is left over
 
 run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
 run_dir.mkdir(parents=True, exist_ok=True)
@@ -80,7 +92,8 @@ log_path.write_text("")  # one job, one story: a reused name starts a fresh log
 # The window opens on a placeholder (`cat -` just waits) so the tags, the
 # keep-when-dead flag and the log pipe are all in place before the job's first
 # byte; respawn-pane -k then swaps the placeholder for the real program, run
-# as argv with no shell. Ref: https://man.openbsd.org/tmux#pipe-pane
+# as argv with no shell. The pane-died hook is what signals grim-JOB.
+# Ref: https://man.openbsd.org/tmux#pipe-pane https://man.openbsd.org/tmux#set-hook
 cwd = os.getcwd()
 create = ["new-window", "-t", f"={SESSION}:"] if session_exists else ["new-session", "-s", SESSION]
 made = tmux(*create, "-d", "-n", job, "-c", cwd, "-P", "-F", "#{window_id}", "cat", "-")
@@ -93,6 +106,7 @@ steps = [
     ["set-option", "-w", "-t", window, "@grim_job", job],
     ["set-option", "-w", "-t", window, "@grim_started", str(int(time.time()))],
     ["pipe-pane", "-t", window, f"cat >> {shlex.quote(str(log_path))}"],
+    ["set-hook", "-w", "-t", window, "pane-died", f"wait-for -S grim-{job}"],
     ["respawn-pane", "-k", "-t", window, "-c", cwd, "--", *argv],
 ]
 for step in steps:
@@ -161,6 +175,86 @@ for name, kind, started, dead, status in jobs:
     print(f"{name}  {kind}  {state}  age {elapsed}")
 '''
 
+TMUX_WAIT = r'''"""tmux_wait — block until a named signal arrives, instead of polling: exits
+0 when it does, 124 if SECONDS pass first (default 60, cap 3600). Every job
+started by tmux_start sends grim-JOB when it ends (a tmux hook does it, with
+no help from the job); anything else can signal with
+`tmux wait-for -S NAME`. A signal sent before the wait is remembered, and a
+job that is already dead counts as signalled. Give `run` a timeout at least
+as long as SECONDS, or the run is killed first.
+Usage: tmux_wait SIGNAL [SECONDS]
+$GRIM_TMUX_SOCKET names a private tmux server.
+Ref: https://man.openbsd.org/tmux#wait-for"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+SESSION = "grim"
+ROW = "#{@grim_job}\t#{pane_dead}\t#{pane_dead_status}"
+DEFAULT_S, MAX_S = 60.0, 3600.0
+TIMEOUT_EXIT_CODE = 124
+socket = os.environ.get("GRIM_TMUX_SOCKET")
+TMUX = ["tmux", "-L", socket] if socket else ["tmux"]
+
+
+def tmux(*args, timeout=None):
+    command = [*TMUX, *args]
+    return subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)
+
+
+def job_state(signal):
+    """How the job behind a grim-JOB signal is doing; '' if there is no such job."""
+    listed = tmux("list-windows", "-t", f"={SESSION}", "-F", ROW)
+    rows = [line.split("\t") for line in listed.stdout.splitlines()]
+    jobs = {row[0]: row[1:] for row in rows if len(row) == 3 and row[0]}
+    job = signal.removeprefix("grim-")
+    if not signal.startswith("grim-") or job not in jobs:
+        return ""
+    dead, status = jobs[job]
+    if dead == "1":
+        return f"job {job!r} is dead (exit {status})"
+    return f"job {job!r} is still running"
+
+
+def usage():
+    print("usage: tmux_wait SIGNAL [SECONDS]   (SECONDS over 0, up to 3600)", file=sys.stderr)
+    sys.exit(2)
+
+
+if len(sys.argv) not in (2, 3) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,80}", sys.argv[1]):
+    usage()
+signal = sys.argv[1]
+try:
+    seconds = float(sys.argv[2]) if len(sys.argv) == 3 else DEFAULT_S
+except ValueError:
+    usage()
+if not 0 < seconds <= MAX_S:
+    usage()
+if shutil.which("tmux") is None:
+    print("tmux_wait: program not found on PATH: 'tmux'", file=sys.stderr)
+    sys.exit(127)
+
+state = job_state(signal)
+if "is dead" in state:
+    print(f"{state}: nothing to wait for")
+    sys.exit(0)
+started = time.monotonic()
+try:
+    waited = tmux("wait-for", signal, timeout=seconds)
+except subprocess.TimeoutExpired:
+    note = job_state(signal) or "nothing has sent it"
+    print(f"tmux_wait: no signal {signal!r} after {seconds:g}s — {note}", file=sys.stderr)
+    sys.exit(TIMEOUT_EXIT_CODE)
+if waited.returncode != 0:
+    print(f"tmux_wait: tmux wait-for failed: {waited.stderr.strip()}", file=sys.stderr)
+    sys.exit(1)
+print(f"signal {signal!r} arrived after {time.monotonic() - started:.1f}s")
+print(job_state(signal) or "no job is tied to this signal")
+'''
+
 # (name, description, body) rows — plain tuples, so this module never imports
 # SeedSpec from bodies.py (which imports this one).
 TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
@@ -174,5 +268,11 @@ TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
         "tmux_list",
         "list the jobs started by tmux_start: name, kind, alive or dead with exit code, age",
         TMUX_LIST,
+    ),
+    (
+        "tmux_wait",
+        "block until a signal arrives instead of polling: tmux_wait grim-JOB [SECONDS] "
+        "returns when that job ends (exit 124 if it has not)",
+        TMUX_WAIT,
     ),
 )

@@ -14,7 +14,9 @@ use a shell: argv only, shell operators and shell interpreters refused.
 Surface drivers ship here too (docs/surfaces.md). The first is tmux, in
 `bodies_tmux.py`: `tmux_start`/`tmux_list` (docs/features/01-jobs.md) — a
 job is a tagged tmux window in session `grim`, and will replace the
-background trio once read/send/stop land.
+background trio once read/send/stop land — and `tmux_wait`
+(docs/features/02-waiting.md): block on a named signal instead of
+polling; every job signals `grim-JOB` when it ends.
 
 ## Public interface
 `loader.py` — `load_seeds(db) -> list[str]`: bare names for newly written

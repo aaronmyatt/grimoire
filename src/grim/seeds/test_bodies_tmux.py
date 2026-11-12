@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ _TIMEOUT_S = 20.0
 _USAGE_EXIT_CODE = 2
 _TAKEN_EXIT_CODE = 1
 _JOB_EXIT_CODE = 3
+_WAIT_TIMEOUT_EXIT_CODE = 124
 _SLEEPER = ["sleep", "600"]  # outlives the test; the fixture's kill-server ends it
 # A job that blocks until the test signals "go" on its tmux server (argv[1] is
 # the socket), then exits 3 — so its death is a step in the test, never a race.
@@ -124,12 +126,8 @@ def test_tmux_list_shows_live_and_dead_jobs_and_skips_other_windows(socket: str)
     # A window grim did not make: it carries no tags, so it is not a job.
     other = ["new-window", "-d", "-t", "=grim:", "-n", "mine", "cat", "-"]
     assert _tmux(socket, *other).returncode == 0
-    # The hook is set before "go" is sent, so crawl cannot die unseen.
-    # Ref: https://man.openbsd.org/tmux#set-hook
-    hook = ["set-hook", "-w", "-t", "=grim:crawl", "pane-died", "wait-for -S dead"]
-    assert _tmux(socket, *hook).returncode == 0
     assert _tmux(socket, "wait-for", "-S", "go").returncode == 0
-    assert _tmux(socket, "wait-for", "dead").returncode == 0
+    assert _tmux(socket, "wait-for", "grim-crawl").returncode == 0  # sent when crawl ends
 
     result = _run("tmux_list", [])
 
@@ -138,3 +136,57 @@ def test_tmux_list_shows_live_and_dead_jobs_and_skips_other_windows(socket: str)
     assert len(lines) == len(["api", "crawl"]), result.stdout
     assert re.fullmatch(r"api  job  alive  age \d+s", lines[0])
     assert re.fullmatch(rf"crawl  job  dead \(exit {_JOB_EXIT_CODE}\)  age \d+s", lines[1])
+
+
+def test_tmux_wait_returns_at_once_for_a_signal_sent_before_it(socket: str) -> None:
+    assert _run("tmux_start", ["keep", *_SLEEPER]).exit_code == 0  # a server to signal on
+    assert _tmux(socket, "wait-for", "-S", "grim-build").returncode == 0
+    result = _run("tmux_wait", ["grim-build"])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.startswith("signal 'grim-build' arrived after ")
+
+
+def test_a_job_signals_when_it_ends_with_no_help_from_its_command(socket: str) -> None:
+    waiter = [sys.executable, "-c", _WAIT_THEN_EXIT, socket]
+    assert _run("tmux_start", ["build", *waiter]).exit_code == 0
+    assert _tmux(socket, "wait-for", "-S", "go").returncode == 0
+    assert _tmux(socket, "wait-for", "grim-build").returncode == 0  # the hook's own signal
+    result = _run("tmux_wait", ["grim-build"])  # the signal is spent; the job is plainly dead
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == f"job 'build' is dead (exit {_JOB_EXIT_CODE}): nothing to wait for\n"
+
+
+def test_tmux_wait_wakes_when_the_job_ends(socket: str) -> None:
+    waiter = [sys.executable, "-c", _WAIT_THEN_EXIT, socket]
+    assert _run("tmux_start", ["build", *waiter]).exit_code == 0
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        blocked = pool.submit(_run, "tmux_wait", ["grim-build", "15"])
+        assert _tmux(socket, "wait-for", "-S", "go").returncode == 0
+        result = blocked.result(timeout=_TIMEOUT_S)
+    assert result.exit_code == 0, result.stderr
+    assert f"job 'build' is dead (exit {_JOB_EXIT_CODE})" in result.stdout
+
+
+def test_tmux_wait_times_out_with_124_and_says_the_job_still_runs(socket: str) -> None:
+    assert _run("tmux_start", ["build", *_SLEEPER]).exit_code == 0
+    result = _run("tmux_wait", ["grim-build", "0.2"])
+    assert result.exit_code == _WAIT_TIMEOUT_EXIT_CODE
+    assert "no signal 'grim-build' after 0.2s — job 'build' is still running" in result.stderr
+
+
+def test_a_new_job_does_not_inherit_an_old_wake_of_its_name(socket: str) -> None:
+    assert _run("tmux_start", ["keep", *_SLEEPER]).exit_code == 0
+    assert _tmux(socket, "wait-for", "-S", "grim-api").returncode == 0  # a stale wake
+    assert _run("tmux_start", ["api", *_SLEEPER]).exit_code == 0
+    assert _run("tmux_wait", ["grim-api", "0.2"]).exit_code == _WAIT_TIMEOUT_EXIT_CODE
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [[], ["grim-x", "0"], ["grim-x", "soon"], ["grim-x", "9999"], ["bad signal"]],
+    ids=["none", "zero", "not-a-number", "over-cap", "bad-name"],
+)
+def test_tmux_wait_wrong_calls_exit_2(socket: str, argv: list[str]) -> None:
+    result = _run("tmux_wait", argv)
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "usage: tmux_wait SIGNAL [SECONDS]" in result.stderr
