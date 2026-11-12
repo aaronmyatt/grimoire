@@ -36,6 +36,7 @@ pytestmark = pytest.mark.skipif(
 
 _TIMEOUT_S = 120.0
 _USAGE_EXIT_CODE = 2
+_NOT_FOUND_EXIT_CODE = 127
 _BIG_TEXT_CHARS = 2_000_000
 _READ_CAP_CHARS = 20_000
 _WAIT_TIMEOUT_EXIT_CODE = 124
@@ -291,3 +292,38 @@ def test_web_click_type_and_shot_wrong_calls_exit_2(site: Site, name: str, argv:
     result = _run(name, argv)
     assert result.exit_code == _USAGE_EXIT_CODE
     assert f"usage: {name} " in result.stderr
+
+
+def _bare_path(tmp_path: Path, tools: list[str]) -> str:
+    """A PATH that holds only the named tools (and the system's own dirs)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in tools:
+        (bin_dir / tool).symlink_to(str(shutil.which(tool)))
+    return os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"])
+
+
+def test_web_open_without_go_exits_127_naming_go_and_sets_nothing_up(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_GO_DIR", str(tmp_path / "go"))  # no module yet: go is needed
+    monkeypatch.setenv("GRIM_TMUX_SOCKET", f"{site.socket}-nogo")
+    monkeypatch.setenv("GRIM_CHROME_PORT", _free_port())
+    monkeypatch.setenv("PATH", _bare_path(tmp_path, ["uv", "tmux"]))
+    result = _run("web_open", [f"{site.url}/index.html"])
+    assert result.exit_code == _NOT_FOUND_EXIT_CODE
+    assert "program not found on PATH: 'go'" in result.stderr
+    assert not (tmp_path / "go").exists()
+    assert _tmux(f"{site.socket}-nogo", "has-session", "-t", "=grim").returncode != 0
+
+
+def test_web_open_without_chrome_exits_127_and_starts_nothing(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GRIM_TMUX_SOCKET", f"{site.socket}-nochrome")
+    monkeypatch.setenv("GRIM_CHROME_PORT", _free_port())
+    monkeypatch.setenv("GRIM_CHROME_BIN", "/nonexistent/chrome")
+    result = _run("web_open", [f"{site.url}/index.html"])
+    assert result.exit_code == _NOT_FOUND_EXIT_CODE
+    assert "no Chrome found" in result.stderr
+    assert _tmux(f"{site.socket}-nochrome", "has-session", "-t", "=grim").returncode != 0

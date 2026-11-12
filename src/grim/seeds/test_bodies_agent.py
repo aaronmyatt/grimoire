@@ -312,3 +312,18 @@ def test_agent_read_refuses_a_plain_job_and_wrong_calls(socket: str) -> None:
         wrong = _run("agent_read", argv)
         assert wrong.exit_code == _USAGE_EXIT_CODE
         assert "usage: agent_read JOB [LINES]" in wrong.stderr
+
+
+def test_agent_start_without_the_agent_program_exits_127_naming_it(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.toml").write_text("")  # no bin: codex must be found on PATH
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("uv", "tmux"):
+        (bin_dir / tool).symlink_to(str(shutil.which(tool)))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]))
+    result = _run("agent_start", ["codex", "fix-auth", str(tmp_path / "work")], stdin="do it")
+    assert result.exit_code == _NOT_FOUND_EXIT_CODE
+    assert "no 'codex' program found on PATH" in result.stderr
+    assert _tmux(socket, "has-session", "-t", "=grim").returncode != 0  # nothing half-started

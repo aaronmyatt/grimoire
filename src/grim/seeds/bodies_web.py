@@ -85,9 +85,7 @@ def ensure_go_module():
     if go_mod.is_file() and "chromedp/chromedp" in go_mod.read_text():
         return
     if shutil.which("go") is None:
-        print("web_open: note: `go` is not installed; web_read and the other Go web "
-              "seeds will not build until it is", file=sys.stderr)
-        return
+        fail(127, "program not found on PATH: 'go' (the web seeds are built with it)")
     module.mkdir(parents=True, exist_ok=True)
     if not go_mod.is_file():
         go_mod.write_text("module grimscripts\n\ngo 1.25\n")
@@ -97,14 +95,19 @@ def ensure_go_module():
     print(f"set up the Go module for the web seeds: {module}")
 
 
-def start_chrome(profile):
-    """Open tmux job "chrome" (the same window recipe as tmux_start) and wait
-    until its DevTools endpoint answers."""
+def chrome_program():
+    """The Chrome to start: $GRIM_CHROME_BIN, else the first one found."""
     found = [MAC_CHROME] if Path(MAC_CHROME).is_file() else []
     found += [path for path in map(shutil.which, OTHER_CHROMES) if path]
     program = os.environ.get("GRIM_CHROME_BIN") or (found[0] if found else None)
     if program is None or shutil.which(program) is None:
         fail(127, "no Chrome found; set GRIM_CHROME_BIN to its program")
+    return program
+
+
+def start_chrome(profile, program):
+    """Open tmux job "chrome" (the same window recipe as tmux_start) and wait
+    until its DevTools endpoint answers."""
     no_display = sys.platform != "darwin" and not os.environ.get("DISPLAY")
     headless = os.environ.get("GRIM_CHROME_HEADLESS", "1" if no_display else "0") == "1"
     argv = [program, f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
@@ -150,7 +153,6 @@ if any(str(profile).startswith(str(Path.home() / daily)) for daily in DAILY_PROF
     fail(2, f"refusing {profile}: that is a daily Chrome profile, not grim's own")
 if shutil.which("tmux") is None:
     fail(127, "program not found on PATH: 'tmux'")
-ensure_go_module()
 job, answering = chrome_job(), devtools("/json/version") is not None
 if job == "dead":
     fail(1, f"job {JOB!r} is dead; clear it with tmux_stop {JOB}, then open again")
@@ -158,8 +160,11 @@ if job is None and answering:
     fail(1, f"port {port} is held by a Chrome grim did not start; set GRIM_CHROME_PORT")
 if job == "alive" and not answering:
     fail(1, f"job {JOB!r} is alive but DevTools is silent on port {port}; see tmux_read {JOB}")
+# Every needed tool is checked before anything is set up or started.
+program = chrome_program() if job is None else None
+ensure_go_module()
 if job is None:
-    start_chrome(profile)
+    start_chrome(profile, program)
 tab = devtools("/json/new?" + urllib.parse.quote(url, safe=":/?&=#%@+,;!$'()*~[]"), "PUT")
 if not tab or "id" not in tab:
     fail(1, f"Chrome did not open a tab for {url}")

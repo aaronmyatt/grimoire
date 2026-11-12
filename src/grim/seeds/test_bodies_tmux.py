@@ -25,6 +25,7 @@ _TIMEOUT_S = 20.0
 _USAGE_EXIT_CODE = 2
 _TAKEN_EXIT_CODE = 1
 _JOB_EXIT_CODE = 3
+_NOT_FOUND_EXIT_CODE = 127
 _WAIT_TIMEOUT_EXIT_CODE = 124
 _SLEEPER = ["sleep", "600"]  # outlives the test; the fixture's kill-server ends it
 # A job that blocks until the test signals "go" on its tmux server (argv[1] is
@@ -390,3 +391,38 @@ def test_tmux_send_delivers_a_long_text_as_one_message_not_one_per_line(socket: 
     assert _tmux(socket, "wait-for", "answered").returncode == 0
     screen = _run("tmux_read", ["tui"]).stdout.splitlines()[1:]
     assert [line.rstrip() for line in screen] == ["message 1: 40 lines"]
+
+
+def test_tmux_start_without_tmux_exits_127_naming_tmux(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No `socket` fixture: its teardown calls tmux, which this test hides.
+    monkeypatch.setenv("GRIM_TMUX_SOCKET", "grimtest-never-started")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "uv").symlink_to(str(shutil.which("uv")))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]))
+    result = _run("tmux_start", ["api", "sleep", "600"])
+    assert result.exit_code == _NOT_FOUND_EXIT_CODE
+    assert "program not found on PATH: 'tmux'" in result.stderr
+
+
+def test_the_seeds_never_touch_a_window_grim_did_not_tag(socket: str) -> None:
+    """docs/features/08-guard-rails.md: a human's own windows — in session grim
+    or any other — are not jobs, so no seed lists, reads, types into or stops them."""
+    assert _run("tmux_start", ["api", *_SLEEPER]).exit_code == 0
+    assert (
+        _tmux(socket, "new-window", "-d", "-t", "=grim:", "-n", "mine", "cat", "-").returncode == 0
+    )
+    assert _tmux(socket, "new-session", "-d", "-s", "work", "-n", "api", "cat", "-").returncode == 0
+    for name, argv in [
+        ("tmux_read", ["mine"]),
+        ("tmux_send", ["mine", "hi"]),
+        ("tmux_stop", ["mine"]),
+    ]:
+        result = _run(name, argv)
+        assert result.exit_code == _TAKEN_EXIT_CODE
+        assert "no such job: 'mine' (jobs: api)" in result.stderr
+    assert _run("tmux_stop", ["api"]).exit_code == 0  # grim's api goes; the human's stays
+    windows = _tmux(socket, "list-windows", "-a", "-F", "#S:#W").stdout.split()
+    assert sorted(windows) == ["grim:mine", "work:api"]
