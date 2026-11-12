@@ -121,3 +121,15 @@ mechanically.
   each other. If they drift, the adapter cuts timeouts it didn't need to,
   or misses ones it should cut. The abstraction might be a shared-kernel
   constant — the human decides, as its own task.
+- **No-shell refusal block, three copies.** The `SHELL_OPERATORS` and
+  `SHELLS` sets, plus the "split one quoted string, refuse operators and
+  shell interpreters, exit 2" check, are spelled in the `run_cmd` and
+  `run_bg` seed bodies (`seeds/bodies_exec.py`) and the `tmux_start` body
+  (`seeds/bodies_tmux.py`). The tmux call line (`tmux [-L
+  $GRIM_TMUX_SOCKET] ...`) and `SESSION = "grim"` are likewise spelled in
+  both `tmux_start` and `tmux_list`, and each tmux seed still to come adds
+  a copy. Deliberate: a seed is one standalone script and can't import
+  anything. If they drift, one seed lets through a shell line another
+  refuses, or drives a different tmux server. The abstraction might be a
+  shared prelude the loader prepends to each body — the human decides, as
+  its own task. `run_bg`'s copy goes away when the background trio retires.
