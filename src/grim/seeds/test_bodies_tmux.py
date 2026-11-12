@@ -190,3 +190,105 @@ def test_tmux_wait_wrong_calls_exit_2(socket: str, argv: list[str]) -> None:
     result = _run("tmux_wait", argv)
     assert result.exit_code == _USAGE_EXIT_CODE
     assert "usage: tmux_wait SIGNAL [SECONDS]" in result.stderr
+
+
+# Jobs for the read and send tests. Each waits until tmux shows its own output
+# (capture-pane, run inside the pane, where $TMUX names the right server)
+# before it signals or exits, so a test never reads a half-drawn screen.
+_SCREEN = "subprocess.run(['tmux', 'capture-pane', '-p'], capture_output=True, text=True).stdout"
+_PRINT_5000 = (
+    "import subprocess\n"
+    "for i in range(5000):\n"
+    "    print('line', i)\n"
+    f"while 'line 4999' not in {_SCREEN}:\n"
+    "    pass\n"
+    "subprocess.run(['tmux', 'wait-for', '-S', 'printed'])\n"
+    "subprocess.run(['tmux', 'wait-for', 'hold'])\n"
+)
+_PROMPT = (
+    "import subprocess\n"
+    "while True:\n"
+    "    answer = str(eval(input('> ')))\n"
+    "    print(answer)\n"
+    f"    while answer not in {_SCREEN}:\n"
+    "        pass\n"
+    "    subprocess.run(['tmux', 'wait-for', '-S', 'answered'])\n"
+)
+# Exits only once its words are in the job log, so the log is never read early.
+_LAST_WORDS = (
+    "import os, pathlib, sys\n"
+    "print('last words', flush=True)\n"
+    "log = pathlib.Path(os.environ['GRIM_RUN_DIR'], 'api.log')\n"
+    "while 'last words' not in log.read_text():\n"
+    "    pass\n"
+    f"sys.exit({_JOB_EXIT_CODE})\n"
+)
+
+
+def test_tmux_read_gets_the_last_lines_and_says_how_to_page_back(socket: str) -> None:
+    assert _run("tmux_start", ["api", sys.executable, "-c", _PRINT_5000]).exit_code == 0
+    assert _tmux(socket, "wait-for", "printed").returncode == 0
+
+    result = _run("tmux_read", ["api", "50"])
+
+    assert result.exit_code == 0, result.stderr
+    status, *lines = result.stdout.splitlines()
+    assert lines == [f"line {i}" for i in range(4950, 5000)]
+    assert status.startswith("[tmux_read] api: alive · lines ")
+    assert " · older: tmux_read api 50 50 · full log: " in status
+    older = _run("tmux_read", ["api", "50", "50"]).stdout.splitlines()[1:]
+    assert older == [f"line {i}" for i in range(4900, 4950)]
+
+
+def test_tmux_send_types_text_as_is_then_presses_enter(socket: str) -> None:
+    assert _run("tmux_start", ["repl", sys.executable, "-c", _PROMPT]).exit_code == 0
+    for text in ["1 + 1", "'Enter ' + 'C-c'"]:  # key names in TEXT stay plain letters
+        assert _run("tmux_send", ["repl", text]).exit_code == 0
+        assert _tmux(socket, "wait-for", "answered").returncode == 0
+    screen = [line.rstrip() for line in _run("tmux_read", ["repl"]).stdout.splitlines()[1:]]
+    assert screen == ["> 1 + 1", "2", "> 'Enter ' + 'C-c'", "Enter C-c", ">"]
+
+
+def test_tmux_read_of_a_dead_job_gives_its_last_words_and_exit_code(socket: str) -> None:
+    assert _run("tmux_start", ["api", sys.executable, "-c", _LAST_WORDS]).exit_code == 0
+    assert _tmux(socket, "wait-for", "grim-api").returncode == 0
+    result = _run("tmux_read", ["api"])
+    assert result.exit_code == 0, result.stderr
+    status, *lines = result.stdout.splitlines()
+    assert lines == ["last words"]
+    assert f"api: dead (exit {_JOB_EXIT_CODE}) · lines 1-1 of 1 from its log" in status
+
+
+def test_tmux_send_refuses_a_dead_job(socket: str) -> None:
+    waiter = [sys.executable, "-c", _WAIT_THEN_EXIT, socket]
+    assert _run("tmux_start", ["api", *waiter]).exit_code == 0
+    assert _tmux(socket, "wait-for", "-S", "go").returncode == 0
+    assert _tmux(socket, "wait-for", "grim-api").returncode == 0
+    result = _run("tmux_send", ["api", "hello"])
+    assert result.exit_code == _TAKEN_EXIT_CODE
+    assert f"job 'api' is dead (exit {_JOB_EXIT_CODE})" in result.stderr
+
+
+def test_tmux_read_and_send_name_an_unknown_job(socket: str) -> None:
+    assert _run("tmux_start", ["keep", *_SLEEPER]).exit_code == 0
+    for name, argv in [("tmux_read", ["ghost"]), ("tmux_send", ["ghost", "hi"])]:
+        result = _run(name, argv)
+        assert result.exit_code == _TAKEN_EXIT_CODE
+        assert "no such job: 'ghost' (jobs: keep)" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("name", "argv"),
+    [
+        ("tmux_read", []),
+        ("tmux_read", ["api", "0"]),
+        ("tmux_read", ["api", "many"]),
+        ("tmux_read", ["api", "2001"]),
+        ("tmux_send", ["api"]),
+        ("tmux_send", ["api", "two", "words"]),
+    ],
+)
+def test_tmux_read_and_send_wrong_calls_exit_2(socket: str, name: str, argv: list[str]) -> None:
+    result = _run(name, argv)
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert f"usage: {name} JOB" in result.stderr
