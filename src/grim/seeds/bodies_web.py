@@ -12,6 +12,8 @@ Ref: https://chromedevtools.github.io/devtools-protocol/
 
 from __future__ import annotations
 
+from grim.seeds.bodies_web_go import WEB_GO_SEEDS
+
 WEB_OPEN = r'''"""web_open — open a URL in a new tab of grim's own long-lived Chrome, starting
 that Chrome first if it is not running: tmux job "chrome", profile
 ~/.grimoire/chrome (never your daily profile), DevTools on 127.0.0.1:9222.
@@ -173,4 +175,5 @@ WEB_SEEDS: tuple[tuple[str, str, str, str], ...] = (
         "logins and tabs last between scripts): web_open URL",
         WEB_OPEN,
     ),
+    *WEB_GO_SEEDS,
 )

@@ -36,8 +36,16 @@ pytestmark = pytest.mark.skipif(
 
 _TIMEOUT_S = 120.0
 _USAGE_EXIT_CODE = 2
+_BIG_TEXT_CHARS = 2_000_000
+_READ_CAP_CHARS = 20_000
+_WAIT_TIMEOUT_EXIT_CODE = 124
 _PAGES = {
     "index.html": "<title>home</title><h1 id=greeting>hello from the test site</h1>",
+    # .results is added to the page half a second after it loads.
+    "slow.html": "<title>slow</title><script>setTimeout(() => { document.body.innerHTML = "
+    "'<p class=results>three results</p>' }, 500)</script>",
+    "big.html": "<title>big</title><p id=big></p><script>"
+    f"document.getElementById('big').textContent = 'x'.repeat({_BIG_TEXT_CHARS})</script>",
 }
 
 
@@ -154,3 +162,58 @@ def test_web_open_refuses_a_daily_chrome_profile(
     result = _run("web_open", [f"{site.url}/index.html"])
     assert result.exit_code == _USAGE_EXIT_CODE
     assert "that is a daily Chrome profile, not grim's own" in result.stderr
+
+
+def _open(site: Site, page: str) -> None:
+    opened = _run("web_open", [f"{site.url}/{page}"])
+    assert opened.exit_code == 0, opened.stderr
+
+
+def test_web_read_waits_for_an_element_then_returns_its_text(site: Site) -> None:
+    _open(site, "slow.html")
+    result = _run("web_read", [".results"])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == "three results\n"
+
+
+def test_web_read_of_a_thing_that_never_shows_exits_124_naming_the_selector(site: Site) -> None:
+    _open(site, "index.html")
+    result = _run("web_read", ["#missing", "0.5"])
+    assert result.exit_code == _WAIT_TIMEOUT_EXIT_CODE
+    assert result.stderr == 'web_read: timed out: nothing visible matched "#missing"\n'
+
+
+def test_web_read_caps_a_huge_text_and_says_it_was_cut(site: Site) -> None:
+    _open(site, "big.html")
+    result = _run("web_read", ["#big"])
+    assert result.exit_code == 0, result.stderr
+    text, notice = result.stdout.rstrip("\n").split("\n")
+    assert text == "x" * _READ_CAP_CHARS
+    assert notice == f"[web_read] cut: showed {_READ_CAP_CHARS} of {_BIG_TEXT_CHARS} characters"
+
+
+@pytest.mark.parametrize(
+    ("expression", "printed"),
+    [("document.title", '"home"'), ("1 + 1", "2"), ("({a: [1, 'two']})", '{"a":[1,"two"]}')],
+)
+def test_web_eval_prints_the_value_as_json(site: Site, expression: str, printed: str) -> None:
+    _open(site, "index.html")
+    result = _run("web_eval", [expression])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == printed + "\n"
+
+
+@pytest.mark.parametrize(
+    ("name", "argv"),
+    [
+        ("web_read", []),
+        ("web_read", ["#x", "soon"]),
+        ("web_read", ["#x", "1", "2"]),
+        ("web_eval", []),
+        ("web_eval", ["1", "0"]),
+    ],
+)
+def test_web_read_and_eval_wrong_calls_exit_2(site: Site, name: str, argv: list[str]) -> None:
+    result = _run(name, argv)
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert f"usage: {name} " in result.stderr
