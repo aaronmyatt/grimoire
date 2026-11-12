@@ -174,6 +174,113 @@ func main() {
 
 WEB_EVAL = _WEB_EVAL_HEAD + _GO_SHARED + _WEB_EVAL_MAIN
 
+_WEB_CLICK_HEAD = r"""// web_click — click the first element matching a CSS selector in the current
+// tab of grim's Chrome. It waits until the element is visible, up to SECONDS
+// (default 10); if it never shows, nothing is clicked, the exit code is 124
+// and the message names the selector.
+// Usage: web_click SELECTOR [SECONDS]
+// Chrome's address: $GRIM_CHROME_ADDR, else http://127.0.0.1:$GRIM_CHROME_PORT (9222).
+// Ref: https://pkg.go.dev/github.com/chromedp/chromedp
+package main
+
+"""
+
+_WEB_CLICK_MAIN = r"""
+const (
+	seed  = "web_click"
+	usage = "usage: web_click SELECTOR [SECONDS]   (SECONDS over 0, up to 600)"
+)
+
+func main() {
+	if len(os.Args) < 2 || len(os.Args) > 3 {
+		fail(2, usage)
+	}
+	selector := os.Args[1]
+	ctx := attach(waitFrom(2))
+	err := chromedp.Do(ctx, chromedp.Click(chromedp.CSS(selector), chromedp.NodeVisible))
+	check(err, fmt.Sprintf("nothing visible matched %q, so nothing was clicked", selector))
+	fmt.Printf("clicked %s\n", selector)
+}
+"""
+
+WEB_CLICK = _WEB_CLICK_HEAD + _GO_SHARED + _WEB_CLICK_MAIN
+
+_WEB_TYPE_HEAD = r"""// web_type — type text into the first element matching a CSS selector in the
+// current tab of grim's Chrome, waiting up to 10 seconds for it to show.
+// A secret is never passed as TEXT: give the NAME of the environment variable
+// that holds it, and the value is read here, so it is in no argv and no
+// execution row. The typed text is never echoed.
+// Usage: web_type SELECTOR TEXT
+//
+//	web_type SELECTOR --env NAME
+//
+// Chrome's address: $GRIM_CHROME_ADDR, else http://127.0.0.1:$GRIM_CHROME_PORT (9222).
+// Ref: https://pkg.go.dev/github.com/chromedp/chromedp
+package main
+
+"""
+
+_WEB_TYPE_MAIN = r"""
+const (
+	seed  = "web_type"
+	usage = "usage: web_type SELECTOR TEXT   or   web_type SELECTOR --env NAME"
+)
+
+func main() {
+	named := len(os.Args) == 4 && os.Args[2] == "--env"
+	if len(os.Args) != 3 && !named {
+		fail(2, usage)
+	}
+	selector, text := os.Args[1], os.Args[2]
+	if named {
+		value, set := os.LookupEnv(os.Args[3])
+		if !set {
+			fail(2, "environment variable "+os.Args[3]+" is not set")
+		}
+		text = value
+	}
+	ctx := attach(waitFrom(len(os.Args)))
+	err := chromedp.Do(ctx, chromedp.SendKeys(chromedp.CSS(selector), text, chromedp.NodeVisible))
+	check(err, fmt.Sprintf("nothing visible matched %q, so nothing was typed", selector))
+	fmt.Printf("typed %d characters into %s\n", len([]rune(text)), selector)
+}
+"""
+
+WEB_TYPE = _WEB_TYPE_HEAD + _GO_SHARED + _WEB_TYPE_MAIN
+
+_WEB_SHOT_HEAD = r"""// web_shot — save a PNG picture of the current tab of grim's Chrome (what is
+// in view) and print the file's full path.
+// Usage: web_shot PATH [SECONDS]   e.g. web_shot /tmp/page.png
+// Chrome's address: $GRIM_CHROME_ADDR, else http://127.0.0.1:$GRIM_CHROME_PORT (9222).
+// Ref: https://pkg.go.dev/github.com/chromedp/chromedp
+package main
+
+import "path/filepath"
+
+"""
+
+_WEB_SHOT_MAIN = r"""
+const (
+	seed  = "web_shot"
+	usage = "usage: web_shot PATH [SECONDS]   (SECONDS over 0, up to 600)"
+)
+
+func main() {
+	if len(os.Args) < 2 || len(os.Args) > 3 {
+		fail(2, usage)
+	}
+	path, err := filepath.Abs(os.Args[1])
+	check(err, "bad path")
+	ctx := attach(waitFrom(2))
+	png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot())
+	check(err, "the picture was not taken")
+	check(os.WriteFile(path, png, 0o644), "could not write "+path)
+	fmt.Println(path)
+}
+"""
+
+WEB_SHOT = _WEB_SHOT_HEAD + _GO_SHARED + _WEB_SHOT_MAIN
+
 # (name, language, description, body) rows: SeedSpec's own field order.
 WEB_GO_SEEDS: tuple[tuple[str, str, str, str], ...] = (
     (
@@ -189,5 +296,25 @@ WEB_GO_SEEDS: tuple[tuple[str, str, str, str], ...] = (
         "run a JavaScript expression in the current browser tab and print its value "
         "as JSON: web_eval EXPRESSION",
         WEB_EVAL,
+    ),
+    (
+        "web_click",
+        "go",
+        "click an element in the current browser tab, waiting for it to show: "
+        "web_click SELECTOR [SECONDS]",
+        WEB_CLICK,
+    ),
+    (
+        "web_type",
+        "go",
+        "type text into a field in the current browser tab; a secret is given by env "
+        "var name, never as text: web_type SELECTOR TEXT | --env NAME",
+        WEB_TYPE,
+    ),
+    (
+        "web_shot",
+        "go",
+        "save a PNG picture of the current browser tab: web_shot PATH",
+        WEB_SHOT,
     ),
 )

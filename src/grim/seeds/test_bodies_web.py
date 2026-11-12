@@ -44,6 +44,17 @@ _PAGES = {
     # .results is added to the page half a second after it loads.
     "slow.html": "<title>slow</title><script>setTimeout(() => { document.body.innerHTML = "
     "'<p class=results>three results</p>' }, 500)</script>",
+    # A stand-in login: "go" stores the user (and the password's length) in
+    # localStorage, and any later load of the page shows who is signed in.
+    "login.html": "<title>login</title><input id=user><input id=password type=password>"
+    "<button id=go>go</button><p class=account-name></p><script>"
+    "const show = () => { const user = localStorage.getItem('user'); if (user) "
+    "document.querySelector('.account-name').textContent = "
+    "'signed in as ' + user + ' with a ' + localStorage.getItem('n') + '-char password' };"
+    "document.getElementById('go').onclick = () => { "
+    "localStorage.setItem('user', document.getElementById('user').value); "
+    "localStorage.setItem('n', document.getElementById('password').value.length); show() };"
+    "show()</script>",
     "big.html": "<title>big</title><p id=big></p><script>"
     f"document.getElementById('big').textContent = 'x'.repeat({_BIG_TEXT_CHARS})</script>",
 }
@@ -214,6 +225,69 @@ def test_web_eval_prints_the_value_as_json(site: Site, expression: str, printed:
     ],
 )
 def test_web_read_and_eval_wrong_calls_exit_2(site: Site, name: str, argv: list[str]) -> None:
+    result = _run(name, argv)
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert f"usage: {name} " in result.stderr
+
+
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"  # Ref: https://www.w3.org/TR/png/#5PNG-file-signature
+_SECRET = "hunter2-not-a-real-password"
+
+
+def test_a_login_lasts_between_scripts_and_the_secret_is_typed_by_name(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SITE_PASSWORD", _SECRET)
+    _open(site, "login.html")
+    assert _run("web_type", ["#user", "alice"]).stdout == "typed 5 characters into #user\n"
+    typed = _run("web_type", ["#password", "--env", "SITE_PASSWORD"])
+    assert typed.exit_code == 0, typed.stderr
+    assert typed.stdout == f"typed {len(_SECRET)} characters into #password\n"
+    assert _SECRET not in typed.stdout + typed.stderr  # named, never echoed
+    assert _run("web_click", ["#go"]).stdout == "clicked #go\n"
+    signed_in = f"signed in as alice with a {len(_SECRET)}-char password\n"
+    assert _run("web_read", [".account-name"]).stdout == signed_in
+
+    _open(site, "login.html")  # a later script, a fresh tab: no login this time
+    assert _run("web_read", [".account-name"]).stdout == signed_in
+
+
+def test_web_click_on_a_thing_that_never_shows_exits_124_and_clicks_nothing(site: Site) -> None:
+    _open(site, "index.html")
+    result = _run("web_click", ["#missing", "0.5"])
+    assert result.exit_code == _WAIT_TIMEOUT_EXIT_CODE
+    assert result.stderr == (
+        'web_click: timed out: nothing visible matched "#missing", so nothing was clicked\n'
+    )
+
+
+def test_web_type_refuses_an_unset_variable_name(site: Site) -> None:
+    result = _run("web_type", ["#user", "--env", "GRIM_NO_SUCH_VARIABLE"])
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert result.stderr == "web_type: environment variable GRIM_NO_SUCH_VARIABLE is not set\n"
+
+
+def test_web_shot_writes_a_png_and_prints_its_path(site: Site, tmp_path: Path) -> None:
+    _open(site, "index.html")
+    target = tmp_path / "page.png"
+    result = _run("web_shot", [str(target)])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == f"{target}\n"
+    assert target.read_bytes().startswith(_PNG_MAGIC)
+
+
+@pytest.mark.parametrize(
+    ("name", "argv"),
+    [
+        ("web_click", []),
+        ("web_click", ["#x", "never"]),
+        ("web_type", ["#x"]),
+        ("web_type", ["#x", "--env", "A", "B"]),
+        ("web_shot", []),
+        ("web_shot", ["a.png", "0"]),
+    ],
+)
+def test_web_click_type_and_shot_wrong_calls_exit_2(site: Site, name: str, argv: list[str]) -> None:
     result = _run(name, argv)
     assert result.exit_code == _USAGE_EXIT_CODE
     assert f"usage: {name} " in result.stderr
