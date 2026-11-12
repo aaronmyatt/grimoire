@@ -331,7 +331,9 @@ if end > start:
 TMUX_SEND = r'''"""tmux_send — type one line into a live job, then press Enter: answer a
 prompt, drive a REPL, talk to a TUI. TEXT is typed exactly as given — words
 like Enter or C-c in it are just letters, never tmux key names — so pass it as
-ONE argument. Read the reply with tmux_read JOB.
+ONE argument. Long or multi-line TEXT goes in as a single bracketed paste, so a
+TUI (another agent, say) gets one message, not one per line. Read the reply
+with tmux_read JOB.
 Usage: tmux_send JOB TEXT
 $GRIM_TMUX_SOCKET names a private tmux server.
 Ref: https://man.openbsd.org/tmux#send-keys"""
@@ -339,15 +341,19 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 SESSION = "grim"
 ROW = "#{@grim_job}\t#{window_id}\t#{pane_dead}\t#{pane_dead_status}"
+PASTE_OVER = 80  # chars: longer (or multi-line) text is pasted, not typed
+PASTE_SETTLE_S = 0.3  # a TUI needs a beat to take a paste in before Enter
 socket = os.environ.get("GRIM_TMUX_SOCKET")
 TMUX = ["tmux", "-L", socket] if socket else ["tmux"]
 
 
-def tmux(*args):
-    return subprocess.run([*TMUX, *args], capture_output=True, text=True, check=False)
+def tmux(*args, stdin=None):
+    command = [*TMUX, *args]
+    return subprocess.run(command, input=stdin, capture_output=True, text=True, check=False)
 
 
 def fail(code, message):
@@ -368,13 +374,29 @@ if job not in jobs:
 window, dead, status = jobs[job]
 if dead == "1":
     fail(1, f"job {job!r} is dead (exit {status}): nothing can be typed. See tmux_read {job}")
-# -l types the text literally; "--" keeps a TEXT that starts with "-" from
-# being read as a flag. Enter is then sent as a key.
-for keys in (["-l", "--", text], ["Enter"]):
-    sent = tmux("send-keys", "-t", window, *keys)
-    if sent.returncode != 0:
-        fail(1, f"tmux send-keys failed: {sent.stderr.strip()}")
-print(f"typed into {SESSION}:{job}: {text!r} + Enter")
+pasted = len(text) > PASTE_OVER or "\n" in text
+if pasted:
+    # The buffer is filled from stdin (so the text is never an argv) and pasted
+    # with -p: bracketed, when the program asked for that, so it arrives whole.
+    # Ref: https://man.openbsd.org/tmux#paste-buffer
+    buffer = f"grim-{job}"
+    steps = [(["load-buffer", "-b", buffer, "-"], text),
+             (["paste-buffer", "-p", "-d", "-b", buffer, "-t", window], None)]
+else:
+    # -l types the text literally; "--" keeps a TEXT that starts with "-" from
+    # being read as a flag.
+    steps = [(["send-keys", "-t", window, "-l", "--", text], None)]
+for step, stdin in steps:
+    done = tmux(*step, stdin=stdin)
+    if done.returncode != 0:
+        fail(1, f"tmux {step[0]} failed: {done.stderr.strip()}")
+if pasted:
+    time.sleep(PASTE_SETTLE_S)
+entered = tmux("send-keys", "-t", window, "Enter")
+if entered.returncode != 0:
+    fail(1, f"tmux send-keys failed: {entered.stderr.strip()}")
+how = f"pasted {len(text.splitlines())} lines" if pasted else f"typed {text!r}"
+print(f"{how} into {SESSION}:{job}, then Enter")
 '''
 
 TMUX_STOP = r'''"""tmux_stop — stop a job and free its name: its tmux window is closed, live

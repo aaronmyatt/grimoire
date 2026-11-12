@@ -346,3 +346,47 @@ def test_tmux_stop_wrong_calls_and_unknown_jobs_fail_loudly(socket: str) -> None
     unknown = _run("tmux_stop", ["ghost"])
     assert unknown.exit_code == _TAKEN_EXIT_CODE
     assert "no such job: 'ghost' (jobs: keep)" in unknown.stderr
+
+
+# A tiny TUI: raw keys, bracketed paste on. It counts a message per Enter that
+# is not inside a paste, and says how many lines each message held.
+# Ref: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Bracketed-Paste-Mode
+_PASTE_TUI = r"""
+import os, subprocess, sys, tty
+fd = sys.stdin.fileno()
+tty.setraw(fd)
+os.write(1, b"\x1b[?2004h")
+data, message, in_paste, count = b"", b"", False, 0
+while True:
+    data += os.read(fd, 65536)
+    while data:
+        if data.startswith(b"\x1b[200~") or data.startswith(b"\x1b[201~"):
+            in_paste, data = data.startswith(b"\x1b[200~"), data[6:]
+        elif data[:1] == b"\x1b" and len(data) < 6:
+            break
+        elif data[:1] == b"\r" and not in_paste:
+            count, data = count + 1, data[1:]
+            lines = len(message.replace(b"\r", b"\n").split(b"\n"))
+            note = f"message {count}: {lines} lines"
+            os.write(1, note.encode() + b"\r\n")
+            while note not in subprocess.run(["tmux", "capture-pane", "-p"],
+                                             capture_output=True, text=True).stdout:
+                pass
+            subprocess.run(["tmux", "wait-for", "-S", "answered"])
+            message = b""
+        else:
+            message, data = message + data[:1], data[1:]
+"""
+
+
+def test_tmux_send_delivers_a_long_text_as_one_message_not_one_per_line(socket: str) -> None:
+    assert _run("tmux_start", ["tui", sys.executable, "-c", _PASTE_TUI]).exit_code == 0
+    brief = "\n".join(f"step {i}: do the thing" for i in range(40))
+
+    result = _run("tmux_send", ["tui", brief])
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == "pasted 40 lines into grim:tui, then Enter\n"
+    assert _tmux(socket, "wait-for", "answered").returncode == 0
+    screen = _run("tmux_read", ["tui"]).stdout.splitlines()[1:]
+    assert [line.rstrip() for line in screen] == ["message 1: 40 lines"]
