@@ -104,6 +104,63 @@ print(f"started {SESSION}:{job}")
 print(f"log: {log_path}")
 '''
 
+TMUX_LIST = r'''"""tmux_list — list grim's jobs: name, kind, alive or dead (with its exit
+code) and age. It asks tmux itself (the tagged windows of session "grim"), so
+there is no pid file or registry to drift: a job killed by hand just shows as
+dead, or is gone. Usage: tmux_list   (no arguments)
+$GRIM_TMUX_SOCKET names a private tmux server.
+Ref: https://man.openbsd.org/tmux#list-windows"""
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+SESSION = "grim"
+FIELDS = "#{@grim_job}\t#{@grim_kind}\t#{@grim_started}\t#{pane_dead}\t#{pane_dead_status}"
+NO_JOBS_HINTS = ("no server running", "error connecting", "can't find session")
+MINUTE_S, HOUR_S, DAY_S = 60, 3600, 86400
+
+
+def age(seconds):
+    if seconds < MINUTE_S:
+        return f"{seconds}s"
+    if seconds < HOUR_S:
+        return f"{seconds // MINUTE_S}m"
+    if seconds < DAY_S:
+        return f"{seconds // HOUR_S}h"
+    return f"{seconds // DAY_S}d"
+
+
+if len(sys.argv) != 1:
+    print("usage: tmux_list  (no arguments)", file=sys.stderr)
+    sys.exit(2)
+if shutil.which("tmux") is None:
+    print("tmux_list: program not found on PATH: 'tmux'", file=sys.stderr)
+    sys.exit(127)
+socket = os.environ.get("GRIM_TMUX_SOCKET")
+base = ["tmux", "-L", socket] if socket else ["tmux"]
+listed = subprocess.run(
+    [*base, "list-windows", "-t", f"={SESSION}", "-F", FIELDS],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+if listed.returncode != 0 and not any(hint in listed.stderr for hint in NO_JOBS_HINTS):
+    print(f"tmux_list: tmux list-windows failed: {listed.stderr.strip()}", file=sys.stderr)
+    sys.exit(1)
+rows = [line.split("\t") for line in listed.stdout.splitlines()]
+jobs = [row for row in rows if len(row) == 5 and row[0]]  # untagged windows are not grim's
+if not jobs:
+    print("no jobs")
+    sys.exit(0)
+now = int(time.time())
+for name, kind, started, dead, status in jobs:
+    state = f"dead (exit {status})" if dead == "1" else "alive"
+    elapsed = age(max(0, now - int(started))) if started.isdigit() else "?"
+    print(f"{name}  {kind}  {state}  age {elapsed}")
+'''
+
 # (name, description, body) rows — plain tuples, so this module never imports
 # SeedSpec from bodies.py (which imports this one).
 TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
@@ -112,5 +169,10 @@ TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
         "start a long-lived job (server, watcher, build, REPL) as a tmux window that "
         "outlives the run: tmux_start JOB PROGRAM [ARG...] — no shell",
         TMUX_START,
+    ),
+    (
+        "tmux_list",
+        "list the jobs started by tmux_start: name, kind, alive or dead with exit code, age",
+        TMUX_LIST,
     ),
 )

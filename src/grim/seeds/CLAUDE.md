@@ -11,6 +11,10 @@ carries `GRIMBG_NAME` in its env): the answer to "long-lived work" is a
 background job, not a longer `grim run` timeout (which is hard-capped, see
 verbs/run.py). Program-starting bodies live in `bodies_exec.py` and never
 use a shell: argv only, shell operators and shell interpreters refused.
+Surface drivers ship here too (docs/surfaces.md). The first is tmux, in
+`bodies_tmux.py`: `tmux_start`/`tmux_list` (docs/features/01-jobs.md) — a
+job is a tagged tmux window in session `grim`, and will replace the
+background trio once read/send/stop land.
 
 ## Public interface
 `loader.py` — `load_seeds(db) -> list[str]`: bare names for newly written
@@ -43,6 +47,15 @@ symbols.
 - Seed bodies are plain scripts stored as `script_version.body` rows —
   this slice never gives seeds special execution privileges over
   agent-authored scripts.
+- `bodies.SEEDS` is the one roster everything reads. `bodies_tmux.py` adds
+  to it through plain `(name, description, body)` rows (`TMUX_SEEDS`) and
+  never imports `bodies.py`.
+- tmux seeds keep no registry of their own: jobs are found by window tags
+  (`@grim_kind`, `@grim_job`, `@grim_started`), asked of tmux each time.
+  They touch only session `grim` (exact target `=grim`) on the default
+  server, or on the private server `$GRIM_TMUX_SOCKET` names (tests always
+  set it). A job's program is exec'd as argv, never through a shell; the
+  one shell line is the seed's own fixed `cat >> LOG` for `pipe-pane`.
 - `loader.RETIRED_SEEDS` (today: `shell`, which ran `/bin/sh`) names seeds
   this build no longer ships. `load_seeds` archives such a row only while
   it is still the bundled seed (`seeded=1`, unarchived) and reports it as
