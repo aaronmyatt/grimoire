@@ -24,14 +24,26 @@ fi
 run() { docker run --rm "$image" "$@"; }
 
 echo "== init seeds the library ==" >&2
-run grim list | grep -q shell
+run grim list | grep -q run_cmd
 echo "  ok: seeds present" >&2
 
 echo "== python dispatch works (uv run in-image) ==" >&2
-# `shell` is a python seed that shells out; running it exercises uv-based
-# python dispatch and a working /bin/sh inside the container.
-run grim run shell -- echo hello | grep -q hello
+# `run_cmd` is a python seed that runs one program; running it exercises
+# uv-based python dispatch inside the container.
+run grim run run_cmd -- echo hello | grep -q hello
 echo "  ok: script executed" >&2
+
+echo "== tmux jobs work in-image ==" >&2
+# One container for the whole check: a job is a tmux window, so it outlives
+# each `grim run` but not the container (docs/features/08-guard-rails.md).
+run sh -c '
+	set -e
+	grim run tmux_start smoke -- sleep 60 >/dev/null
+	grim run tmux_list | grep -q "smoke  job  alive"
+	grim run tmux_stop smoke >/dev/null
+	grim run tmux_list | grep -q "no jobs"
+'
+echo "  ok: a job started, was listed, and stopped" >&2
 
 echo "== entrypoint fails fast without GRIM_MODEL ==" >&2
 # A prompt with no model id must exit nonzero with a clear message, never

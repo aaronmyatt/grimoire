@@ -194,7 +194,7 @@ binary — no model needed:
 
 ```bash
 docker run --rm grimoire grim list
-docker run --rm grimoire grim run shell -- echo hi
+docker run --rm grimoire grim run run_cmd -- echo hi
 ```
 
 **Verify the image without an API key.** `docker/smoke.sh` builds the image

@@ -18,9 +18,11 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 # library works on first run instead of failing at dispatch time.
 # --no-install-recommends keeps the layer lean; apt lists are deleted in the
 # same layer so they never ship in the image.
+# tmux is the surface the job seeds drive (tmux_start, tmux_wait, ...): a
+# long-lived job is a tmux window, also inside the container.
 # Ref: https://docs.docker.com/build/building/best-practices/#apt-get
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ripgrep patch ca-certificates \
+ && apt-get install -y --no-install-recommends git ripgrep patch ca-certificates tmux \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
