@@ -23,11 +23,25 @@ agent (build plan D8, D9, §4).
   it falls back to python. bash keeps its runner, so legacy bash scripts run.
 - `envelope.py` — `truncate(stdout, stderr, ...) -> str`, the
   first-40/last-10-lines formatting described in build plan §4.
+- `gobuild.py` — the build-once cache for Go scripts
+  (docs/features/05-go-build.md), called only by `dispatch`. When a shared
+  Go module exists (`$GRIM_GO_DIR`, else `~/.grimoire/go`, with a go.mod
+  pinning what scripts may import), `build_cached(body, timeout_s)` builds
+  the script against it (`go build -C MODULE`) into `MODULE/bin/<key>` and
+  later runs reuse that binary; `cache_key` hashes the body with go.mod and
+  go.sum; `evict` keeps the newest-used `MAX_BINARIES`. No shared module
+  means `None`, and dispatch runs plain `go run` as before. A failed build
+  comes back as the script's own failed run (compiler output on stderr).
 
 ## Invariants
 - Stateless: a call is a pure function of `(script_version, argv, stdin)`
   plus a timeout — no execution-layer caching or session state lives here.
-  The `execution` table (owned by `db.py`) is the only persistence.
+  The `execution` table (owned by `db.py`) is the only persistence. One
+  derived exception, added 2026-11-12 with docs/features/05-go-build.md
+  (not signed off one by one — review it): the Go binary cache in
+  `gobuild.py`. It is content-addressed (same body + same module files →
+  same binary), capped, and safe to delete; it changes how fast a Go
+  script starts, never what it does.
 - Every execution records an `env_fingerprint` (interpreter versions) —
   required for the staleness triage the build plan's gardener depends on.
 - A timeout always kills the subprocess **process group** (the child runs

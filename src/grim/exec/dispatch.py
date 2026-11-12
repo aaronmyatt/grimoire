@@ -18,6 +18,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from grim.exec import gobuild
+
 TIMEOUT_EXIT_CODE = 124
 # After killing a job's process group, how long to wait for its pipes to close
 # while draining output before falling back to a direct kill(). SIGKILL makes
@@ -28,6 +30,8 @@ _REAP_TIMEOUT_S = 5.0
 # into a script's wall time (TigerStyle: assert the negative space).
 _SPAWN_BUDGET_MS = 1_000
 _VERSION_PROBE_TIMEOUT_S = 5.0
+# A Go script whose build used up its timeout still gets this long to run.
+_MIN_RUN_AFTER_BUILD_S = 1.0
 
 # Env var carrying the extended languages the user enabled (comma-joined).
 # config.py seeds it from ~/.grimoire/config.toml's `[languages]` table; a
@@ -322,6 +326,10 @@ def dispatch(script_version: ScriptVersion, request: ExecutionRequest) -> Execut
             f"({sys.platform!r}) — requires {runner.platforms!r}"
         )
     fingerprint = _env_fingerprint(runner.version_argv)
+    if script_version.language == "go":
+        built = gobuild.build_cached(script_version.body, request.timeout)
+        if built is not None:  # a shared Go module exists: run the cached binary
+            return _run_built(built, request, fingerprint)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=runner.suffix, delete=True) as f:
         f.write(script_version.body)
@@ -337,6 +345,22 @@ def dispatch(script_version: ScriptVersion, request: ExecutionRequest) -> Execut
         duration_ms=result.duration_ms,
         env_fingerprint=fingerprint,
     )
+
+
+def _run_built(
+    built: gobuild.Built, request: ExecutionRequest, fingerprint: str
+) -> ExecutionResult:
+    """Run a Go script's cached binary in the script's own cwd. A failed build
+    is the script's own failed run: its exit code, the compiler's message.
+    Build time counts against the run's timeout (docs/features/05-go-build.md)."""
+    assert built.duration_ms >= 0, "a build never takes negative time"
+    if built.binary is None:
+        assert built.exit_code != 0, "a build with no binary has failed"
+        return ExecutionResult(built.exit_code, "", built.stderr, built.duration_ms, fingerprint)
+    left_s = max(_MIN_RUN_AFTER_BUILD_S, request.timeout - built.duration_ms / 1000)
+    ran = _run([str(built.binary), *request.argv], request.stdin, request.cwd, left_s)
+    total_ms = ran.duration_ms + built.duration_ms
+    return ExecutionResult(ran.exit_code, ran.stdout, ran.stderr, total_ms, fingerprint)
 
 
 def _kill_group(proc: subprocess.Popen[str]) -> tuple[str, str]:
