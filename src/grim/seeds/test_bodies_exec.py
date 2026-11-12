@@ -1,6 +1,5 @@
 """Runtime tests for the no-shell program seeds in seeds/bodies_exec.py
-(run_cmd, run_py), dispatched exactly as `grim run` would. run_bg's tests
-stay in test_bodies.py beside list_bg/stop_bg."""
+(run_cmd, run_py), dispatched exactly as `grim run` would."""
 
 from __future__ import annotations
 

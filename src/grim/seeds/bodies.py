@@ -340,69 +340,6 @@ for row in rows:
 print(f"exported {len(rows)} scripts to {out_dir}/")
 '''
 
-_LIST_BG = '''"""list_bg — list background jobs started by run_bg: name, pid, state, log.
-Reads <run_dir>/*.pid and checks liveness via os.kill(pid, 0)."""
-import os
-import sys
-from pathlib import Path
-
-if len(sys.argv) != 1:
-    print("usage: list_bg  (no arguments)", file=sys.stderr)
-    sys.exit(2)
-run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
-pid_files = sorted(run_dir.glob("*.pid")) if run_dir.is_dir() else []
-if not pid_files:
-    print("no background jobs")
-    sys.exit(0)
-
-for pid_file in pid_files:
-    name = pid_file.stem
-    log_path = run_dir / f"{name}.log"
-    try:
-        pid = int(pid_file.read_text().strip())
-    except ValueError:
-        print(f"{name}  ?  bad-pid-file")
-        continue
-    try:
-        os.kill(pid, 0)
-        state = "running"
-    except ProcessLookupError:
-        state = "dead"
-    except PermissionError:
-        state = "running"  # exists but owned by another user
-    print(f"{name}  pid {pid}  {state}  log: {log_path}")
-'''
-
-_STOP_BG = '''"""stop_bg — stop a background job by name: SIGTERM its process group, then
-remove its pid file. Usage: stop_bg NAME"""
-import os
-import signal
-import sys
-from pathlib import Path
-
-if len(sys.argv) != 2:
-    print("usage: stop_bg NAME", file=sys.stderr)
-    sys.exit(2)
-
-name = sys.argv[1]
-run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
-pid_file = run_dir / f"{name}.pid"
-if not pid_file.is_file():
-    print(f"no such job: {name}", file=sys.stderr)
-    sys.exit(1)
-
-pid = int(pid_file.read_text().strip())
-try:
-    # run_bg used start_new_session, so pid leads its own group; signalling
-    # the group takes down any children the job spawned too.
-    os.killpg(os.getpgid(pid), signal.SIGTERM)
-    print(f"stopped grimbg:{name} (pid {pid})")
-except ProcessLookupError:
-    print(f"grimbg:{name} already gone (pid {pid})")
-finally:
-    pid_file.unlink(missing_ok=True)
-'''
-
 SEEDS: list[SeedSpec] = [
     SeedSpec(
         name="run_cmd",
