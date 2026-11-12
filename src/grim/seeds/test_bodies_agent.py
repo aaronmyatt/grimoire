@@ -6,9 +6,11 @@ server. No real agent is started and no model is called."""
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -21,6 +23,76 @@ pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="these seed
 
 _TIMEOUT_S = 30.0
 _USAGE_EXIT_CODE = 2
+_FAILED_EXIT_CODE = 1
+_NOT_FOUND_EXIT_CODE = 127
+_ARGS = ["--permission-mode", "plan"]  # what the test config grants every delegate
+
+# The fake delegate. It logs its argv and cwd, optionally shows claude's trust
+# dialog (default choice "No, exit"), then takes messages: one per Enter that
+# is not inside a bracketed paste. $FAKE_REPLY picks what the first message
+# does; later ones are echoed. It signals "fake-handled" once its reply is on
+# screen, so a test never reads early.
+_FAKE_AGENT = r"""
+import json, os, pathlib, re, subprocess, sys, tty
+log = pathlib.Path(os.environ["FAKE_AGENT_LOG"])
+def note(**entry):
+    with log.open("a") as handle:
+        handle.write(json.dumps(entry) + "\n")
+def show(text):
+    os.write(1, text.encode() + b"\r\n")
+    while text not in subprocess.run(["tmux", "capture-pane", "-p"],
+                                     capture_output=True, text=True).stdout:
+        pass
+note(argv=sys.argv[1:], cwd=os.getcwd())
+fd = sys.stdin.fileno()
+tty.setraw(fd)
+if os.environ.get("FAKE_DIALOG") == "trust":
+    show("> No, exit")
+    show("  Yes, I trust this folder")
+    chose_yes = False
+    while True:
+        keys = os.read(fd, 65536)
+        chose_yes = chose_yes or b"\x1b[B" in keys or b"\x1bOB" in keys
+        if b"\r" in keys:
+            break
+    if not chose_yes:
+        sys.exit(7)
+    os.write(1, b"\x1b[2J\x1b[H")
+os.write(1, b"\x1b[?2004h")
+show("? for shortcuts")
+data, message, in_paste, seen = b"", b"", False, 0
+while True:
+    data += os.read(fd, 65536)
+    while data:
+        if data.startswith(b"\x1b[200~") or data.startswith(b"\x1b[201~"):
+            in_paste, data = data.startswith(b"\x1b[200~"), data[6:]
+        elif data[:1] == b"\x1b" and len(data) < 6:
+            break
+        elif data[:1] == b"\r" and not in_paste:
+            text = message.replace(b"\r", b"\n").decode()
+            message, data, seen = b"", data[1:], seen + 1
+            note(message=text)
+            reply = os.environ.get("FAKE_REPLY", "idle") if seen == 1 else "echo"
+            if reply == "done":
+                pathlib.Path(re.search(r"write your answer to (\S+)", text).group(1)).write_text(
+                    "the answer is 42\n")
+                subprocess.run(re.search(r"run: (tmux wait-for -S \S+)", text).group(1).split())
+                show("all done")
+            elif reply == "ask":
+                show("Do you want to delete the repo?")
+                show("Enter to confirm - Esc to cancel")
+            elif reply == "work":
+                show("thinking hard (esc to interrupt)")
+            elif reply == "exit":
+                sys.exit(3)
+            elif reply == "echo":
+                show("you said: " + text)
+            else:
+                show("ok, did some things")
+            subprocess.run(["tmux", "wait-for", "-S", "fake-handled"])
+        else:
+            message, data = message + data[:1], data[1:]
+"""
 
 
 def _run(name: str, argv: list[str], stdin: str | None = None) -> ExecutionResult:
@@ -34,16 +106,98 @@ def _tmux(socket: str, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, check=False, timeout=_TIMEOUT_S)
 
 
+def _entries(tmp_path: Path) -> list[dict[str, object]]:
+    lines = (tmp_path / "fake.log").read_text().splitlines()
+    return [json.loads(line) for line in lines]
+
+
 @pytest.fixture
 def socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[str]:
+    fake = tmp_path / "fake-agent"
+    fake.write_text(f"#!{sys.executable}\n{_FAKE_AGENT}")
+    fake.chmod(0o755)
+    config = tmp_path / "config.toml"
+    tables = [
+        f'[delegates.{agent}]\nbin = "{fake}"\nargs = {json.dumps(_ARGS)}\n'
+        for agent in ("claude", "codex", "pi")
+    ]
+    config.write_text("\n".join(tables))
     name = f"grimtest-{tmp_path.parent.name}-{tmp_path.name}"
-    monkeypatch.setenv("GRIM_TMUX_SOCKET", name)
-    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
+    for key, value in {
+        "GRIM_TMUX_SOCKET": name,
+        "GRIM_RUN_DIR": str(tmp_path / "run"),
+        "GRIM_DELEGATES_CONFIG": str(config),
+        "FAKE_AGENT_LOG": str(tmp_path / "fake.log"),
+    }.items():
+        monkeypatch.setenv(key, value)
     (tmp_path / "work").mkdir()
     yield name
     _tmux(name, "kill-server")
     socket_dir = Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}"
     (socket_dir / name).unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex", "pi"])
+def test_agent_start_runs_any_agent_and_pastes_the_brief_as_one_message(
+    socket: str, tmp_path: Path, agent: str
+) -> None:
+    brief = "\n".join(f"step {i}: use --dangerously-skip-permissions" for i in range(40))
+
+    result = _run("agent_start", [agent, "fix-auth", str(tmp_path / "work")], stdin=brief)
+
+    assert result.exit_code == 0, result.stderr
+    assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
+    tags = "#{window_name} #{@grim_kind} #{@grim_job} #{@grim_agent}"
+    assert _tmux(socket, "list-windows", "-t", "=grim", "-F", tags).stdout == (
+        f"fix-auth agent fix-auth {agent}\n"
+    )
+    started, *messages = _entries(tmp_path)
+    assert started == {"argv": _ARGS, "cwd": str((tmp_path / "work").resolve())}
+    assert len(messages) == 1  # 40 lines, one message: the brief arrived whole
+    contract = (
+        f"When done, write your answer to {tmp_path / 'run' / 'fix-auth' / 'result.md'}\n"
+        "then run: tmux wait-for -S grim-fix-auth"
+    )
+    assert messages[0]["message"] == f"{brief}\n\n{contract}"
+    assert (tmp_path / "run" / "fix-auth" / "brief.md").read_text() == f"{brief}\n\n{contract}\n"
+
+
+def test_agent_start_answers_the_trust_dialog_before_it_sends_the_brief(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_DIALOG", "trust")  # Enter alone would pick "No, exit"
+    result = _run("agent_start", ["claude", "fix-auth", str(tmp_path / "work")], stdin="do it")
+    assert result.exit_code == 0, result.stderr
+    assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
+    messages = _entries(tmp_path)[1:]
+    assert [str(entry["message"]).splitlines()[0] for entry in messages] == ["do it"]
+
+
+def test_agent_start_reports_a_delegate_that_exits_at_once(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('[delegates.claude]\nbin = "false"\n')
+    result = _run("agent_start", ["claude", "fix-auth", str(tmp_path / "work")], stdin="do it")
+    assert result.exit_code == _FAILED_EXIT_CODE
+    assert "claude exited at once (exit 1)" in result.stderr
+
+
+def test_agent_start_skips_a_tmux_wrapper_script_on_path(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.toml").write_text("")  # no bin: the seed must search PATH itself
+    wrapper = tmp_path / "bin" / "claude"
+    wrapper.parent.mkdir()
+    wrapper.write_text('#!/bin/sh\nexec tmux new-window -n claude /real/claude "$@"\n')
+    wrapper.chmod(0o755)
+    for tool in ("uv", "tmux"):  # a PATH with the wrapper as its only "claude"
+        (wrapper.parent / tool).symlink_to(str(shutil.which(tool)))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(wrapper.parent), "/usr/bin", "/bin"]))
+    result = _run("agent_start", ["claude", "fix-auth", str(tmp_path / "work")], stdin="do it")
+    assert result.exit_code == _NOT_FOUND_EXIT_CODE
+    assert "tmux wrapper scripts are skipped" in result.stderr
+    assert _tmux(socket, "has-session", "-t", "=grim").returncode != 0  # nothing was started
 
 
 @pytest.mark.parametrize(
