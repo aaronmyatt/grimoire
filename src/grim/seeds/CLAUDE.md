@@ -23,6 +23,11 @@ a TUI in a tmux job tagged `@grim_kind=agent` and pastes it a brief that
 ends with the done contract (write `<run_dir>/JOB/result.md`, then signal
 `grim-JOB`); `agent_read` gives the answer or the delegate's state. Wait,
 list, follow-up and stop are borrowed from the tmux seeds.
+The third is the browser driver (docs/features/06-browser.md):
+`web_open` (python, `bodies_web.py`) runs one long-lived Chrome as tmux
+job `chrome` on its own profile and opens tabs; `web_read`, `web_eval`,
+`web_click`, `web_type` and `web_shot` (Go, `bodies_web_go.py`) attach to
+the current tab with chromedp and are built once by exec/gobuild.py.
 
 ## Public interface
 `loader.py` — `load_seeds(db) -> list[str]`: bare names for newly written
@@ -70,6 +75,15 @@ symbols.
   takes no argument for them, and nothing in a brief can change them.
   Start-up dialogs are answered from a fixed per-agent table; a login
   screen is never answered — it fails loudly for a human.
+- The browser seeds drive only grim's own Chrome: profile
+  `$GRIM_CHROME_DIR` (default `~/.grimoire/chrome`; a daily Chrome profile
+  is refused), DevTools on `127.0.0.1:$GRIM_CHROME_PORT` (default 9222),
+  and a port held by a Chrome grim did not start is refused. State stays
+  in Chrome: the current tab is the page Chrome lists first, and every Go
+  seed detaches without closing it. A secret is typed by env var NAME
+  (`web_type SEL --env NAME`), never passed as text. The Go seeds are one
+  shared Go block (`_GO_SHARED`) plus a `main` each, written for chromedp
+  v0.21.0 — the version `web_open` pins in the shared Go module.
 - `loader.RETIRED_SEEDS` (today: `shell`, which ran `/bin/sh`, and the
   pid-file trio `run_bg`/`list_bg`/`stop_bg`) names seeds
   this build no longer ships. `load_seeds` archives such a row only while
