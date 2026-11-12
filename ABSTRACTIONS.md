@@ -133,3 +133,16 @@ mechanically.
   refuses, or drives a different tmux server. The abstraction might be a
   shared prelude the loader prepends to each body — the human decides, as
   its own task. `run_bg`'s copy goes away when the background trio retires.
+- **Opening a tagged tmux job window, two copies.** The sequence "refuse a
+  taken name, clear a stale `grim-JOB` wake, open the window on a `cat -`
+  placeholder, set `remain-on-exit` and the `@grim_*` tags, pipe the pane to
+  `<run_dir>/JOB.log`, hook `pane-died` to signal `grim-JOB`, then
+  `respawn-pane -k` the real program" is spelled in the `tmux_start` body
+  (`seeds/bodies_tmux.py`) and the `agent_start` body
+  (`seeds/bodies_agent.py`). The job lookup by `@grim_job` tag is likewise
+  spelled in `tmux_read`, `tmux_send`, `tmux_stop`, `tmux_wait` and
+  `agent_read`. Deliberate: a seed is one standalone script. If the two
+  openers drift, a delegate loses its log, its exit signal, or its place
+  in `tmux_list`. The abstraction might be `agent_start` calling
+  `grim run tmux_start` with a kind and a directory, or the shared prelude
+  named in the entry above — the human decides, as its own task.
