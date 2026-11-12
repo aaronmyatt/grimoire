@@ -220,3 +220,95 @@ def test_agent_start_wrong_calls_exit_2_and_start_nothing(
     assert result.exit_code == _USAGE_EXIT_CODE
     assert said in result.stderr
     assert _tmux(socket, "has-session", "-t", "=grim").returncode != 0
+
+
+def _start(socket: str, tmp_path: Path) -> None:
+    """Start delegate fix-auth with a one-line brief."""
+    started = _run("agent_start", ["claude", "fix-auth", str(tmp_path / "work")], stdin="do it")
+    assert started.exit_code == 0, started.stderr
+
+
+def test_agent_read_gives_the_text_of_result_md_once_the_delegate_signals(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_REPLY", "done")
+    _start(socket, tmp_path)
+    assert _tmux(socket, "wait-for", "grim-fix-auth").returncode == 0  # the delegate's own signal
+    result = _run("agent_read", ["fix-auth"])
+    assert result.exit_code == 0, result.stderr
+    status, *answer = result.stdout.splitlines()
+    assert status.startswith("[agent_read] fix-auth: DONE · result.md follows")
+    assert answer == ["the answer is 42"]  # the file, not the screen ("all done")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("idle", "IDLE", "ok, did some things"),
+        ("ask", "NEEDS-INPUT", "Do you want to delete the repo?"),
+        ("work", "WORKING", "thinking hard"),
+    ],
+)
+def test_agent_read_names_the_state_and_shows_the_screen_when_there_is_no_result(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: tuple[str, str, str]
+) -> None:
+    reply, state, shown = case
+    monkeypatch.setenv("FAKE_REPLY", reply)
+    _start(socket, tmp_path)
+    assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
+    result = _run("agent_read", ["fix-auth"])
+    assert result.exit_code == 0, result.stderr
+    status, *screen = result.stdout.splitlines()
+    assert status == f"[agent_read] fix-auth: {state} · no result.md · its screen follows"
+    assert any(shown in line for line in screen)
+
+
+def test_agent_read_reports_a_delegate_that_exited_without_a_result(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_REPLY", "exit")
+    _start(socket, tmp_path)
+    assert _tmux(socket, "wait-for", "grim-fix-auth").returncode == 0  # sent by the job-end hook
+    status = _run("agent_read", ["fix-auth"]).stdout.splitlines()[0]
+    assert (
+        status
+        == "[agent_read] fix-auth: EXITED (exit 3) · no result.md · the tail of its log follows"
+    )
+
+
+def test_a_human_can_answer_in_the_pane_and_the_agent_can_follow_up(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_REPLY", "ask")
+    _start(socket, tmp_path)
+    assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
+    for keys in (["-l", "yes"], ["Enter"]):  # the human, typing in the delegate's pane
+        assert _tmux(socket, "send-keys", "-t", "=grim:fix-auth", *keys).returncode == 0
+    assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
+    assert "you said: yes" in _run("agent_read", ["fix-auth"]).stdout
+    assert _run("tmux_send", ["fix-auth", "now run the full suite"]).exit_code == 0
+    assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
+    assert "you said: now run the full suite" in _run("agent_read", ["fix-auth"]).stdout
+
+
+def test_a_delegate_is_listed_and_stopped_like_any_job_and_keeps_its_result(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_REPLY", "done")
+    _start(socket, tmp_path)
+    assert _tmux(socket, "wait-for", "grim-fix-auth").returncode == 0
+    assert _run("tmux_list", []).stdout.startswith("fix-auth  agent  alive  age ")
+    assert _run("tmux_stop", ["fix-auth"]).exit_code == 0
+    assert _run("tmux_list", []).stdout == "no jobs\n"
+    assert (tmp_path / "run" / "fix-auth" / "result.md").read_text() == "the answer is 42\n"
+
+
+def test_agent_read_refuses_a_plain_job_and_wrong_calls(socket: str) -> None:
+    assert _run("tmux_start", ["api", "sleep", "600"]).exit_code == 0
+    plain = _run("agent_read", ["api"])
+    assert plain.exit_code == _FAILED_EXIT_CODE
+    assert "job 'api' is not a delegate (kind 'job'); read it with tmux_read api" in plain.stderr
+    for argv in ([], ["api", "0"], ["api", "many"], ["api", "401"]):
+        wrong = _run("agent_read", argv)
+        assert wrong.exit_code == _USAGE_EXIT_CODE
+        assert "usage: agent_read JOB [LINES]" in wrong.stderr

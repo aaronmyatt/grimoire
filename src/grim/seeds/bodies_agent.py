@@ -216,6 +216,89 @@ print(f"result: {result_path}")
 print(f"next: tmux_wait grim-{job} SECONDS, then agent_read {job}")
 '''
 
+AGENT_READ = r'''"""agent_read — where a delegate stands, and what it has to say. The first
+line names its state:
+  DONE         it wrote result.md: that text follows (its answer, not a screen scrape)
+  WORKING      still busy: the tail of its screen follows
+  NEEDS-INPUT  it is asking something it cannot get past: the question follows.
+               Answer with tmux_send JOB TEXT, or a human types in its pane
+  IDLE         it stopped with no result.md: its screen follows
+  EXITED       its program ended with no result.md: the tail of its log follows
+Usage: agent_read JOB [LINES]   (LINES of screen or log to show: default 40, cap 400)
+$GRIM_TMUX_SOCKET names a private tmux server.
+Ref: https://man.openbsd.org/tmux#capture-pane"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+SESSION = "grim"
+ROW = "#{@grim_job}\t#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{@grim_kind}"
+DEFAULT_LINES, MAX_LINES = 40, 400
+WORKING_MARKS = ("esc to interrupt", "ctrl+c to interrupt", "esc to stop")
+ASKING_MARKS = (
+    "enter to confirm", "(y/n)", "[y/n]", "yes, i trust this folder",
+    "skip until next version", "select login method", "paste your api key", "sign in with",
+)
+ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07")  # CSI and OSC escapes
+USAGE = f"usage: agent_read JOB [LINES]   (LINES 1-{MAX_LINES})"
+socket = os.environ.get("GRIM_TMUX_SOCKET")
+TMUX = ["tmux", "-L", socket] if socket else ["tmux"]
+
+
+def tmux(*args):
+    return subprocess.run([*TMUX, *args], capture_output=True, text=True, check=False)
+
+
+def fail(code, message):
+    print(f"agent_read: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+if not 2 <= len(sys.argv) <= 3 or not all(number.isdigit() for number in sys.argv[2:]):
+    fail(2, USAGE)
+job = sys.argv[1]
+count = int(sys.argv[2]) if len(sys.argv) == 3 else DEFAULT_LINES
+if not 1 <= count <= MAX_LINES:
+    fail(2, USAGE)
+if shutil.which("tmux") is None:
+    fail(127, "program not found on PATH: 'tmux'")
+listed = tmux("list-windows", "-t", f"={SESSION}", "-F", ROW)
+rows = [line.split("\t") for line in listed.stdout.splitlines()]
+jobs = {row[0]: row[1:] for row in rows if len(row) == 5 and row[0]}
+if job not in jobs:
+    fail(1, f"no such job: {job!r} (jobs: {', '.join(sorted(jobs)) or 'none'})")
+window, dead, status, kind = jobs[job]
+if kind != "agent":
+    fail(1, f"job {job!r} is not a delegate (kind {kind!r}); read it with tmux_read {job}")
+run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
+result_path = run_dir / job / "result.md"
+if result_path.is_file():
+    print(f"[agent_read] {job}: DONE · result.md follows ({result_path})")
+    print(result_path.read_text(errors="replace").rstrip("\n"))
+    sys.exit(0)
+if dead == "1":
+    log_path = run_dir / f"{job}.log"
+    text = ANSI.sub("", log_path.read_text(errors="replace")) if log_path.is_file() else ""
+    state, source = f"EXITED (exit {status})", "the tail of its log"
+else:
+    shot = tmux("capture-pane", "-p", "-J", "-t", window)
+    if shot.returncode != 0:
+        fail(1, f"tmux capture-pane failed: {shot.stderr.strip()}")
+    text, low, source = shot.stdout, shot.stdout.lower(), "its screen"
+    if any(mark in low for mark in WORKING_MARKS):
+        state = "WORKING"
+    elif any(mark in low for mark in ASKING_MARKS):
+        state = "NEEDS-INPUT"
+    else:
+        state = "IDLE"
+lines = [line.rstrip() for line in text.splitlines() if line.strip()][-count:]
+print(f"[agent_read] {job}: {state} · no result.md · {source} follows")
+print("\n".join(lines))
+'''
+
 # (name, description, body) rows, as in bodies_tmux.py.
 AGENT_SEEDS: tuple[tuple[str, str, str], ...] = (
     (
@@ -223,5 +306,11 @@ AGENT_SEEDS: tuple[tuple[str, str, str], ...] = (
         "delegate a task to another coding agent (claude, codex, pi) in a tmux window: "
         "agent_start AGENT JOB DIR with the brief on stdin; it answers in result.md",
         AGENT_START,
+    ),
+    (
+        "agent_read",
+        "read a delegate started by agent_start: its state (DONE, WORKING, NEEDS-INPUT, "
+        "IDLE, EXITED) and its answer from result.md, or its screen: agent_read JOB",
+        AGENT_READ,
     ),
 )
