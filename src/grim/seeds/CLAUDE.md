@@ -17,6 +17,12 @@ Surface drivers ship here too (docs/surfaces.md). The first is tmux, in
 in session `grim`; these replaced the background trio — and `tmux_wait`
 (docs/features/02-waiting.md): block on a named signal instead of
 polling; every job signals `grim-JOB` when it ends.
+The second driver is the delegate one, in `bodies_agent.py`
+(docs/features/04-delegates.md): `agent_start` runs claude, codex or pi as
+a TUI in a tmux job tagged `@grim_kind=agent` and pastes it a brief that
+ends with the done contract (write `<run_dir>/JOB/result.md`, then signal
+`grim-JOB`); `agent_read` gives the answer or the delegate's state. Wait,
+list, follow-up and stop are borrowed from the tmux seeds.
 
 ## Public interface
 `loader.py` — `load_seeds(db) -> list[str]`: bare names for newly written
@@ -58,6 +64,12 @@ symbols.
   server, or on the private server `$GRIM_TMUX_SOCKET` names (tests always
   set it). A job's program is exec'd as argv, never through a shell; the
   one shell line is the seed's own fixed `cat >> LOG` for `pipe-pane`.
+- A delegate's launch flags and program path come only from
+  `[delegates.AGENT]` (`args`, `bin`) in `~/.grimoire/config.toml` (or the
+  file `$GRIM_DELEGATES_CONFIG` names; tests always set it). `agent_start`
+  takes no argument for them, and nothing in a brief can change them.
+  Start-up dialogs are answered from a fixed per-agent table; a login
+  screen is never answered — it fails loudly for a human.
 - `loader.RETIRED_SEEDS` (today: `shell`, which ran `/bin/sh`, and the
   pid-file trio `run_bg`/`list_bg`/`stop_bg`) names seeds
   this build no longer ships. `load_seeds` archives such a row only while
