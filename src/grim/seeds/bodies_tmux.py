@@ -377,6 +377,53 @@ for keys in (["-l", "--", text], ["Enter"]):
 print(f"typed into {SESSION}:{job}: {text!r} + Enter")
 '''
 
+TMUX_STOP = r'''"""tmux_stop — stop a job and free its name: its tmux window is closed, live
+or dead (a live program gets SIGHUP), and anything blocked in
+tmux_wait grim-JOB is woken. The job's log file is kept as its record.
+Usage: tmux_stop JOB
+$GRIM_TMUX_SOCKET names a private tmux server.
+Ref: https://man.openbsd.org/tmux#kill-window"""
+import os
+import shutil
+import subprocess
+import sys
+
+SESSION = "grim"
+ROW = "#{@grim_job}\t#{window_id}\t#{pane_dead}\t#{pane_dead_status}"
+socket = os.environ.get("GRIM_TMUX_SOCKET")
+TMUX = ["tmux", "-L", socket] if socket else ["tmux"]
+
+
+def tmux(*args):
+    return subprocess.run([*TMUX, *args], capture_output=True, text=True, check=False)
+
+
+def fail(code, message):
+    print(f"tmux_stop: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+if len(sys.argv) != 2:
+    fail(2, "usage: tmux_stop JOB")
+job = sys.argv[1]
+if shutil.which("tmux") is None:
+    fail(127, "program not found on PATH: 'tmux'")
+listed = tmux("list-windows", "-t", f"={SESSION}", "-F", ROW)
+rows = [line.split("\t") for line in listed.stdout.splitlines()]
+jobs = {row[0]: row[1:] for row in rows if len(row) == 4 and row[0]}
+if job not in jobs:
+    fail(1, f"no such job: {job!r} (jobs: {', '.join(sorted(jobs)) or 'none'})")
+window, dead, status = jobs[job]
+# One tmux call does both: close the window, then wake any waiter by hand —
+# kill-window fires no pane-died hook. With no waiter the wake is left
+# behind; the next tmux_start of this name clears it.
+stopped = tmux("kill-window", "-t", window, ";", "wait-for", "-S", f"grim-{job}")
+if stopped.returncode != 0:
+    fail(1, f"tmux kill-window failed: {stopped.stderr.strip()}")
+was = f"dead (exit {status})" if dead == "1" else "alive"
+print(f"stopped {SESSION}:{job} (it was {was})")
+'''
+
 # (name, description, body) rows — plain tuples, so this module never imports
 # SeedSpec from bodies.py (which imports this one).
 TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
@@ -402,6 +449,12 @@ TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
         "type one line into a live job and press Enter (a prompt, a REPL, a TUI): "
         "tmux_send JOB TEXT — typed as-is",
         TMUX_SEND,
+    ),
+    (
+        "tmux_stop",
+        "stop a job started by tmux_start and free its name: tmux_stop JOB — closes its "
+        "tmux window, keeps its log",
+        TMUX_STOP,
     ),
     (
         "tmux_wait",

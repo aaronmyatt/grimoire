@@ -12,9 +12,9 @@ background job, not a longer `grim run` timeout (which is hard-capped, see
 verbs/run.py). Program-starting bodies live in `bodies_exec.py` and never
 use a shell: argv only, shell operators and shell interpreters refused.
 Surface drivers ship here too (docs/surfaces.md). The first is tmux, in
-`bodies_tmux.py`: `tmux_start`/`tmux_list` (docs/features/01-jobs.md) — a
-job is a tagged tmux window in session `grim`, and will replace the
-background trio once read/send/stop land — and `tmux_wait`
+`bodies_tmux.py`: `tmux_start`/`tmux_list`/`tmux_read`/`tmux_send`/
+`tmux_stop` (docs/features/01-jobs.md) — a job is a tagged tmux window
+in session `grim`; these replace the background trio — and `tmux_wait`
 (docs/features/02-waiting.md): block on a named signal instead of
 polling; every job signals `grim-JOB` when it ends.
 

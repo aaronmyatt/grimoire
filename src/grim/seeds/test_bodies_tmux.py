@@ -292,3 +292,55 @@ def test_tmux_read_and_send_wrong_calls_exit_2(socket: str, name: str, argv: lis
     result = _run(name, argv)
     assert result.exit_code == _USAGE_EXIT_CODE
     assert f"usage: {name} JOB" in result.stderr
+
+
+def test_tmux_stop_closes_the_window_and_tmux_list_forgets_the_job(
+    socket: str, tmp_path: Path
+) -> None:
+    for job in ["api", "keep"]:
+        assert _run("tmux_start", [job, *_SLEEPER]).exit_code == 0
+    result = _run("tmux_stop", ["api"])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout == "stopped grim:api (it was alive)\n"
+    assert _tmux(socket, "list-windows", "-t", "=grim", "-F", "#{window_name}").stdout == "keep\n"
+    assert _run("tmux_list", []).stdout.startswith("keep  job  alive")
+    assert (tmp_path / "run" / "api.log").is_file()  # the log outlives the job
+
+
+def test_tmux_stop_of_the_only_job_leaves_no_jobs(socket: str) -> None:
+    assert _run("tmux_start", ["api", *_SLEEPER]).exit_code == 0
+    assert _run("tmux_stop", ["api"]).exit_code == 0
+    assert _run("tmux_list", []).stdout == "no jobs\n"
+
+
+def test_tmux_stop_clears_a_dead_job_so_its_name_is_free_again(socket: str) -> None:
+    waiter = [sys.executable, "-c", _WAIT_THEN_EXIT, socket]
+    assert _run("tmux_start", ["api", *waiter]).exit_code == 0
+    assert _run("tmux_start", ["keep", *_SLEEPER]).exit_code == 0
+    assert _tmux(socket, "wait-for", "-S", "go").returncode == 0
+    assert _tmux(socket, "wait-for", "grim-api").returncode == 0
+    result = _run("tmux_stop", ["api"])
+    assert result.stdout == f"stopped grim:api (it was dead (exit {_JOB_EXIT_CODE}))\n"
+    assert _run("tmux_start", ["api", *_SLEEPER]).exit_code == 0
+
+
+def test_tmux_stop_wakes_a_blocked_tmux_wait(socket: str) -> None:
+    for job in ["api", "keep"]:  # "keep" holds the server up after api is gone
+        assert _run("tmux_start", [job, *_SLEEPER]).exit_code == 0
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        blocked = pool.submit(_run, "tmux_wait", ["grim-api", "15"])
+        assert _run("tmux_stop", ["api"]).exit_code == 0
+        result = blocked.result(timeout=_TIMEOUT_S)
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.startswith("signal 'grim-api' arrived after ")
+
+
+def test_tmux_stop_wrong_calls_and_unknown_jobs_fail_loudly(socket: str) -> None:
+    assert _run("tmux_start", ["keep", *_SLEEPER]).exit_code == 0
+    for argv in [[], ["api", "extra"]]:
+        result = _run("tmux_stop", argv)
+        assert result.exit_code == _USAGE_EXIT_CODE
+        assert "usage: tmux_stop JOB" in result.stderr
+    unknown = _run("tmux_stop", ["ghost"])
+    assert unknown.exit_code == _TAKEN_EXIT_CODE
+    assert "no such job: 'ghost' (jobs: keep)" in unknown.stderr
