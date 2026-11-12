@@ -78,7 +78,8 @@ surface.
   `$GRIM_SESSION_TASK` (the adapter exports both beside `$GRIM_SESSION`;
   task capped at 500 chars). An existing row is never rewritten.
 - `run` appends at most one `[grim] hint:` line to a failed run's
-  observation (`failure_hints`, pure): exit 124 points at `run_bg`; any
+  observation (`failure_hints`, pure): exit 124 points at the tmux job
+  seeds (`tmux_start`, `tmux_list`, `tmux_wait`); any
   other nonzero exit with an empty stderr asks the script to print why.
   Stored stdout/stderr are untouched — hints live in the observation only.
 - `find` leaves out `scratch_*` scripts (`find.SCRATCH_PREFIX`) unless the

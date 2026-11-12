@@ -201,8 +201,9 @@ def failure_hints(exit_code: int, stderr: str, timeout: float) -> list[str]:
     if exit_code == dispatch.TIMEOUT_EXIT_CODE:
         hints.append(
             f"[grim] hint: killed at the {timeout:g}s timeout. Long-lived work "
-            '(servers, watchers, polling loops) belongs in run(name="run_bg"); '
-            'check on it with run(name="list_bg").'
+            '(servers, watchers, builds) belongs in run(name="tmux_start"); check on '
+            'it with run(name="tmux_list"), and block until it ends with '
+            'run(name="tmux_wait") instead of polling.'
         )
     elif exit_code != 0 and not stderr.strip():
         hints.append(

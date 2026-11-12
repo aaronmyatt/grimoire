@@ -180,10 +180,12 @@ def test_run_script_propagates_exit_code(tmp_path: Path, monkeypatch: pytest.Mon
     assert result.exit_code == expected_exit_code
 
 
-def test_failure_hints_timeout_points_at_run_bg() -> None:
+def test_failure_hints_timeout_points_at_the_tmux_job_seeds() -> None:
     hints = failure_hints(TIMEOUT_EXIT_CODE, "", 120.0)
     assert len(hints) == 1
-    assert "120s timeout" in hints[0] and "run_bg" in hints[0]
+    assert "120s timeout" in hints[0]
+    assert all(seed in hints[0] for seed in ("tmux_start", "tmux_list", "tmux_wait"))
+    assert "run_bg" not in hints[0]
 
 
 def test_failure_hints_silent_failure_asks_for_stderr() -> None:
