@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from grim.seeds.bodies_agent import AGENT_SEEDS
 from grim.seeds.bodies_exec import RUN_CMD, RUN_PY
 from grim.seeds.bodies_tmux import TMUX_SEEDS
 
@@ -411,4 +412,5 @@ SEEDS: list[SeedSpec] = [
         body=_EXPORT_LIBRARY,
     ),
     *(SeedSpec(name, "python", description, body) for name, description, body in TMUX_SEEDS),
+    *(SeedSpec(name, "python", description, body) for name, description, body in AGENT_SEEDS),
 ]
