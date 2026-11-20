@@ -118,6 +118,7 @@ def test_agent_exec_hands_a_good_answer_to_agent_done_and_is_done(
     meta = json.loads((job_dir / "meta.json").read_text())
     cost = None if agent == "codex" else 0.0123  # codex reports tokens, never a price
     assert (meta["cost_usd"], meta["input_tokens"], meta["output_tokens"]) == (cost, 9, 4)
+    assert meta["dir"] == str(tmp_path.resolve())  # agent_compare checks evidence under it
 
 
 def test_agent_exec_past_the_deadline_is_timeout_and_its_process_group_is_gone(

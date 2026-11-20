@@ -15,6 +15,8 @@ from grim.seeds.bodies import SEEDS
 
 _TIMEOUT_S = 30.0
 _USAGE_EXIT_CODE, _ONE_SOURCE_EXIT_CODE, _NO_SOURCE_EXIT_CODE = 2, 3, 1
+_MAX_PACKET_BYTES, _MAX_RESULT_BYTES = 4096, 16384
+_MAX_LINE_CHARS = 170  # "A#12 + " and a claim cut to 160 chars
 _CLAIMS_A = (
     "The wait hook fires on pane death — evidence: app.py:12",
     "Stamps are written atomically by rename — evidence: app.py:3",
@@ -51,13 +53,15 @@ def _job(tmp_path: Path, job: str, answer: str = "", state: str = "DONE") -> Non
     digest = hashlib.sha256(answer.encode()).hexdigest()
     record = {"job": job, "state": state, "stamped_at": 1, "sha256": digest}
     (folder / "status.json").write_text(json.dumps(record))
-    meta = {"wall_s": 842.0, "cost_usd": 0.83}
+    meta = {"wall_s": 842.0, "cost_usd": 0.83, "dir": str(tmp_path / "repo")}
     (folder / "meta.json").write_text(json.dumps(meta))
 
 
 @pytest.fixture(autouse=True)
-def _run_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "run"))
+    (tmp_path / "repo").mkdir()
+    (tmp_path / "repo" / "app.py").write_text("".join(f"line {n}\n" for n in range(20)))
 
 
 def test_agent_compare_two_answers_that_agree(tmp_path: Path) -> None:
@@ -66,11 +70,13 @@ def test_agent_compare_two_answers_that_agree(tmp_path: Path) -> None:
     result = _run(["q-claude", "q-codex"])
     assert result.exit_code == 0, result.stderr
     lines = result.stdout.splitlines()
-    assert lines[0] == ("q-claude DONE 14m02s $0.83 · q-codex DONE 14m02s $0.83")
+    assert lines[0] == (
+        "q-claude DONE 14m02s $0.83 verified 2/2 · q-codex DONE 14m02s $0.83 verified 1/2"
+    )
     assert lines[1].endswith("→ AGREE")
     assert lines[2] == "agreed (1) · only-A (1) · only-B (1)"
-    assert "A#2 Stamps are written atomically by rename" in result.stdout
-    assert "B#2 Retries are capped at three" in result.stdout
+    assert "A#2 + Stamps are written atomically by rename" in result.stdout
+    assert "B#2 ? Retries are capped at three" in result.stdout
 
 
 def test_agent_compare_two_answers_that_differ(tmp_path: Path) -> None:
@@ -101,6 +107,43 @@ def test_agent_compare_with_no_good_answer_exits_1(tmp_path: Path) -> None:
     result = _run(["q-claude", "q-codex"])  # q-codex has no folder at all
     assert result.exit_code == _NO_SOURCE_EXIT_CODE
     assert result.stdout.startswith("q-claude TIMEOUT 14m02s $0.83 · q-codex NO STATUS cost=null")
+
+
+def test_agent_compare_checks_path_line_evidence_and_never_runs_a_command(tmp_path: Path) -> None:
+    witness = tmp_path / "ran"
+    claims = (
+        "Line twelve exists — evidence: app.py:12",
+        "Line ninety-nine exists — evidence: app.py:99",
+        "A file outside the folder — evidence: ../outside.py:1",
+        f"A command is recorded — evidence: `touch {witness}`",
+    )
+    _job(tmp_path, "q-claude", _answer("Mixed evidence.", claims))
+    _job(tmp_path, "q-codex", _answer("Unrelated other view.", ("Nothing in common here",)))
+    (tmp_path / "outside.py").write_text("x\n")
+    result = _run(["q-claude", "q-codex"])
+    assert result.exit_code == 0, result.stderr
+    marks = [line.split()[1] for line in result.stdout.splitlines() if line.startswith("A#")]
+    assert marks == ["+", "x", "x", "?"]
+    assert not witness.exists()
+
+
+def test_agent_compare_packet_stays_under_4096_bytes_for_two_16_kib_results(
+    tmp_path: Path,
+) -> None:
+    for job, word in (("q-claude", "alpha"), ("q-codex", "omega")):
+        shared = [f"shared claim {n} " + "with a long reason " * 12 for n in range(10)]
+        own = [" ".join(f"{word}{n}w{k}" for k in range(30)) for n in range(40)]  # no overlap
+        claims = tuple(shared + own)  # so agreed, only-A and only-B all fill their 8 lines
+        answer = _answer(f"{word} " * 60, claims)
+        padding = "y" * (_MAX_RESULT_BYTES - len(answer.encode()))  # fill to exactly 16 KiB
+        answer = answer.replace("## Answer\n", f"## Answer\n{padding}", 1)
+        assert len(answer.encode()) == _MAX_RESULT_BYTES
+        _job(tmp_path, job, answer)
+    result = _run(["q-claude", "q-codex"])
+    assert result.exit_code == 0, result.stderr
+    assert len(result.stdout.encode()) <= _MAX_PACKET_BYTES
+    assert result.stdout.endswith("\n…\n")  # it was cut, and says so
+    assert all(len(line) <= _MAX_LINE_CHARS for line in result.stdout.splitlines()[3:])
 
 
 @pytest.mark.parametrize("argv", [[], ["a"], ["a", "a"], ["a", "b c"], ["a", "b", "c"]])
