@@ -39,7 +39,7 @@
 
 - [ ] **Story:** As the agent, I want to wait without sleeping, so I spend no turns on polling.
   - [ ] The signal arrives
-  - [ ] The signal came first
+  - [x] The signal came first
   - [ ] The signal never comes
 
 ### 3.6 Every act is on the record
@@ -99,7 +99,7 @@
 - [ ] **Story:** As the agent, I want to wait without sleeping, so I spend no turns on polling.
   - [ ] The signal arrives
   - [ ] The signal came first
-  - [ ] A job signals when it ends
+  - [x] A job signals when it ends
   - [ ] The signal never comes
   - [ ] A wait cannot outlive the time budget
 
@@ -119,8 +119,8 @@
   - [ ] Same seeds, any agent
   - [ ] A long brief arrives whole
   - [ ] First-run dialogs are known
-  - [ ] Collect the answer
-  - [ ] The delegate forgot the contract
+  - [x] Collect the answer
+  - [x] The delegate forgot the contract
   - [ ] The delegate needs input
   - [ ] Follow up
   - [ ] Stop a delegate
