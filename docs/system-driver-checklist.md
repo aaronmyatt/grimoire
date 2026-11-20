@@ -117,14 +117,14 @@
 
 - [ ] **Story:** As the agent, I want to hand a hard task to another agent and get the answer back.
   - [ ] Same seeds, any agent
-  - [ ] A long brief arrives whole
+  - [x] A long brief arrives whole
   - [ ] First-run dialogs are known
   - [x] Collect the answer
   - [x] The delegate forgot the contract
   - [ ] The delegate needs input
   - [ ] Follow up
   - [ ] Stop a delegate
-  - [ ] A delegate's powers are stated
+  - [x] A delegate's powers are stated
 
 ### 5. Go scripts build once — [05-go-build.md](features/05-go-build.md)
 
