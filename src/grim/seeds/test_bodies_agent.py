@@ -327,3 +327,29 @@ def test_agent_start_without_the_agent_program_exits_127_naming_it(
     assert result.exit_code == _NOT_FOUND_EXIT_CODE
     assert "no 'codex' program found on PATH" in result.stderr
     assert _tmux(socket, "has-session", "-t", "=grim").returncode != 0  # nothing half-started
+
+
+# Characterization tests (delegation-plan step 1b): they pin today's
+# behavior — including the "success that isn't" the plan removes — so the
+# behavior change in steps 1d and 1e shows up as a diff of these asserts.
+def test_today_tmux_wait_on_a_dead_delegate_exits_0(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_REPLY", "exit")  # the delegate quits with no result.md
+    _start(socket, tmp_path)
+    assert _tmux(socket, "wait-for", "grim-fix-auth").returncode == 0  # the job-end hook
+    waited = _run("tmux_wait", ["grim-fix-auth", "5"])
+    assert waited.exit_code == 0, waited.stderr
+    assert waited.stdout == "job 'fix-auth' is dead (exit 3): nothing to wait for\n"
+
+
+def test_today_agent_read_calls_an_empty_result_md_done(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_REPLY", "idle")
+    _start(socket, tmp_path)
+    assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
+    (tmp_path / "run" / "fix-auth" / "result.md").write_text("")  # empty: no answer at all
+    result = _run("agent_read", ["fix-auth"])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.splitlines()[0].startswith("[agent_read] fix-auth: DONE")
