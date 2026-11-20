@@ -32,6 +32,10 @@ config), and hands a good answer to `agent_done`; any other end (TIMEOUT:
 TERM to the child's process group, KILL 2 s later; FAILED) is written to
 `status.json` in agent_done's shape, exit 3. AUTH, CONTEXT, FAILED and
 INVALID_RESULT are told apart there; `meta.json` holds cost and tokens.
+`agent_ask --exec-args JSON claude|codex|both ID DIR [SECONDS]` (brief on
+stdin) checks everything first, then opens `ID-AGENT` per agent through
+`grim run tmux_start --kind agent`, each running `agent_exec` with one shared
+deadline; the brief gets the answer headings `agent_done` checks appended.
 The third is the browser driver (docs/features/06-browser.md):
 `web_open` (python, `bodies_web.py`) runs one long-lived Chrome as tmux
 job `chrome` on its own profile and opens tabs; `web_read`, `web_eval`,

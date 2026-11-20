@@ -160,3 +160,7 @@ mechanically.
 - **Delegate program lookup, two copies.** `agent_exec` (`seeds/bodies_headless.py`,
   `_SHARED.program_for`) repeats `agent_start`'s config `bin`-or-PATH lookup that
   skips tmux wrapper scripts. Same rule: flagged, not extracted.
+- **tmux prelude and job lookup, one more copy each.** `agent_ask`
+  (`seeds/bodies_headless.py`) spells the `tmux [-L $GRIM_TMUX_SOCKET]` call,
+  `SESSION = "grim"` and the `@grim_job` lookup again, to check both job names
+  are free before starting either. It opens windows only through `tmux_start`.

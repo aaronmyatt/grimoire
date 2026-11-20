@@ -206,6 +206,88 @@ sys.exit(3)
 '''
 )
 
+AGENT_ASK = (
+    r'''"""agent_ask — ask claude, codex or both one question, headless, at once.
+Each runs as agent_exec in its own agent-kind tmux job ID-AGENT (attach with
+`tmux attach -t grim` to watch), on the brief from stdin plus the answer
+headings agent_done checks. Everything is checked before anything starts:
+programs (127), powers and arguments (2), free job names (1).
+Usage: agent_ask --exec-args JSON AGENTS ID DIR [SECONDS]   (brief on stdin)
+  AGENTS: claude, codex or both. JSON states each one's powers, e.g.
+  '{"claude": ["--tools", "Read"], "codex": ["--sandbox", "read-only"]}'.
+  DIR: absolute; the delegates work there. SECONDS: 1-3500, default 1200.
+Then: tmux_wait grim-ID-AGENT SECONDS (0 = DONE, 3 = failed; status.json in
+<run_dir>/ID-AGENT says how) · agent_read ID-AGENT for the answer.
+Ref: https://man.openbsd.org/tmux#list-windows"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import tomllib
+from pathlib import Path
+
+NAME, AGENTS, SESSION = "agent_ask", ("claude", "codex"), "grim"
+DEFAULT_S, MAX_S, MAX_BRIEF_CHARS, SPARE_S = 1200, 3500, 20000, 60
+CONTRACT = (  # what agent_done checks; Ref: seeds/bodies_delegate.py
+    "\n\nAnswer in markdown, 200 to 16384 bytes, with exactly these headings, each with "
+    "text under it: ## Verdict, ## Answer, ## Claims (numbered: 1. claim — evidence), "
+    "## Confidence, ## Open."
+)
+'''
+    + _SHARED
+    + r"""
+
+args = sys.argv[1:]
+if not 5 <= len(args) <= 6 or args[0] != "--exec-args":
+    fail(2, "usage: agent_ask --exec-args JSON AGENTS ID DIR [SECONDS]   (brief on stdin)")
+stated, which, ask_id, folder, *rest = args[1:]
+seconds = int(rest[0]) if rest and rest[0].isdigit() else -1 if rest else DEFAULT_S
+agents = list(AGENTS) if which == "both" else [which]
+if which not in (*AGENTS, "both") or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,56}", ask_id):
+    fail(2, f"want claude|codex|both and an ID (letters, digits, _ -): {which!r} {ask_id!r}")
+if not os.path.isabs(folder) or not Path(folder).is_dir() or not 1 <= seconds <= MAX_S:
+    fail(2, f"want an absolute folder and 1-{MAX_S} seconds: {folder!r} {rest}")
+brief = sys.stdin.read().strip()
+if not 0 < len(brief) <= MAX_BRIEF_CHARS:
+    fail(2, f"the brief goes on stdin, 1 to {MAX_BRIEF_CHARS} chars (got {len(brief)})")
+powers_of = powers(stated, agents)
+for agent in agents:
+    program_for(agent)  # exits 127 naming the missing program
+for tool in ("tmux", "grim"):
+    if shutil.which(tool) is None:
+        fail(127, f"program not found on PATH: {tool!r}")
+socket = os.environ.get("GRIM_TMUX_SOCKET")
+listed = subprocess.run([*(["tmux", "-L", socket] if socket else ["tmux"]), "list-windows",
+                         "-t", f"={SESSION}", "-F", "#{@grim_job}"], capture_output=True, text=True)
+jobs = [f"{ask_id}-{agent}" for agent in agents]
+taken = sorted(set(jobs) & set(listed.stdout.split()))
+if taken:
+    fail(1, f"job names taken: {', '.join(taken)}; pick another ID or tmux_stop them")
+
+deadline = int(time.time()) + seconds  # once, so both delegates share one deadline
+run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
+started = []
+for agent, job in zip(agents, jobs, strict=True):
+    (run_dir / job).mkdir(parents=True, exist_ok=True)
+    (run_dir / job / "brief.md").write_text(brief + CONTRACT + "\n")
+    command = ["grim", "run", "tmux_start", "--", "--kind", "agent", job, "grim", "run",
+               "--timeout", str(seconds + SPARE_S), "agent_exec", "--", "--exec-args",
+               json.dumps({agent: powers_of[agent]}), agent, job, folder, str(deadline)]
+    opened = subprocess.run(command, cwd=folder, capture_output=True, text=True)
+    if opened.returncode != 0:  # undo the half-start: nothing is left running
+        for done in started:
+            subprocess.run(["grim", "run", "tmux_stop", "--", done], capture_output=True)
+        fail(1, f"could not start {job}: {opened.stdout.strip()} {opened.stderr.strip()}")
+    started.append(job)
+until = time.strftime("%H:%M:%S", time.localtime(deadline))
+print(f"started {' '.join(started)} · deadline {until} · next: tmux_wait grim-JOB {seconds} "
+      "for each, then agent_read JOB")
+"""
+)
+
 # (name, description, body) rows, as in bodies_tmux.py.
 HEADLESS_SEEDS: tuple[tuple[str, str, str], ...] = (
     (
@@ -213,5 +295,11 @@ HEADLESS_SEEDS: tuple[tuple[str, str, str], ...] = (
         "run a delegate headless on <run_dir>/JOB/brief.md with stated powers (agent_ask "
         "starts it): agent_exec --exec-args JSON AGENT JOB DIR DEADLINE_EPOCH — 0 only for DONE",
         AGENT_EXEC,
+    ),
+    (
+        "agent_ask",
+        "ask claude, codex or both one question headless, each in its own tmux job: "
+        "agent_ask --exec-args JSON AGENTS ID DIR [SECONDS] (brief on stdin)",
+        AGENT_ASK,
     ),
 )

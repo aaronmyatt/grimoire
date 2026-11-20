@@ -23,6 +23,7 @@ pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="these seed
 _TIMEOUT_S = 30.0
 _USAGE_EXIT_CODE = 2
 _FAILED_EXIT_CODE = 3
+_NOT_FOUND_EXIT_CODE = 127
 _POWERS = ["--tools", "Read"]
 _MAX_POLLS = 5000  # a bounded busy-wait on pgrep; each poll takes milliseconds
 _ANSWER = (  # an answer agent_done passes: the five headings and a numbered claim
@@ -55,9 +56,9 @@ else:
 """
 
 
-def _run(name: str, argv: list[str]) -> ExecutionResult:
+def _run(name: str, argv: list[str], stdin: str | None = None) -> ExecutionResult:
     body = next(s.body for s in SEEDS if s.name == name)
-    request = ExecutionRequest(argv=argv, stdin=None, cwd=None, timeout=_TIMEOUT_S)
+    request = ExecutionRequest(argv=argv, stdin=stdin, cwd=None, timeout=_TIMEOUT_S)
     return dispatch(ScriptVersion(language="python", body=body), request)
 
 
@@ -194,3 +195,57 @@ def test_agent_exec_wrong_calls_exit_2(socket: str, argv: list[str]) -> None:
     result = _run("agent_exec", argv)
     assert result.exit_code == _USAGE_EXIT_CODE
     assert "agent_exec" in result.stderr
+
+
+def _tmux(socket: str, *args: str) -> str:
+    command = ["tmux", "-L", socket, *args]
+    return subprocess.run(command, capture_output=True, text=True, timeout=_TIMEOUT_S).stdout
+
+
+def test_agent_ask_both_opens_two_agent_windows_and_both_see_the_same_brief(
+    socket: str, tmp_path: Path
+) -> None:
+    stated = json.dumps({"claude": _POWERS, "codex": _POWERS})
+    asked = _run("agent_ask", ["--exec-args", stated, "both", "q", str(tmp_path), "60"], "Hi.\n")
+    assert asked.exit_code == 0, asked.stderr
+    assert asked.stdout.startswith("started q-claude q-codex · deadline ")
+    windows = _tmux(socket, "list-windows", "-t", "=grim", "-F", "#{@grim_job} #{@grim_kind}")
+    assert sorted(windows.splitlines()) == ["q-claude agent", "q-codex agent"]
+    for job in ("q-claude", "q-codex"):  # agent_done signals each once it passes the answer
+        _tmux(socket, "wait-for", f"grim-{job}")
+        assert json.loads((tmp_path / "run" / job / "status.json").read_text())["state"] == "DONE"
+    briefs = [entry["brief"] for entry in _log(tmp_path)]
+    assert len(briefs) == len(set(briefs)) * 2  # two delegates, one identical brief
+    assert str(briefs[0]).startswith("Hi.\n\nAnswer in markdown")
+
+
+def test_agent_ask_with_codex_missing_exits_127_and_opens_no_window(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "gone.toml"
+    config.write_text(
+        f'[delegates.claude]\nbin = "{tmp_path / "fake-agent"}"\n'
+        f'[delegates.codex]\nbin = "{tmp_path / "no-such-codex"}"\n'
+    )
+    monkeypatch.setenv("GRIM_DELEGATES_CONFIG", str(config))
+    stated = json.dumps({"claude": _POWERS, "codex": _POWERS})
+    asked = _run("agent_ask", ["--exec-args", stated, "both", "q", str(tmp_path)], "Hi.\n")
+    assert asked.exit_code == _NOT_FOUND_EXIT_CODE
+    assert "'codex'" in asked.stderr
+    assert _tmux(socket, "list-windows", "-a") == ""
+    assert not (tmp_path / "run" / "q-claude").exists()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],
+        ["--exec-args"],
+        ["--exec-args", "{}", "both", "q", "/tmp", "9999"],
+        ["both", "q", "/tmp"],
+    ],
+)
+def test_agent_ask_wrong_calls_exit_2(socket: str, argv: list[str]) -> None:
+    result = _run("agent_ask", argv, "Hi.\n")
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "agent_ask" in result.stderr
