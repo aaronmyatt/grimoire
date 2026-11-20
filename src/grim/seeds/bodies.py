@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from grim.seeds.bodies_agent import AGENT_SEEDS
+from grim.seeds.bodies_compare import COMPARE_SEEDS
 from grim.seeds.bodies_delegate import DELEGATE_SEEDS
 from grim.seeds.bodies_exec import RUN_CMD, RUN_PY
 from grim.seeds.bodies_headless import HEADLESS_SEEDS
@@ -418,5 +419,6 @@ SEEDS: list[SeedSpec] = [
     *(SeedSpec(name, "python", description, body) for name, description, body in AGENT_SEEDS),
     *(SeedSpec(name, "python", description, body) for name, description, body in DELEGATE_SEEDS),
     *(SeedSpec(name, "python", description, body) for name, description, body in HEADLESS_SEEDS),
+    *(SeedSpec(name, "python", description, body) for name, description, body in COMPARE_SEEDS),
     *(SeedSpec(*row) for row in WEB_SEEDS),
 ]

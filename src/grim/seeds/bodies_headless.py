@@ -58,7 +58,8 @@ codex's -o file) and runs agent_done JOB, the only judge of DONE (exit 0).
 Any other end is written to status.json in agent_done's shape (TIMEOUT,
 AUTH, CONTEXT, FAILED, INVALID_RESULT), exit 3; stdout.txt and stderr.txt
 stay in <run_dir>/JOB. meta.json: exit, wall_s, cost_usd and tokens (null
-when the CLI does not report them), brief_bytes.
+when the CLI does not report them), brief_bytes, dir (agent_compare checks
+path:line evidence under it).
 Usage: agent_exec --exec-args JSON AGENT JOB DIR DEADLINE_EPOCH
   JSON states the delegate's powers, e.g. '{"claude": ["--tools", "Read"]}'.
 Ref: https://docs.python.org/3/library/subprocess.html#subprocess.Popen"""
@@ -185,7 +186,7 @@ answer, errored, cost, usage = parsed(agent, stdout, last_path)
 meta = {"agent": agent, "exit": code, "wall_s": round(time.monotonic() - started, 1),
         "cost_usd": cost, "input_tokens": usage.get("input_tokens"),
         "output_tokens": usage.get("output_tokens"),
-        "brief_bytes": (job_dir / "brief.md").stat().st_size}
+        "brief_bytes": (job_dir / "brief.md").stat().st_size, "dir": str(Path(folder).resolve())}
 write_atomic(job_dir / "meta.json", json.dumps(meta) + "\n")
 done_code = None
 if code == 0 and errored is not True and answer:  # success: agent_done alone decides DONE

@@ -36,6 +36,14 @@ INVALID_RESULT are told apart there; `meta.json` holds cost and tokens.
 stdin) checks everything first, then opens `ID-AGENT` per agent through
 `grim run tmux_start --kind agent`, each running `agent_exec` with one shared
 deadline; the brief gets the answer headings `agent_done` checks appended.
+`agent_wait SECONDS JOB...` (`bodies_delegate.py`) blocks once for up to 4
+jobs: one `tmux wait-for` client per running job, watched with `selectors`,
+durable `status.json` checked before and after every wake; never `time.sleep`.
+Exit 0 all DONE, 3 any failed, 124 any still running (no client left behind).
+`agent_compare JOB_A JOB_B` (`bodies_compare.py`) is the mechanical arbiter:
+no model, state from `status.json` only, claims matched by word overlap,
+`path:line` evidence checked under `meta.json` `dir`, commands never run; one
+packet of at most 4096 bytes. Exit 0 both DONE, 3 one, 1 neither.
 The third is the browser driver (docs/features/06-browser.md):
 `web_open` (python, `bodies_web.py`) runs one long-lived Chrome as tmux
 job `chrome` on its own profile and opens tabs; `web_read`, `web_eval`,
