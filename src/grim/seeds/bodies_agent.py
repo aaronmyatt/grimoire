@@ -180,7 +180,12 @@ while True:
                 f"clear it with tmux_stop {job}")
     if any(hint in low for hint in LOGIN_HINTS):
         fail(1, f"{agent} wants a login, which a human must do: tmux attach -t {SESSION}")
-    dialog = next((d for d in profile["dialogs"] if d[0] in low), None)
+    # TUIs collapse dialog labels against each other ("2.Skip3.Skipuntilnextversion"),
+    # so hints are matched on text with every run of whitespace removed.
+    flat = re.sub(r"\s+", "", low)
+    dialog = next(
+        (d for d in profile["dialogs"] if re.sub(r"\s+", "", d[0]) in flat), None
+    )
     if dialog and answers.get(dialog[0], 0) < MAX_ANSWERS:
         answers[dialog[0]] = answers.get(dialog[0], 0) + 1
         for key in dialog[1]:

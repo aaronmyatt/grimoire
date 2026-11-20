@@ -58,6 +58,12 @@ if os.environ.get("FAKE_DIALOG") == "trust":
     if not chose_yes:
         sys.exit(7)
     os.write(1, b"\x1b[2J\x1b[H")
+if os.environ.get("FAKE_DIALOG") == "update":  # codex's offer, labels run together
+    show("1.Updatenow")
+    show("2.Skip3.Skipuntilnextversion")
+    if os.read(fd, 65536) != b"\x1b":  # anything but Escape takes the update and quits
+        sys.exit(7)
+    os.write(1, b"\x1b[2J\x1b[H")
 os.write(1, b"\x1b[?2004h")
 show("? for shortcuts")
 data, message, in_paste, seen = b"", b"", False, 0
@@ -353,3 +359,16 @@ def test_today_agent_read_calls_an_empty_result_md_done(
     result = _run("agent_read", ["fix-auth"])
     assert result.exit_code == 0, result.stderr
     assert result.stdout.splitlines()[0].startswith("[agent_read] fix-auth: DONE")
+
+
+def test_agent_start_skips_codex_update_offer_even_when_its_labels_run_together(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (delegation-plan step 1c): codex drew "2.Skip3.Skipuntilnextversion"
+    # with no spaces, the dialog went unanswered, and Enter took the update.
+    monkeypatch.setenv("FAKE_DIALOG", "update")
+    result = _run("agent_start", ["codex", "fix-auth", str(tmp_path / "work")], stdin="do it")
+    assert result.exit_code == 0, result.stderr
+    assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
+    messages = _entries(tmp_path)[1:]
+    assert [str(entry["message"]).splitlines()[0] for entry in messages] == ["do it"]
