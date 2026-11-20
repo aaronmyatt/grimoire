@@ -4,6 +4,7 @@ finishing is acted out with the real agent_done body; no agent or model runs."""
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -118,3 +119,58 @@ def test_agent_wait_times_out_with_124_and_leaves_no_wait_for_client(socket: str
 def test_agent_wait_never_sleeps() -> None:
     assert "time.sleep" not in AGENT_WAIT
     assert "selectors" in AGENT_WAIT  # it blocks on the wait-for clients instead
+
+
+def test_agent_wait_on_a_delegate_stopped_mid_wait_exits_3(socket: str) -> None:
+    for job in ("q-claude", "keep"):  # "keep" holds the server up after q-claude is gone
+        _delegate(job)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        blocked = pool.submit(_run, "agent_wait", ["30", "q-claude"])
+        assert any(_waiting(socket, "q-claude") == 1 for _ in range(_MAX_POLLS))
+        assert _run("tmux_stop", ["q-claude"]).exit_code == 0
+        result = blocked.result(timeout=_TIMEOUT_S)
+    assert result.exit_code == _BAD_END_EXIT_CODE
+    assert result.stdout.startswith("q-claude STOPPED\n")
+
+
+@pytest.mark.parametrize("case", [(0, 0), (7, _BAD_END_EXIT_CODE)], ids=["exit-0", "exit-7"])
+def test_agent_wait_on_a_plain_job_follows_its_exit_code(
+    socket: str, case: tuple[int, int]
+) -> None:
+    code, want = case
+    started = _run("tmux_start", ["build", sys.executable, "-c", f"raise SystemExit({code})"])
+    assert started.exit_code == 0
+    result = _run("agent_wait", ["30", "build"])
+    assert result.exit_code == want
+    assert result.stdout.splitlines()[0] == ("build DONE" if code == 0 else "build FAILED exit 7")
+
+
+def test_agent_wait_names_a_headless_failure_and_exits_3(socket: str, tmp_path: Path) -> None:
+    _delegate("q-claude")
+    _finish(tmp_path, "q-claude")
+    (tmp_path / "run" / "q-codex").mkdir(parents=True)
+    failed = {"job": "q-codex", "state": "AUTH", "stamped_at": 1, "agent": "codex", "exit_code": 1}
+    (tmp_path / "run" / "q-codex" / "status.json").write_text(json.dumps(failed))
+    meta = {"wall_s": 75.0, "cost_usd": None}
+    (tmp_path / "run" / "q-codex" / "meta.json").write_text(json.dumps(meta))
+    result = _run("agent_wait", ["30", "q-claude", "q-codex"])
+    assert result.exit_code == _BAD_END_EXIT_CODE
+    assert result.stdout.splitlines()[1] == "q-codex AUTH 1m15s cost=null exit 1"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],
+        ["30"],
+        ["0", "a"],
+        ["3501", "a"],
+        ["x", "a"],
+        ["30", "a", "b", "c", "d", "e"],
+        ["30", "a b"],
+    ],
+)
+def test_agent_wait_wrong_calls_exit_2(socket: str, argv: list[str]) -> None:
+    result = _run("agent_wait", argv)
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "agent_wait" in result.stderr
