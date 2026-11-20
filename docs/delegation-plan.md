@@ -459,6 +459,23 @@ agreed (6) · only-A (2): #4 headless removes dialogs … · #9 cap logs … · 
 
 ## Status — Phase 1 built and verified (2026-11-19)
 
+- **2026-11-20 — Phase 3 shipped.** `agent_wait SECONDS JOB...` (MAX_JOBS 4, one
+  `list-windows` + `status.json` per job, `Popen(tmux wait-for)` + `selectors.select`,
+  no `time.sleep` — a grep test proves it, exit 0 all DONE / 3 terminal-with-failure /
+  124 still pending, no orphaned `wait-for` clients) and `agent_compare A B` (pure
+  python, evidence-checked claims, 4 KiB cap, exit 0/3/1) are merged to `main`
+  (`feat/one-wait`, 5 commits, **788 tests green**, ruff + mypy clean).
+  Any number of delegates is now one blocking call, and two answers are arbitrated
+  without spending a token. Also on main: `3f889ec`, the hermetic-suite fixture
+  (`GRIM_SESSION*`, `GRIM_CWD`, `GRIM_CALL_DEPTH`, `GRIM_MODEL` no longer leak from a
+  live session into the tests), and `agent_exec` now records `dir` in `meta.json`
+  so evidence paths can be checked.
+  Two checklist boxes stay open on purpose: a seed's wait cut by the run timeout, and
+  the caps on `agent_start` / the web seeds. Remaining work: phase 4 (teach the prompt
+  the `agent_ask` -> `agent_wait` -> `agent_compare` route and add the jobs line),
+  then a local reinstall + `grim init` so the new seeds reach the live library.
+
+
 Branch `feat/honest-completion`, 6 commits on top of `185baa4`, working tree clean:
 
 | Step | Commit | What landed |
