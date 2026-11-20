@@ -164,3 +164,7 @@ mechanically.
   (`seeds/bodies_headless.py`) spells the `tmux [-L $GRIM_TMUX_SOCKET]` call,
   `SESSION = "grim"` and the `@grim_job` lookup again, to check both job names
   are free before starting either. It opens windows only through `tmux_start`.
+- **tmux_wait's end-of-job rules, a second copy.** `agent_wait`
+  (`seeds/bodies_delegate.py`, `states()`) decides "over or not" the way
+  `tmux_wait`'s `verdict()` does (agent dead without answer, plain job's exit, window
+  gone), after `status.json`, plus `agent_read`'s sha check and the tmux prelude. Flagged.
