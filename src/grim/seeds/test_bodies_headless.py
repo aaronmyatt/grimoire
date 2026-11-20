@@ -1,0 +1,131 @@
+"""Runtime tests for seeds/bodies_headless.py: a fake delegate (config bin), a private
+tmux server and a throwaway library for agent_done. No real agent, no model call."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+from grim.exec.dispatch import ExecutionRequest, ExecutionResult, ScriptVersion, dispatch
+from grim.seeds.bodies import SEEDS
+
+pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="these seeds drive tmux")
+
+_TIMEOUT_S = 30.0
+_USAGE_EXIT_CODE = 2
+_FAILED_EXIT_CODE = 3
+_POWERS = ["--tools", "Read"]
+_ANSWER = (  # an answer agent_done passes: the five headings and a numbered claim
+    "## Verdict\nThe answer is 42.\n\n## Answer\n"
+    + "It was computed, then checked. " * 4
+    + "\n\n## Claims\n1. 6 x 7 = 42 — evidence: `python -c 'print(6*7)'` → 42\n\n"
+    "## Confidence\nhigh — arithmetic\n\n## Open\nnothing\n"
+)
+# The fake delegate: logs its argv and stdin, then acts out $FAKE_MODE.
+_FAKE = r"""
+import json, os, sys
+mode, brief = os.environ.get("FAKE_MODE", "valid"), sys.stdin.read()
+with open(os.environ["FAKE_LOG"], "a") as log:
+    log.write(json.dumps({"argv": sys.argv[1:], "brief": brief, "pgid": os.getpgrp()}) + "\n")
+if mode == "boom":
+    sys.exit("something broke")
+print(json.dumps({"result": os.environ["FAKE_ANSWER"]}))
+"""
+
+
+def _run(name: str, argv: list[str]) -> ExecutionResult:
+    body = next(s.body for s in SEEDS if s.name == name)
+    request = ExecutionRequest(argv=argv, stdin=None, cwd=None, timeout=_TIMEOUT_S)
+    return dispatch(ScriptVersion(language="python", body=body), request)
+
+
+def _log(tmp_path: Path) -> list[dict[str, object]]:
+    return [json.loads(line) for line in (tmp_path / "fake.log").read_text().splitlines()]
+
+
+@pytest.fixture
+def socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[str]:
+    name = f"grimtest-{tmp_path.parent.name}-{tmp_path.name}"
+    fake, config = tmp_path / "fake-agent", tmp_path / "config.toml"
+    fake.write_text(f"#!{sys.executable}\n{_FAKE}")
+    fake.chmod(0o755)
+    config.write_text("".join(f'[delegates.{a}]\nbin = "{fake}"\n' for a in ("claude", "codex")))
+    for key, value in {
+        "GRIM_TMUX_SOCKET": name,
+        "GRIM_RUN_DIR": str(tmp_path / "run"),
+        "GRIM_DB": str(tmp_path / "grimoire.db"),
+        "GRIM_DELEGATES_CONFIG": str(config),
+        "FAKE_LOG": str(tmp_path / "fake.log"),
+        "FAKE_ANSWER": _ANSWER,
+    }.items():
+        monkeypatch.setenv(key, value)
+    assert subprocess.run(["grim", "init"], capture_output=True, check=False).returncode == 0
+    yield name
+    subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True, check=False)
+    socket_dir = Path(os.environ.get("TMUX_TMPDIR") or "/tmp") / f"tmux-{os.getuid()}"
+    (socket_dir / name).unlink(missing_ok=True)
+
+
+def _exec(tmp_path: Path, agent: str = "claude", brief: str = "Say 42.\n") -> tuple[int, Path]:
+    """agent_exec AGENT q-AGENT beside the agent-kind window agent_done looks up.
+    Returns (its exit code, the job dir)."""
+    job = f"q-{agent}"
+    (tmp_path / "run" / job).mkdir(parents=True)
+    (tmp_path / "run" / job / "brief.md").write_text(brief)
+    assert _run("tmux_start", ["--kind", "agent", job, "sleep", "600"]).exit_code == 0
+    stated = json.dumps({agent: _POWERS})
+    ran = _run("agent_exec", ["--exec-args", stated, agent, job, str(tmp_path)])
+    return ran.exit_code, tmp_path / "run" / job
+
+
+def test_agent_exec_hands_a_good_answer_to_agent_done_and_is_done(
+    socket: str, tmp_path: Path
+) -> None:
+    exit_code, job_dir = _exec(tmp_path)
+    assert exit_code == 0
+    status = json.loads((job_dir / "status.json").read_text())
+    assert status["state"] == "DONE"
+    assert status["sha256"] == hashlib.sha256(_ANSWER.encode()).hexdigest()  # agent_done's
+    assert (job_dir / "result.md").read_text() == _ANSWER
+    assert _log(tmp_path)[0]["argv"] == ["-p", "--output-format", "json", *_POWERS]
+
+
+def test_agent_exec_names_a_failed_cli_and_keeps_its_output(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MODE", "boom")
+    exit_code, job_dir = _exec(tmp_path)
+    assert exit_code == _FAILED_EXIT_CODE
+    status = json.loads((job_dir / "status.json").read_text())
+    assert (status["state"], status["exit_code"], status["agent"]) == ("FAILED", 1, "claude")
+    assert "something broke" in (job_dir / "stderr.txt").read_text()
+    assert not (job_dir / "result.md").exists()
+
+
+@pytest.mark.parametrize("stated", ["{}", "not json", '{"claude": "--tools"}', '{"codex": []}'])
+def test_a_delegate_without_stated_powers_exits_2_and_never_starts(
+    socket: str, tmp_path: Path, stated: str
+) -> None:
+    (tmp_path / "run" / "q").mkdir(parents=True)
+    (tmp_path / "run" / "q" / "brief.md").write_text("Say 42.\n")
+    result = _run("agent_exec", ["--exec-args", stated, "claude", "q", str(tmp_path)])
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "powers must be stated" in result.stderr
+    assert not (tmp_path / "fake.log").exists()
+
+
+@pytest.mark.parametrize(
+    "argv", [[], ["claude", "j", "/tmp"], ["--exec-args", "{}", "pi", "j", "/tmp"]]
+)
+def test_agent_exec_wrong_calls_exit_2(socket: str, argv: list[str]) -> None:
+    result = _run("agent_exec", argv)
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "agent_exec" in result.stderr

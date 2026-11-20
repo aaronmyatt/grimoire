@@ -25,6 +25,10 @@ ends with the done contract (write `<run_dir>/JOB/result.md`, then run
 `agent_done JOB` from `bodies_delegate.py`: it checks the file, writes `status.json`,
 stamps `@grim_done`, signals `grim-JOB`); `agent_read` says DONE only for a checked answer. Wait,
 list, follow-up and stop are borrowed from the tmux seeds.
+Headless delegates: `agent_exec --exec-args JSON AGENT JOB DIR`
+(`bodies_headless.py`) runs the CLI on `<run_dir>/JOB/brief.md` with powers
+stated in its argv (never read from config), and hands a good answer to
+`agent_done`; any other end is written to `status.json` in its shape, exit 3.
 The third is the browser driver (docs/features/06-browser.md):
 `web_open` (python, `bodies_web.py`) runs one long-lived Chrome as tmux
 job `chrome` on its own profile and opens tabs; `web_read`, `web_eval`,
