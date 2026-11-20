@@ -168,3 +168,6 @@ mechanically.
   (`seeds/bodies_delegate.py`, `states()`) decides "over or not" the way
   `tmux_wait`'s `verdict()` does (agent dead without answer, plain job's exit, window
   gone), after `status.json`, plus `agent_read`'s sha check and the tmux prelude. Flagged.
+- **Answer parsing and the DONE sha check, third copies.** `agent_compare`
+  (`seeds/bodies_compare.py`) splits result.md by the five headings as
+  `agent_done` does and re-checks status.json's sha as `agent_read`/`agent_wait` do.

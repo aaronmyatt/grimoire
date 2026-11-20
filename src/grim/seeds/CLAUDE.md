@@ -40,6 +40,9 @@ deadline; the brief gets the answer headings `agent_done` checks appended.
 jobs: one `tmux wait-for` client per running job, watched with `selectors`,
 durable `status.json` checked before and after every wake; never `time.sleep`.
 Exit 0 all DONE, 3 any failed, 124 any still running (no client left behind).
+`agent_compare JOB_A JOB_B` (`bodies_compare.py`) is the mechanical arbiter:
+no model, state from `status.json` only, verdicts and claims matched by word
+overlap; one packet. Exit 0 both DONE, 3 one (single source), 1 neither.
 The third is the browser driver (docs/features/06-browser.md):
 `web_open` (python, `bodies_web.py`) runs one long-lived Chrome as tmux
 job `chrome` on its own profile and opens tabs; `web_read`, `web_eval`,
