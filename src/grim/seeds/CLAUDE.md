@@ -16,7 +16,8 @@ Surface drivers ship here too (docs/surfaces.md). The first is tmux, in
 `tmux_stop` (docs/features/01-jobs.md) — a job is a tagged tmux window
 in session `grim`; these replaced the background trio — and `tmux_wait`
 (docs/features/02-waiting.md): block on a named signal instead of
-polling; every job signals `grim-JOB` when it ends.
+polling; every job signals `grim-JOB` when it ends. `tmux_start --kind agent`
+tags the window as a delegate (allowlist: `job`, `agent`).
 The second driver is the delegate one, in `bodies_agent.py`
 (docs/features/04-delegates.md): `agent_start` runs claude, codex or pi as
 a TUI in a tmux job tagged `@grim_kind=agent` and pastes it a brief that

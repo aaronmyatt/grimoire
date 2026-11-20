@@ -111,6 +111,21 @@ def test_tmux_start_wrong_calls_exit_2_and_start_nothing(socket: str, argv: list
     assert _tmux(socket, "has-session", "-t", "=grim").returncode != 0
 
 
+def test_tmux_start_kind_agent_tags_the_window_and_tmux_list_shows_it(socket: str) -> None:
+    assert _run("tmux_start", ["--kind", "agent", "ask-claude", *_SLEEPER]).exit_code == 0
+    listed = _run("tmux_list", [])
+    assert listed.exit_code == 0, listed.stderr
+    assert listed.stdout.startswith("ask-claude  agent  alive")
+
+
+@pytest.mark.parametrize("kind", [["--kind", "robot"], ["--kind", "Agent"], ["--kind"]])
+def test_tmux_start_unknown_kind_exits_2_and_starts_nothing(socket: str, kind: list[str]) -> None:
+    result = _run("tmux_start", [*kind, "api", *_SLEEPER])
+    assert result.exit_code == _USAGE_EXIT_CODE
+    assert "unknown --kind" in result.stderr
+    assert _tmux(socket, "has-session", "-t", "=grim").returncode != 0
+
+
 def test_tmux_list_with_no_server_says_no_jobs(socket: str) -> None:
     result = _run("tmux_list", [])
     assert result.exit_code == 0

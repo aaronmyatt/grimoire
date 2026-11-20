@@ -15,9 +15,10 @@ from grim.seeds.bodies_tmux_read import TMUX_READ
 TMUX_START = r'''"""tmux_start — start a long-lived job as a tmux window in session "grim":
 servers, watchers, builds, REPLs — work a normal `grim run` would kill at its
 timeout. The window IS the job and tmux is the only registry (no pid file).
-Usage: tmux_start JOB PROGRAM [ARG...]   (a single quoted command string is
-split shlex-style). No shell: pipes, redirects, && and shell interpreters are
-refused — put that logic in a python script: tmux_start JOB grim run SCRIPT.
+Usage: tmux_start [--kind agent] JOB PROGRAM [ARG...]   (a single quoted
+command string is split shlex-style; --kind tags the window, default job).
+No shell: pipes, redirects, && and shell interpreters are refused — put that
+logic in a python script: tmux_start JOB grim run SCRIPT.
 The job runs in your cwd; its output is logged to <run_dir>/JOB.log
 ($GRIM_RUN_DIR or ~/.grimoire/run). See jobs with tmux_list; a human watches
 with `tmux attach -t grim`. When the job ends, tmux itself signals grim-JOB:
@@ -36,6 +37,7 @@ from pathlib import Path
 SESSION = "grim"
 SHELL_OPERATORS = {"|", "||", "&", "&&", ";", ">", ">>", "<", "<<", "2>", "2>&1", "&>"}
 SHELLS = {"bash", "sh", "zsh", "dash", "fish", "ksh", "csh", "tcsh"}
+KINDS = ("job", "agent")  # @grim_kind values; agent_ask opens its delegates with agent
 
 
 def tmux(*args, timeout=None):
@@ -50,13 +52,17 @@ def fail(code, message):
     sys.exit(code)
 
 
-if len(sys.argv) < 3:
-    print("usage: tmux_start JOB PROGRAM [ARG...]", file=sys.stderr)
-    sys.exit(2)
-job = sys.argv[1]
+args, kind = sys.argv[1:], "job"
+if args[:1] == ["--kind"]:
+    kind, args = (args[1:2] or [""])[0], args[2:]
+    if not re.fullmatch(r"[a-z]{1,16}", kind) or kind not in KINDS:
+        fail(2, f"unknown --kind {kind!r}; known: {', '.join(KINDS)}")
+if len(args) < 2:
+    fail(2, "usage: tmux_start [--kind agent] JOB PROGRAM [ARG...]")
+job = args[0]
 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", job):
     fail(2, f"bad job name {job!r} (letters, digits, _ and - only)")
-argv = shlex.split(sys.argv[2]) if len(sys.argv) == 3 else sys.argv[2:]
+argv = shlex.split(args[1]) if len(args) == 2 else args[1:]
 operators = sorted({token for token in argv if token in SHELL_OPERATORS})
 if not argv or operators or os.path.basename(argv[0]) in SHELLS:
     fail(
@@ -104,7 +110,7 @@ if made.returncode != 0:
 window = made.stdout.strip()
 steps = [
     ["set-option", "-w", "-t", window, "remain-on-exit", "on"],
-    ["set-option", "-w", "-t", window, "@grim_kind", "job"],
+    ["set-option", "-w", "-t", window, "@grim_kind", kind],
     ["set-option", "-w", "-t", window, "@grim_job", job],
     ["set-option", "-w", "-t", window, "@grim_started", str(int(time.time()))],
     ["pipe-pane", "-t", window, f"cat >> {shlex.quote(str(log_path))}"],
@@ -402,7 +408,7 @@ TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
     (
         "tmux_start",
         "start a long-lived job (server, watcher, build, REPL) as a tmux window that "
-        "outlives the run: tmux_start JOB PROGRAM [ARG...] — no shell",
+        "outlives the run: tmux_start [--kind agent] JOB PROGRAM [ARG...] — no shell",
         TMUX_START,
     ),
     (
