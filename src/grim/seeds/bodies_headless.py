@@ -22,7 +22,8 @@ def powers(text, agents):
     for agent in agents:
         flags = stated.get(agent) if isinstance(stated, dict) else None
         if not isinstance(flags, list) or not all(isinstance(flag, str) for flag in flags):
-            fail(2, f"powers must be stated: --exec-args '{{\"{agent}\": [\"--flag\", ...]}}'")
+            fail(2, f"powers must be stated: --exec-args '{{\"{agent}\": [\"--flag\", ...]}}' "
+                 "(documented defaults: grim/seeds/delegates.toml)")
     assert isinstance(stated, dict), "every agent's powers were checked above"
     return stated
 
@@ -55,7 +56,9 @@ It keeps its own deadline: TERM to the child's process group, KILL 2 s later.
 When the CLI reports success it writes result.md (claude's result field,
 codex's -o file) and runs agent_done JOB, the only judge of DONE (exit 0).
 Any other end is written to status.json in agent_done's shape (TIMEOUT,
-FAILED), exit 3; stdout.txt and stderr.txt stay in <run_dir>/JOB.
+AUTH, CONTEXT, FAILED, INVALID_RESULT), exit 3; stdout.txt and stderr.txt
+stay in <run_dir>/JOB. meta.json: exit, wall_s, cost_usd and tokens (null
+when the CLI does not report them), brief_bytes.
 Usage: agent_exec --exec-args JSON AGENT JOB DIR DEADLINE_EPOCH
   JSON states the delegate's powers, e.g. '{"claude": ["--tools", "Read"]}'.
 Ref: https://docs.python.org/3/library/subprocess.html#subprocess.Popen"""
@@ -74,6 +77,9 @@ from pathlib import Path
 NAME, AGENTS = "agent_exec", ("claude", "codex")
 MAX_STDOUT_BYTES = 1 << 20  # 1 MiB: the most of a delegate's stdout that is read
 GRACE_S = 2.0  # after TERM, how long the group gets before KILL
+TAIL_BYTES = 8192  # how much of stderr/stdout's end the failure hints are read from
+AUTH_HINTS = ("login", "authenticate", "api key", "401")
+CONTEXT_HINTS = ("context length", "prompt is too long")
 '''
     + _SHARED
     + r'''
@@ -107,18 +113,46 @@ def run(argv, cwd, job_dir, seconds):
     return code
 
 
-def answer_of(agent, stdout, last_path):
-    """claude: the result field of its one JSON object; codex: its -o file."""
+def as_dict(text):
+    """A JSON object, or {} for anything else: CLI output is read defensively."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def parsed(agent, stdout, last_path):
+    """(answer, is_error, cost_usd, usage). claude: one JSON object with result,
+    is_error, total_cost_usd, usage. codex: the -o file, and usage from the last
+    JSONL event that carries one (top level or one level down). Missing: None."""
     assert agent in AGENTS, "two output shapes are known"
+    data = as_dict(stdout)
+    answer, errored, cost, usage = (data.get(k) for k in ("result", "is_error", "total_cost_usd",
+                                                          "usage"))
     if agent == "codex":
         answer = last_path.read_text() if last_path.is_file() else None
-    else:
-        try:
-            data = json.loads(stdout)
-        except ValueError:
-            data = {}
-        answer = data.get("result") if isinstance(data, dict) else None
-    return answer if isinstance(answer, str) and answer.strip() else None
+        for event in map(as_dict, stdout.splitlines()):
+            nested = [event, *event.values()]
+            usage = next((v["usage"] for v in nested if isinstance(v, dict)
+                          and isinstance(v.get("usage"), dict)), usage)
+    answer = answer if isinstance(answer, str) and answer.strip() else None
+    assert answer is None or answer.strip(), "an answer is never blank"
+    return answer, errored, cost, usage if isinstance(usage, dict) else {}
+
+
+def classify(code, errored, text, done_code):
+    """The plan's order: TIMEOUT, AUTH, CONTEXT, FAILED, INVALID_RESULT (done_code
+    None: no answer; 1: agent_done refused it). DONE is never decided here."""
+    assert done_code != 0, "agent_done passed it: that is DONE, not ours to name"
+    low, failed = text.lower(), code != 0 or errored is True
+    if code is None:
+        return "TIMEOUT"
+    if failed and any(hint in low for hint in AUTH_HINTS):
+        return "AUTH"
+    if failed and any(hint in low for hint in CONTEXT_HINTS):
+        return "CONTEXT"
+    return "FAILED" if failed or done_code not in (None, 1) else "INVALID_RESULT"
 
 
 args = sys.argv[1:]
@@ -136,24 +170,34 @@ job_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "ru
 if not (job_dir / "brief.md").is_file():
     fail(2, f"no brief at {job_dir / 'brief.md'} (agent_ask writes it)")
 last_path = job_dir / "last-message.md"
-for stale in ("result.md", "status.json", last_path.name):  # an answer here must be THIS run's
+for stale in ("result.md", "status.json", "meta.json", last_path.name):  # THIS run's only
     (job_dir / stale).unlink(missing_ok=True)
 argv = [program, "-p", "--output-format", "json", *exec_args]
 if agent == "codex":
     argv = [program, "exec", "--json", "-o", str(last_path), *exec_args, "-"]
 until = time.strftime("%H:%M:%S", time.localtime(int(deadline)))
 print(f"agent_exec: {agent} on {job} until {until}", flush=True)
+started = time.monotonic()
 code = run(argv, folder, job_dir, int(deadline) - time.time())
 with (job_dir / "stdout.txt").open("rb") as handle:
-    answer = answer_of(agent, handle.read(MAX_STDOUT_BYTES).decode("utf-8", "replace"), last_path)
-if code == 0 and answer:  # the CLI says it succeeded; agent_done alone decides DONE
+    stdout = handle.read(MAX_STDOUT_BYTES).decode("utf-8", "replace")
+answer, errored, cost, usage = parsed(agent, stdout, last_path)
+meta = {"agent": agent, "exit": code, "wall_s": round(time.monotonic() - started, 1),
+        "cost_usd": cost, "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "brief_bytes": (job_dir / "brief.md").stat().st_size}
+write_atomic(job_dir / "meta.json", json.dumps(meta) + "\n")
+done_code = None
+if code == 0 and errored is not True and answer:  # success: agent_done alone decides DONE
     write_atomic(job_dir / "result.md", answer)
     done = subprocess.run(["grim", "run", "agent_done", "--", job], capture_output=True, text=True)
     print(done.stdout + done.stderr, end="")
     if done.returncode == 0:
         sys.exit(0)
+    done_code = done.returncode
+stderr = (job_dir / "stderr.txt").read_bytes()[-TAIL_BYTES:].decode("utf-8", "replace")
+state = classify(code, errored, stderr + stdout[-TAIL_BYTES:], done_code)
 # agent_done's keys (job, state, stamped_at), plus what tells this end apart.
-state = "TIMEOUT" if code is None else "FAILED"
 status = {"job": job, "state": state, "stamped_at": int(time.time()), "agent": agent,
           "exit_code": code}
 write_atomic(job_dir / "status.json", json.dumps(status) + "\n")

@@ -30,7 +30,8 @@ Headless delegates: `agent_exec --exec-args JSON AGENT JOB DIR DEADLINE`
 `<run_dir>/JOB/brief.md` with powers stated in its argv (never read from
 config), and hands a good answer to `agent_done`; any other end (TIMEOUT:
 TERM to the child's process group, KILL 2 s later; FAILED) is written to
-`status.json` in agent_done's shape, exit 3.
+`status.json` in agent_done's shape, exit 3. AUTH, CONTEXT, FAILED and
+INVALID_RESULT are told apart there; `meta.json` holds cost and tokens.
 The third is the browser driver (docs/features/06-browser.md):
 `web_open` (python, `bodies_web.py`) runs one long-lived Chrome as tmux
 job `chrome` on its own profile and opens tabs; `web_read`, `web_eval`,
@@ -83,6 +84,12 @@ symbols.
   takes no argument for them, and nothing in a brief can change them.
   Start-up dialogs are answered from a fixed per-agent table; a login
   screen is never answered — it fails loudly for a human.
+- A headless delegate's powers are stated on every call or it does not run:
+  `--exec-args JSON` (`{"claude": [...], "codex": [...]}`), never read from
+  config; missing → exit 2 "powers must be stated". `delegates.toml` documents
+  the least powers that work for read-only research (nothing reads it): claude
+  `--tools Read,Glob,Grep --max-budget-usd 1.00` (`-p` denies unlisted tools);
+  codex `--sandbox read-only --skip-git-repo-check --ephemeral`.
 - The browser seeds drive only grim's own Chrome: profile
   `$GRIM_CHROME_DIR` (default `~/.grimoire/chrome`; a daily Chrome profile
   is refused), DevTools on `127.0.0.1:$GRIM_CHROME_PORT` (default 9222),

@@ -38,15 +38,20 @@ import json, os, pathlib, subprocess, sys, time
 mode, brief = os.environ.get("FAKE_MODE", "valid"), sys.stdin.read()
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write(json.dumps({"argv": sys.argv[1:], "brief": brief, "pgid": os.getpgrp()}) + "\n")
-if mode == "boom":
-    sys.exit("something broke")
+if mode in ("boom", "login", "context"):
+    hint = {"login": "please login", "context": "prompt is too long"}.get(mode, "")
+    sys.exit("something broke " + hint)
 if mode == "sleep":  # a grandchild in the same group, then outlive the deadline
     subprocess.Popen(["sleep", "60"])
     time.sleep(60)
+canned = {"prose": "Just prose, no headings. " * 12, "blank": " "}
+answer = canned.get(mode, os.environ["FAKE_ANSWER"])
+usage = {"input_tokens": 9, "output_tokens": 4}
 if sys.argv[1] == "exec":
-    pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(os.environ["FAKE_ANSWER"])
+    pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(answer)
+    print(json.dumps({"type": "turn.completed", "usage": usage}))
 else:
-    print(json.dumps({"result": os.environ["FAKE_ANSWER"]}))
+    print(json.dumps({"result": answer, "total_cost_usd": 0.0123, "usage": usage}))
 """
 
 
@@ -109,6 +114,9 @@ def test_agent_exec_hands_a_good_answer_to_agent_done_and_is_done(
     if agent == "codex":
         want = ["exec", "--json", "-o", str(job_dir / "last-message.md"), *_POWERS, "-"]
     assert _log(tmp_path)[0]["argv"] == want
+    meta = json.loads((job_dir / "meta.json").read_text())
+    cost = None if agent == "codex" else 0.0123  # codex reports tokens, never a price
+    assert (meta["cost_usd"], meta["input_tokens"], meta["output_tokens"]) == (cost, 9, 4)
 
 
 def test_agent_exec_past_the_deadline_is_timeout_and_its_process_group_is_gone(
@@ -143,6 +151,27 @@ def test_agent_exec_names_a_failed_cli_and_keeps_its_output(
     assert (status["state"], status["exit_code"], status["agent"]) == ("FAILED", 1, "claude")
     assert "something broke" in (job_dir / "stderr.txt").read_text()
     assert not (job_dir / "result.md").exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("login", "AUTH"),
+        ("context", "CONTEXT"),
+        ("prose", "INVALID_RESULT"),
+        ("blank", "INVALID_RESULT"),
+    ],
+    ids=str,
+)
+def test_agent_exec_names_how_a_delegate_failed(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: tuple[str, str]
+) -> None:
+    mode, state = case
+    monkeypatch.setenv("FAKE_MODE", mode)
+    exit_code, job_dir = _exec(tmp_path)
+    assert exit_code == _FAILED_EXIT_CODE
+    assert json.loads((job_dir / "status.json").read_text())["state"] == state
+    assert json.loads((job_dir / "meta.json").read_text())["brief_bytes"] == len("Say 42.\n")
 
 
 @pytest.mark.parametrize("stated", ["{}", "not json", '{"claude": "--tools"}', '{"codex": []}'])

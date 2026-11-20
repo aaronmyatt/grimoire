@@ -1,0 +1,13 @@
+# Documentation only: the least powers that work for read-only headless research.
+# Nothing reads this file. Powers are passed on every call, never taken from config:
+#   grim run agent_ask -- --exec-args '<JSON below>' both ID DIR < brief.md
+# Ref: https://code.claude.com/docs/en/cli-reference
+#      https://developers.openai.com/codex/cli/reference
+
+[exec_args]
+# claude -p denies tools unless they are listed, so read access is stated;
+# --max-budget-usd stops the run at that spend.
+claude = ["--tools", "Read,Glob,Grep", "--max-budget-usd", "1.00"]
+# codex exec errors outside a git repo without --skip-git-repo-check;
+# --ephemeral keeps no session on disk.
+codex = ["--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral"]
