@@ -38,7 +38,7 @@
 ### 3.5 Wait on a signal
 
 - [ ] **Story:** As the agent, I want to wait without sleeping, so I spend no turns on polling.
-  - [ ] The signal arrives
+  - [x] The signal arrives
   - [x] The signal came first
   - [ ] The signal never comes
 
@@ -100,7 +100,7 @@
   - [ ] The signal arrives
   - [ ] The signal came first
   - [x] A job signals when it ends
-  - [ ] The signal never comes
+  - [x] The signal never comes
   - [ ] A wait cannot outlive the time budget
 
 ### 3. tmux is the dashboard — [03-dashboard.md](features/03-dashboard.md)
