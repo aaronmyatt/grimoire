@@ -182,8 +182,10 @@ TMUX_WAIT = r'''"""tmux_wait — block until a named signal arrives, instead of 
 started by tmux_start sends grim-JOB when it ends (a tmux hook does it, with
 no help from the job); anything else can signal with
 `tmux wait-for -S NAME`. A signal sent before the wait is remembered, and a
-job that is already dead counts as signalled. Give `run` a timeout at least
-as long as SECONDS, or the run is killed first.
+job already over counts as signalled. Exit 3, not 0, when the job behind
+grim-JOB ended badly: a non-zero exit, a delegate with no answer agent_done
+checked, or a tmux_stop before it finished. Give `run` a timeout at least as
+long as SECONDS, or the run is killed first.
 Usage: tmux_wait SIGNAL [SECONDS]
 $GRIM_TMUX_SOCKET names a private tmux server.
 Ref: https://man.openbsd.org/tmux#wait-for"""
@@ -195,9 +197,9 @@ import sys
 import time
 
 SESSION = "grim"
-ROW = "#{@grim_job}\t#{pane_dead}\t#{pane_dead_status}"
+ROW = "#{@grim_job}\t#{pane_dead}\t#{pane_dead_status}\t#{@grim_kind}\t#{@grim_done}"
 DEFAULT_S, MAX_S = 60.0, 3600.0
-TIMEOUT_EXIT_CODE = 124
+TIMEOUT_EXIT_CODE, BAD_END_EXIT_CODE = 124, 3
 socket = os.environ.get("GRIM_TMUX_SOCKET")
 TMUX = ["tmux", "-L", socket] if socket else ["tmux"]
 
@@ -207,18 +209,27 @@ def tmux(*args, timeout=None):
     return subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)
 
 
-def job_state(signal):
-    """How the job behind a grim-JOB signal is doing; '' if there is no such job."""
+def job_row(signal):
+    """(job, [dead, exit, kind, done stamp]) behind a grim-JOB signal; None if no such job."""
     listed = tmux("list-windows", "-t", f"={SESSION}", "-F", ROW)
     rows = [line.split("\t") for line in listed.stdout.splitlines()]
-    jobs = {row[0]: row[1:] for row in rows if len(row) == 3 and row[0]}
+    jobs = {row[0]: row[1:] for row in rows if len(row) == 5 and row[0]}
     job = signal.removeprefix("grim-")
     if not signal.startswith("grim-") or job not in jobs:
-        return ""
-    dead, status = jobs[job]
-    if dead == "1":
-        return f"job {job!r} is dead (exit {status})"
-    return f"job {job!r} is still running"
+        return None
+    return job, jobs[job]
+
+
+def verdict(found):
+    """(exit code, what to say) once the job is over; None while it still runs."""
+    job, (dead, status, kind, stamp) = found
+    if stamp:  # agent_done passed the delegate's answer
+        return 0, f"job {job!r} is done (agent_done checked its answer)"
+    if dead != "1":
+        return None
+    if kind == "agent":
+        return BAD_END_EXIT_CODE, f"job {job!r} EXITED (exit {status}): no result"
+    return (0 if status == "0" else BAD_END_EXIT_CODE), f"job {job!r} is dead (exit {status})"
 
 
 def usage():
@@ -239,22 +250,32 @@ if shutil.which("tmux") is None:
     print("tmux_wait: program not found on PATH: 'tmux'", file=sys.stderr)
     sys.exit(127)
 
-state = job_state(signal)
-if "is dead" in state:
-    print(f"{state}: nothing to wait for")
-    sys.exit(0)
+before = job_row(signal)
+over = verdict(before) if before else None
+if over:
+    print(f"{over[1]}: nothing to wait for")
+    sys.exit(over[0])
 started = time.monotonic()
 try:
     waited = tmux("wait-for", signal, timeout=seconds)
 except subprocess.TimeoutExpired:
-    note = job_state(signal) or "nothing has sent it"
+    found = job_row(signal)
+    note = f"job {found[0]!r} is still running" if found else "nothing has sent it"
     print(f"tmux_wait: no signal {signal!r} after {seconds:g}s — {note}", file=sys.stderr)
     sys.exit(TIMEOUT_EXIT_CODE)
 if waited.returncode != 0:
     print(f"tmux_wait: tmux wait-for failed: {waited.stderr.strip()}", file=sys.stderr)
     sys.exit(1)
 print(f"signal {signal!r} arrived after {time.monotonic() - started:.1f}s")
-print(job_state(signal) or "no job is tied to this signal")
+after = job_row(signal)
+if before and not after:
+    print(f"job {before[0]!r} was stopped before it finished")
+    sys.exit(BAD_END_EXIT_CODE)
+over = verdict(after) if after else None
+if over:
+    print(over[1])
+    sys.exit(over[0])
+print(f"job {after[0]!r} is still running" if after else "no job is tied to this signal")
 '''
 
 TMUX_SEND = r'''"""tmux_send — type one line into a live job, then press Enter: answer a
@@ -410,7 +431,7 @@ TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
     (
         "tmux_wait",
         "block until a signal arrives instead of polling: tmux_wait grim-JOB [SECONDS] "
-        "returns when that job ends (exit 124 if it has not)",
+        "returns when that job ends (exit 3 if it ended badly, 124 if it has not)",
         TMUX_WAIT,
     ),
 )

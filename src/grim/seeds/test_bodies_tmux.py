@@ -27,6 +27,7 @@ _TAKEN_EXIT_CODE = 1
 _JOB_EXIT_CODE = 3
 _NOT_FOUND_EXIT_CODE = 127
 _WAIT_TIMEOUT_EXIT_CODE = 124
+_BAD_END_EXIT_CODE = 3  # tmux_wait: the job ended badly
 _SLEEPER = ["sleep", "600"]  # outlives the test; the fixture's kill-server ends it
 # A job that blocks until the test signals "go" on its tmux server (argv[1] is
 # the socket), then exits 3 — so its death is a step in the test, never a race.
@@ -155,7 +156,7 @@ def test_a_job_signals_when_it_ends_with_no_help_from_its_command(socket: str) -
     assert _tmux(socket, "wait-for", "-S", "go").returncode == 0
     assert _tmux(socket, "wait-for", "grim-build").returncode == 0  # the hook's own signal
     result = _run("tmux_wait", ["grim-build"])  # the signal is spent; the job is plainly dead
-    assert result.exit_code == 0, result.stderr
+    assert result.exit_code == _BAD_END_EXIT_CODE, result.stderr  # it exited 3: not a success
     assert result.stdout == f"job 'build' is dead (exit {_JOB_EXIT_CODE}): nothing to wait for\n"
 
 
@@ -166,8 +167,20 @@ def test_tmux_wait_wakes_when_the_job_ends(socket: str) -> None:
         blocked = pool.submit(_run, "tmux_wait", ["grim-build", "15"])
         assert _tmux(socket, "wait-for", "-S", "go").returncode == 0
         result = blocked.result(timeout=_TIMEOUT_S)
-    assert result.exit_code == 0, result.stderr
+    assert result.exit_code == _BAD_END_EXIT_CODE, result.stderr
     assert f"job 'build' is dead (exit {_JOB_EXIT_CODE})" in result.stdout
+
+
+@pytest.mark.parametrize("case", [(0, 0), (7, _BAD_END_EXIT_CODE)], ids=["exit-0", "exit-7"])
+def test_tmux_wait_exits_0_only_when_a_plain_job_exits_0(
+    socket: str, case: tuple[int, int]
+) -> None:
+    code, expected = case
+    assert _run("tmux_start", ["keep", *_SLEEPER]).exit_code == 0  # holds the server up
+    assert _run("tmux_start", ["build", sys.executable, "-c", f"exit({code})"]).exit_code == 0
+    result = _run("tmux_wait", ["grim-build", "15"])
+    assert result.exit_code == expected, result.stderr
+    assert f"job 'build' is dead (exit {code})" in result.stdout
 
 
 def test_tmux_wait_times_out_with_124_and_says_the_job_still_runs(socket: str) -> None:
@@ -332,10 +345,15 @@ def test_tmux_stop_wakes_a_blocked_tmux_wait(socket: str) -> None:
         assert _run("tmux_start", [job, *_SLEEPER]).exit_code == 0
     with ThreadPoolExecutor(max_workers=1) as pool:
         blocked = pool.submit(_run, "tmux_wait", ["grim-api", "15"])
+        # Stop only once the waiter is blocked, so it saw the job first. Bounded,
+        # no sleep: each pgrep call is the pause. Ref: https://man.openbsd.org/pgrep
+        blocked_on = ["pgrep", "-f", f"tmux -L {socket} wait-for grim-api"]
+        assert any(subprocess.run(blocked_on).returncode == 0 for _ in range(2000))
         assert _run("tmux_stop", ["api"]).exit_code == 0
         result = blocked.result(timeout=_TIMEOUT_S)
-    assert result.exit_code == 0, result.stderr
+    assert result.exit_code == _BAD_END_EXIT_CODE, result.stderr
     assert result.stdout.startswith("signal 'grim-api' arrived after ")
+    assert result.stdout.endswith("job 'api' was stopped before it finished\n")
 
 
 def test_tmux_stop_wrong_calls_and_unknown_jobs_fail_loudly(socket: str) -> None:

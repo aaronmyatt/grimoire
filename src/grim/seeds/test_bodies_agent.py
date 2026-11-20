@@ -101,6 +101,8 @@ while True:
                 show("thinking hard (esc to interrupt)")
             elif reply == "exit":
                 sys.exit(3)
+            elif reply == "quit":  # exit 0 with no answer: the 2026-11-19 race
+                sys.exit(0)
             elif reply == "echo":
                 show("you said: " + text)
             else:
@@ -360,15 +362,27 @@ def test_agent_start_without_the_agent_program_exits_127_naming_it(
 # Characterization tests (delegation-plan step 1b): they pin today's
 # behavior — including the "success that isn't" the plan removes — so the
 # behavior change in steps 1d and 1e shows up as a diff of these asserts.
-def test_today_tmux_wait_on_a_dead_delegate_exits_0(
+def test_tmux_wait_on_a_delegate_that_quit_0_without_an_answer_exits_3(
     socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("FAKE_REPLY", "exit")  # the delegate quits with no result.md
+    monkeypatch.setenv("FAKE_REPLY", "quit")  # exit 0, no result.md: the race's false success
     _start(socket, tmp_path)
     assert _tmux(socket, "wait-for", "grim-fix-auth").returncode == 0  # the job-end hook
     waited = _run("tmux_wait", ["grim-fix-auth", "5"])
-    assert waited.exit_code == 0, waited.stderr
-    assert waited.stdout == "job 'fix-auth' is dead (exit 3): nothing to wait for\n"
+    assert waited.exit_code == _NO_ANSWER_EXIT_CODE, waited.stderr
+    assert waited.stdout == "job 'fix-auth' EXITED (exit 0): no result: nothing to wait for\n"
+
+
+def test_a_second_tmux_wait_on_a_checked_delegate_returns_at_once(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_REPLY", "done")
+    _start(socket, tmp_path)
+    assert _tmux(socket, "wait-for", "grim-fix-auth").returncode == 0  # this waiter eats the wake
+    for _ in range(2):  # the signal is spent, and the delegate is still alive: the stamp answers
+        waited = _run("tmux_wait", ["grim-fix-auth", "5"])
+        assert waited.exit_code == 0, waited.stderr
+        assert waited.stdout.startswith("job 'fix-auth' is done (agent_done checked its answer)")
 
 
 def test_agent_read_calls_a_result_agent_done_never_passed_unchecked(
