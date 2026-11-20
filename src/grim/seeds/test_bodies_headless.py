@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -23,21 +24,29 @@ _TIMEOUT_S = 30.0
 _USAGE_EXIT_CODE = 2
 _FAILED_EXIT_CODE = 3
 _POWERS = ["--tools", "Read"]
+_MAX_POLLS = 5000  # a bounded busy-wait on pgrep; each poll takes milliseconds
 _ANSWER = (  # an answer agent_done passes: the five headings and a numbered claim
     "## Verdict\nThe answer is 42.\n\n## Answer\n"
     + "It was computed, then checked. " * 4
     + "\n\n## Claims\n1. 6 x 7 = 42 — evidence: `python -c 'print(6*7)'` → 42\n\n"
     "## Confidence\nhigh — arithmetic\n\n## Open\nnothing\n"
 )
-# The fake delegate: logs its argv and stdin, then acts out $FAKE_MODE.
+# The fake claude/codex: logs its argv, stdin and process group, then acts out
+# $FAKE_MODE. codex is told apart by its first argument, "exec".
 _FAKE = r"""
-import json, os, sys
+import json, os, pathlib, subprocess, sys, time
 mode, brief = os.environ.get("FAKE_MODE", "valid"), sys.stdin.read()
 with open(os.environ["FAKE_LOG"], "a") as log:
     log.write(json.dumps({"argv": sys.argv[1:], "brief": brief, "pgid": os.getpgrp()}) + "\n")
 if mode == "boom":
     sys.exit("something broke")
-print(json.dumps({"result": os.environ["FAKE_ANSWER"]}))
+if mode == "sleep":  # a grandchild in the same group, then outlive the deadline
+    subprocess.Popen(["sleep", "60"])
+    time.sleep(60)
+if sys.argv[1] == "exec":
+    pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(os.environ["FAKE_ANSWER"])
+else:
+    print(json.dumps({"result": os.environ["FAKE_ANSWER"]}))
 """
 
 
@@ -75,27 +84,53 @@ def socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[str]:
 
 
 def _exec(tmp_path: Path, agent: str = "claude", brief: str = "Say 42.\n") -> tuple[int, Path]:
-    """agent_exec AGENT q-AGENT beside the agent-kind window agent_done looks up.
-    Returns (its exit code, the job dir)."""
-    job = f"q-{agent}"
+    """agent_exec AGENT q-AGENT beside the agent-kind window agent_done looks up, with
+    a deadline 20 s out (2 s for FAKE_MODE=sleep). Returns (its exit code, the job dir)."""
+    job, seconds = f"q-{agent}", 2 if os.environ.get("FAKE_MODE") == "sleep" else 20
     (tmp_path / "run" / job).mkdir(parents=True)
     (tmp_path / "run" / job / "brief.md").write_text(brief)
     assert _run("tmux_start", ["--kind", "agent", job, "sleep", "600"]).exit_code == 0
-    stated = json.dumps({agent: _POWERS})
-    ran = _run("agent_exec", ["--exec-args", stated, agent, job, str(tmp_path)])
+    stated, deadline = json.dumps({agent: _POWERS}), str(int(time.time()) + seconds)
+    ran = _run("agent_exec", ["--exec-args", stated, agent, job, str(tmp_path), deadline])
     return ran.exit_code, tmp_path / "run" / job
 
 
+@pytest.mark.parametrize("agent", ["claude", "codex"])
 def test_agent_exec_hands_a_good_answer_to_agent_done_and_is_done(
-    socket: str, tmp_path: Path
+    socket: str, tmp_path: Path, agent: str
 ) -> None:
-    exit_code, job_dir = _exec(tmp_path)
+    exit_code, job_dir = _exec(tmp_path, agent)
     assert exit_code == 0
     status = json.loads((job_dir / "status.json").read_text())
     assert status["state"] == "DONE"
     assert status["sha256"] == hashlib.sha256(_ANSWER.encode()).hexdigest()  # agent_done's
     assert (job_dir / "result.md").read_text() == _ANSWER
-    assert _log(tmp_path)[0]["argv"] == ["-p", "--output-format", "json", *_POWERS]
+    want = ["-p", "--output-format", "json", *_POWERS]
+    if agent == "codex":
+        want = ["exec", "--json", "-o", str(job_dir / "last-message.md"), *_POWERS, "-"]
+    assert _log(tmp_path)[0]["argv"] == want
+
+
+def test_agent_exec_past_the_deadline_is_timeout_and_its_process_group_is_gone(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_MODE", "sleep")
+    exit_code, job_dir = _exec(tmp_path)
+    assert exit_code == _FAILED_EXIT_CODE
+    assert json.loads((job_dir / "status.json").read_text())["state"] == "TIMEOUT"
+    group = str(_log(tmp_path)[0]["pgid"])
+    gone = (
+        subprocess.run(["pgrep", "-g", group], capture_output=True).returncode
+        for _ in range(_MAX_POLLS)
+    )
+    assert any(code == 1 for code in gone), f"process group {group} still has members"
+
+
+def test_a_long_brief_arrives_whole_on_the_delegates_stdin(socket: str, tmp_path: Path) -> None:
+    brief = "".join(f"line {n}: keep every word, even 'quotes' and $VARS\n" for n in range(40))
+    exit_code, _job_dir = _exec(tmp_path, brief=brief)
+    assert exit_code == 0
+    assert _log(tmp_path)[0]["brief"] == brief
 
 
 def test_agent_exec_names_a_failed_cli_and_keeps_its_output(
@@ -116,14 +151,15 @@ def test_a_delegate_without_stated_powers_exits_2_and_never_starts(
 ) -> None:
     (tmp_path / "run" / "q").mkdir(parents=True)
     (tmp_path / "run" / "q" / "brief.md").write_text("Say 42.\n")
-    result = _run("agent_exec", ["--exec-args", stated, "claude", "q", str(tmp_path)])
+    argv = ["--exec-args", stated, "claude", "q", str(tmp_path), str(int(time.time()) + 60)]
+    result = _run("agent_exec", argv)
     assert result.exit_code == _USAGE_EXIT_CODE
     assert "powers must be stated" in result.stderr
     assert not (tmp_path / "fake.log").exists()
 
 
 @pytest.mark.parametrize(
-    "argv", [[], ["claude", "j", "/tmp"], ["--exec-args", "{}", "pi", "j", "/tmp"]]
+    "argv", [[], ["claude", "j", "/tmp", "1"], ["--exec-args", "{}", "pi", "j", "/tmp", "1"]]
 )
 def test_agent_exec_wrong_calls_exit_2(socket: str, argv: list[str]) -> None:
     result = _run("agent_exec", argv)
