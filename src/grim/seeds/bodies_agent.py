@@ -13,9 +13,9 @@ from __future__ import annotations
 AGENT_START = r'''"""agent_start — hand a task to another coding agent (claude, codex or pi)
 running as a TUI in its own tmux window, in session "grim". The brief is read
 from stdin and pasted in as ONE message once the TUI is ready, with a done
-contract added: the delegate writes its answer to <run_dir>/JOB/result.md and
-then signals grim-JOB. Known start-up dialogs are answered first (claude's
-folder trust: yes; codex's update offer: skip).
+contract added: the delegate writes its answer to <run_dir>/JOB/result.md, then
+runs agent_done JOB, which checks it and signals grim-JOB. Known start-up
+dialogs are answered first (claude's folder trust: yes; codex's update offer: skip).
 Usage: agent_start AGENT JOB DIR   (brief on stdin)
 Then: tmux_wait grim-JOB SECONDS blocks until it is done · agent_read JOB gets
 the answer, or its state · tmux_send JOB TEXT follows up · tmux_stop JOB ends it.
@@ -134,11 +134,12 @@ run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "ru
 job_dir = run_dir / job
 job_dir.mkdir(parents=True, exist_ok=True)
 result_path, log_path = job_dir / "result.md", run_dir / f"{job}.log"
-result_path.unlink(missing_ok=True)  # a result here must be THIS delegate's
+for stale in (result_path, job_dir / "status.json"):  # a result here must be THIS delegate's
+    stale.unlink(missing_ok=True)
 log_path.write_text("")
 message = (
-    f"{brief}\n\nWhen done, write your answer to {result_path}\n"
-    f"then run: tmux wait-for -S grim-{job}"
+    f"{brief}\n\nWrite your answer to {result_path} with the headings above, then run: "
+    f"grim run agent_done -- {job} (it checks the file; fix what it reports)."
 )
 (job_dir / "brief.md").write_text(message + "\n")
 
@@ -223,15 +224,19 @@ print(f"next: tmux_wait grim-{job} SECONDS, then agent_read {job}")
 
 AGENT_READ = r'''"""agent_read — where a delegate stands, and what it has to say. The first
 line names its state:
-  DONE         it wrote result.md: that text follows (its answer, not a screen scrape)
+  DONE         agent_done passed result.md, unchanged since: its text follows (kept after stop)
+  UNCHECKED    result.md is there but agent_done has not passed it: screen follows
   WORKING      still busy: the tail of its screen follows
   NEEDS-INPUT  it is asking something it cannot get past: the question follows.
                Answer with tmux_send JOB TEXT, or a human types in its pane
   IDLE         it stopped with no result.md: its screen follows
-  EXITED       its program ended with no result.md: the tail of its log follows
+  EXITED       its program ended with no checked result: the tail of its log follows
+Exit 0 for DONE and the live states; 3 for EXITED (it ended without a checked answer).
 Usage: agent_read JOB [LINES]   (LINES of screen or log to show: default 40, cap 400)
 $GRIM_TMUX_SOCKET names a private tmux server.
 Ref: https://man.openbsd.org/tmux#capture-pane"""
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -240,7 +245,8 @@ import sys
 from pathlib import Path
 
 SESSION = "grim"
-ROW = "#{@grim_job}\t#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{@grim_kind}"
+ROW = "#{@grim_job}\t#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{@grim_kind}\t#{@grim_done}"
+NO_ANSWER_EXIT_CODE = 3  # the delegate ended without an answer agent_done passed
 DEFAULT_LINES, MAX_LINES = 40, 400
 WORKING_MARKS = ("esc to interrupt", "ctrl+c to interrupt", "esc to stop")
 ASKING_MARKS = (
@@ -262,6 +268,18 @@ def fail(code, message):
     sys.exit(code)
 
 
+def checked(result_path, status_path):
+    """True when agent_done passed result.md and the file is unchanged since."""
+    try:
+        record = json.loads(status_path.read_text())
+        digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    except (OSError, ValueError):
+        return False
+    return isinstance(record, dict) and record.get("state") == "DONE" and (
+        record.get("sha256") == digest
+    )
+
+
 if not 2 <= len(sys.argv) <= 3 or not all(number.isdigit() for number in sys.argv[2:]):
     fail(2, USAGE)
 job = sys.argv[1]
@@ -272,15 +290,15 @@ if shutil.which("tmux") is None:
     fail(127, "program not found on PATH: 'tmux'")
 listed = tmux("list-windows", "-t", f"={SESSION}", "-F", ROW)
 rows = [line.split("\t") for line in listed.stdout.splitlines()]
-jobs = {row[0]: row[1:] for row in rows if len(row) == 5 and row[0]}
-if job not in jobs:
-    fail(1, f"no such job: {job!r} (jobs: {', '.join(sorted(jobs)) or 'none'})")
-window, dead, status, kind = jobs[job]
-if kind != "agent":
-    fail(1, f"job {job!r} is not a delegate (kind {kind!r}); read it with tmux_read {job}")
+jobs = {row[0]: row[1:] for row in rows if len(row) == 6 and row[0]}
 run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
 result_path = run_dir / job / "result.md"
-if result_path.is_file():
+if job not in jobs and not checked(result_path, run_dir / job / "status.json"):
+    fail(1, f"no such job: {job!r} (jobs: {', '.join(sorted(jobs)) or 'none'})")
+window, dead, status, kind, stamp = jobs.get(job, ["", "1", "", "agent", ""])
+if kind != "agent":
+    fail(1, f"job {job!r} is not a delegate (kind {kind!r}); read it with tmux_read {job}")
+if checked(result_path, run_dir / job / "status.json"):  # also after tmux_stop closed it
     print(f"[agent_read] {job}: DONE · result.md follows ({result_path})")
     print(result_path.read_text(errors="replace").rstrip("\n"))
     sys.exit(0)
@@ -299,9 +317,14 @@ else:
         state = "NEEDS-INPUT"
     else:
         state = "IDLE"
+note = "no result.md"
+if result_path.is_file():  # written, but agent_done never passed it as it stands now
+    state = state if dead == "1" else "UNCHECKED"
+    note = "result changed after agent_done" if stamp else "result UNCHECKED"
 lines = [line.rstrip() for line in text.splitlines() if line.strip()][-count:]
-print(f"[agent_read] {job}: {state} · no result.md · {source} follows")
+print(f"[agent_read] {job}: {state} · {note} · {source} follows")
 print("\n".join(lines))
+sys.exit(NO_ANSWER_EXIT_CODE if dead == "1" else 0)
 '''
 
 # (name, description, body) rows, as in bodies_tmux.py.

@@ -153,3 +153,7 @@ mechanically.
   check and the stale-wake clearing, because the job name is fixed and it
   checks the job's state itself. Three copies is the point at which the
   constitution says to flag again and still not act — the human decides.
+- **tmux prelude and job lookup, one more copy each.** `agent_done`
+  (`seeds/bodies_delegate.py`) spells the `tmux [-L $GRIM_TMUX_SOCKET]` call
+  line, `SESSION = "grim"` and the `@grim_job` tag lookup again (entries
+  above). A seed is one standalone script: flagged, not extracted.

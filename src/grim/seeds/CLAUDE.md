@@ -20,8 +20,9 @@ polling; every job signals `grim-JOB` when it ends.
 The second driver is the delegate one, in `bodies_agent.py`
 (docs/features/04-delegates.md): `agent_start` runs claude, codex or pi as
 a TUI in a tmux job tagged `@grim_kind=agent` and pastes it a brief that
-ends with the done contract (write `<run_dir>/JOB/result.md`, then signal
-`grim-JOB`); `agent_read` gives the answer or the delegate's state. Wait,
+ends with the done contract (write `<run_dir>/JOB/result.md`, then run
+`agent_done JOB` from `bodies_delegate.py`: it checks the file, writes `status.json`,
+stamps `@grim_done`, signals `grim-JOB`); `agent_read` says DONE only for a checked answer. Wait,
 list, follow-up and stop are borrowed from the tmux seeds.
 The third is the browser driver (docs/features/06-browser.md):
 `web_open` (python, `bodies_web.py`) runs one long-lived Chrome as tmux

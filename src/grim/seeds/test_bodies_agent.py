@@ -6,6 +6,7 @@ server. No real agent is started and no model is called."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -26,6 +27,14 @@ _USAGE_EXIT_CODE = 2
 _FAILED_EXIT_CODE = 1
 _NOT_FOUND_EXIT_CODE = 127
 _ARGS = ["--permission-mode", "plan"]  # what the test config grants every delegate
+_NO_ANSWER_EXIT_CODE = 3
+_TIMED_OUT_EXIT_CODE = 124
+_ANSWER = (  # an answer agent_done passes: the five headings and a numbered claim
+    "## Verdict\nThe answer is 42.\n\n## Answer\n"
+    + "It was computed, then checked. " * 4
+    + "\n\n## Claims\n1. 6 x 7 = 42 — evidence: `python -c 'print(6*7)'` → 42\n\n"
+    "## Confidence\nhigh — arithmetic\n\n## Open\nnothing\n"
+)
 
 # The fake delegate. It logs its argv and cwd, optionally shows claude's trust
 # dialog (default choice "No, exit"), then takes messages: one per Enter that
@@ -79,10 +88,11 @@ while True:
             message, data, seen = b"", data[1:], seen + 1
             note(message=text)
             reply = os.environ.get("FAKE_REPLY", "idle") if seen == 1 else "echo"
-            if reply == "done":
-                pathlib.Path(re.search(r"write your answer to (\S+)", text).group(1)).write_text(
-                    "the answer is 42\n")
-                subprocess.run(re.search(r"run: (tmux wait-for -S \S+)", text).group(1).split())
+            if reply == "done":  # follow the done contract: write, then agent_done
+                answer = re.search(r"(?i)write your answer to (\S+)", text).group(1)
+                pathlib.Path(answer).write_text(os.environ["FAKE_ANSWER"])
+                job = re.search(r"run: grim run agent_done -- (\S+)", text).group(1)
+                subprocess.run([sys.executable, os.environ["FAKE_DONE_SCRIPT"], job], check=True)
                 show("all done")
             elif reply == "ask":
                 show("Do you want to delete the repo?")
@@ -128,12 +138,17 @@ def socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[str]:
         for agent in ("claude", "codex", "pi")
     ]
     config.write_text("\n".join(tables))
+    # The pane has no seeded grim db, so the fake runs the agent_done body itself.
+    done_script = tmp_path / "agent_done.py"
+    done_script.write_text(next(s.body for s in SEEDS if s.name == "agent_done"))
     name = f"grimtest-{tmp_path.parent.name}-{tmp_path.name}"
     for key, value in {
         "GRIM_TMUX_SOCKET": name,
         "GRIM_RUN_DIR": str(tmp_path / "run"),
         "GRIM_DELEGATES_CONFIG": str(config),
         "FAKE_AGENT_LOG": str(tmp_path / "fake.log"),
+        "FAKE_ANSWER": _ANSWER,
+        "FAKE_DONE_SCRIPT": str(done_script),
     }.items():
         monkeypatch.setenv(key, value)
     (tmp_path / "work").mkdir()
@@ -161,8 +176,9 @@ def test_agent_start_runs_any_agent_and_pastes_the_brief_as_one_message(
     assert started == {"argv": _ARGS, "cwd": str((tmp_path / "work").resolve())}
     assert len(messages) == 1  # 40 lines, one message: the brief arrived whole
     contract = (
-        f"When done, write your answer to {tmp_path / 'run' / 'fix-auth' / 'result.md'}\n"
-        "then run: tmux wait-for -S grim-fix-auth"
+        f"Write your answer to {tmp_path / 'run' / 'fix-auth' / 'result.md'} with the headings "
+        "above, then run: grim run agent_done -- fix-auth (it checks the file; fix what it "
+        "reports)."
     )
     assert messages[0]["message"] == f"{brief}\n\n{contract}"
     assert (tmp_path / "run" / "fix-auth" / "brief.md").read_text() == f"{brief}\n\n{contract}\n"
@@ -244,7 +260,7 @@ def test_agent_read_gives_the_text_of_result_md_once_the_delegate_signals(
     assert result.exit_code == 0, result.stderr
     status, *answer = result.stdout.splitlines()
     assert status.startswith("[agent_read] fix-auth: DONE · result.md follows")
-    assert answer == ["the answer is 42"]  # the file, not the screen ("all done")
+    assert answer == _ANSWER.rstrip("\n").splitlines()  # the file, not the screen
 
 
 @pytest.mark.parametrize(
@@ -275,9 +291,10 @@ def test_agent_read_reports_a_delegate_that_exited_without_a_result(
     monkeypatch.setenv("FAKE_REPLY", "exit")
     _start(socket, tmp_path)
     assert _tmux(socket, "wait-for", "grim-fix-auth").returncode == 0  # sent by the job-end hook
-    status = _run("agent_read", ["fix-auth"]).stdout.splitlines()[0]
+    result = _run("agent_read", ["fix-auth"])
+    assert result.exit_code == _NO_ANSWER_EXIT_CODE  # ended without an answer: not a success
     assert (
-        status
+        result.stdout.splitlines()[0]
         == "[agent_read] fix-auth: EXITED (exit 3) · no result.md · the tail of its log follows"
     )
 
@@ -306,11 +323,16 @@ def test_a_delegate_is_listed_and_stopped_like_any_job_and_keeps_its_result(
     assert _run("tmux_list", []).stdout.startswith("fix-auth  agent  alive  age ")
     assert _run("tmux_stop", ["fix-auth"]).exit_code == 0
     assert _run("tmux_list", []).stdout == "no jobs\n"
-    assert (tmp_path / "run" / "fix-auth" / "result.md").read_text() == "the answer is 42\n"
+    assert (tmp_path / "run" / "fix-auth" / "result.md").read_text() == _ANSWER
+    kept = _run("agent_read", ["fix-auth"])  # the window is gone; the checked answer is not
+    assert kept.exit_code == 0, kept.stderr
+    assert kept.stdout.startswith("[agent_read] fix-auth: DONE · result.md follows")
 
 
 def test_agent_read_refuses_a_plain_job_and_wrong_calls(socket: str) -> None:
     assert _run("tmux_start", ["api", "sleep", "600"]).exit_code == 0
+    assert "is not a delegate" in _run("agent_done", ["api"]).stderr
+    assert _run("agent_done", []).exit_code == _USAGE_EXIT_CODE
     plain = _run("agent_read", ["api"])
     assert plain.exit_code == _FAILED_EXIT_CODE
     assert "job 'api' is not a delegate (kind 'job'); read it with tmux_read api" in plain.stderr
@@ -349,7 +371,7 @@ def test_today_tmux_wait_on_a_dead_delegate_exits_0(
     assert waited.stdout == "job 'fix-auth' is dead (exit 3): nothing to wait for\n"
 
 
-def test_today_agent_read_calls_an_empty_result_md_done(
+def test_agent_read_calls_a_result_agent_done_never_passed_unchecked(
     socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FAKE_REPLY", "idle")
@@ -357,8 +379,10 @@ def test_today_agent_read_calls_an_empty_result_md_done(
     assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
     (tmp_path / "run" / "fix-auth" / "result.md").write_text("")  # empty: no answer at all
     result = _run("agent_read", ["fix-auth"])
-    assert result.exit_code == 0, result.stderr
-    assert result.stdout.splitlines()[0].startswith("[agent_read] fix-auth: DONE")
+    assert result.exit_code == 0, result.stderr  # still live: it may yet run agent_done
+    assert result.stdout.splitlines()[0] == (
+        "[agent_read] fix-auth: UNCHECKED · result UNCHECKED · its screen follows"
+    )
 
 
 def test_agent_start_skips_codex_update_offer_even_when_its_labels_run_together(
@@ -372,3 +396,37 @@ def test_agent_start_skips_codex_update_offer_even_when_its_labels_run_together(
     assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
     messages = _entries(tmp_path)[1:]
     assert [str(entry["message"]).splitlines()[0] for entry in messages] == ["do it"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [("", "result.md is 0 bytes"), (_ANSWER.replace("## Open", "## Todo"), "heading: ## Open")],
+    ids=["empty", "missing-heading"],
+)
+def test_agent_done_refuses_a_bad_answer_and_marks_nothing(
+    socket: str, tmp_path: Path, case: tuple[str, str]
+) -> None:
+    text, named = case
+    _start(socket, tmp_path)
+    (tmp_path / "run" / "fix-auth" / "result.md").write_text(text)
+    result = _run("agent_done", ["fix-auth"])
+    assert result.exit_code == _FAILED_EXIT_CODE
+    assert named in result.stderr
+    assert not (tmp_path / "run" / "fix-auth" / "status.json").exists()
+    assert _run("tmux_wait", ["grim-fix-auth", "0.3"]).exit_code == _TIMED_OUT_EXIT_CODE
+
+
+def test_agent_done_stamps_a_good_answer_with_its_hash_then_signals(
+    socket: str, tmp_path: Path
+) -> None:
+    _start(socket, tmp_path)
+    result_path = tmp_path / "run" / "fix-auth" / "result.md"
+    result_path.write_text(_ANSWER)
+    done = _run("agent_done", ["fix-auth"])
+    assert done.exit_code == 0, done.stderr
+    record = json.loads((result_path.parent / "status.json").read_text())
+    digest = hashlib.sha256(result_path.read_bytes()).hexdigest()
+    assert (record["state"], record["sha256"]) == ("DONE", digest)
+    shown = _tmux(socket, "show-options", "-w", "-v", "-t", "=grim:fix-auth", "@grim_done")
+    assert shown.stdout.strip() == f"{record['stamped_at']}:{record['bytes']}:{digest[:8]}"
+    assert _tmux(socket, "wait-for", "grim-fix-auth").returncode == 0  # the wake is there
