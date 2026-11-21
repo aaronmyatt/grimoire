@@ -37,3 +37,4 @@ def _no_ambient_session_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Hermetic suite: drop any agent-session env inherited from the caller."""
     for name in _SESSION_ENV:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GRIM_JOBS_LINE", "0")  # no live tmux `jobs:` line in an observation

@@ -103,7 +103,9 @@ agent:
     its output is logged to a file. Then run(name="tmux_list") shows your
     jobs, run(name="tmux_read") reads one, run(name="tmux_send") types into
     it, and run(name="tmux_stop") ends it. A one-shot task that simply
-    takes a while is fine as a normal run.
+    takes a while is fine as a normal run. An observation may end with a
+    `jobs:` line (NAME KIND STATE AGE, asked of tmux): it already answers
+    "what is running?", so answer that with no call.
 
     Never wait in the foreground: no sleep-then-check, and no search that
     walks / or ~ (it hits the run timeout and returns nothing). When

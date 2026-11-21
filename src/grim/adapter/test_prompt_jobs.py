@@ -163,6 +163,7 @@ def test_rendered_prompt_teaches_tmux_wait_and_never_the_retired_seeds(
 ) -> None:
     text, _ = rendered
     assert _NEVER_WAIT in text and _LONG_LIVED_WORK in text
+    assert 'it already answers "what is running?", so answer that with no call' in text
     for retired in ("run_bg", "list_bg", "stop_bg"):
         assert retired not in text, f"{retired} is retired; the rendered prompt never names it"
 

@@ -84,6 +84,7 @@ Common options:
       --continue       Warm-start from your library: frontload recently
                        valuable scripts into the task (GRIM_RECALL_LIMIT, ~10)
                        and reuse the last session's lineage. Off by default.
+      --no-jobs        Leave the `jobs:` line (what tmux runs) off observations.
   -l, --cost-limit N   Cost limit in USD; 0 disables.
   -o, --output PATH    Trajectory JSON (default: a fresh per-run file under
                        $GRIM_TRAJ_DIR or ~/.grimoire/trajectories).
@@ -523,6 +524,9 @@ def main(argv: list[str] | None = None) -> int:
     # lineage reuse (both applied in _launch).
     print_opts, raw = parse_print_options(raw)
     continue_on, raw = _take_flag(raw, "--continue")
+    no_jobs, raw = _take_flag(raw, "--no-jobs")
+    if no_jobs:
+        os.environ["GRIM_JOBS_LINE"] = "0"  # read by GrimEnvironment.execute
 
     # Silence mini's import-time version/migration/config banner (guarded by
     # this env var in minisweagent/__init__.py); we print our own instead.
