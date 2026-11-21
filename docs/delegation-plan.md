@@ -457,7 +457,29 @@ agreed (6) · only-A (2): #4 headless removes dialogs … · #9 cap logs … · 
 
 ---
 
-## Status — Phase 1 built and verified (2026-11-19)
+## Status
+
+- **2026-11-20 — Phase 4 shipped** (`feat/teach-route`, merged as `604cfbd`).
+  The rendered system prompt now routes `agent_ask -> agent_wait -> agent_compare`
+  as the three-call delegation path and says tmux requests and routine system
+  requests are never delegated; `agent_start` is documented as attended pairing
+  only. Every observation carries a `jobs:` line (one `tmux list-windows -F`,
+  <=8 jobs/300 chars, never raises; `grim-agent --no-jobs` turns it off), so
+  "what is running" costs zero tool calls. Measured jobs-line cost on the real
+  server: p50 7.5 ms, p95 9.2 ms (budget <=15 ms). Goldens pin the rendered
+  prompt (jinja2 + StrictUndefined against a freshly `grim init`-ed library) and
+  an offline replay drives brief -> agent_ask -> agent_wait -> agent_compare
+  through `GrimEnvironment.execute` with a fake claude+codex on a private tmux
+  server. 797 tests green on the branch and on `main`; ruff + mypy clean.
+  Checked in as approved: the adapter's new subprocess call (the jobs line) is
+  the third sanctioned case in `src/grim/adapter/CLAUDE.md`.
+  Deliberately left open: §3.2 "Listing asks the surface" (needs a test that
+  traps file/DB reads), and the health of a suite started with
+  `GRIM_BASE_SEEDS` set in the caller's env (15 pre-existing failures; the
+  hermetic fixture should drop that variable too). The static fallback roster in
+  `grimoire.yaml` (only used when `grim_seeds` is undefined) still predates
+  agent_ask/agent_wait/agent_compare.
+ — Phase 1 built and verified (2026-11-19)
 
 - **2026-11-20 — Phase 3 shipped.** `agent_wait SECONDS JOB...` (MAX_JOBS 4, one
   `list-windows` + `status.json` per job, `Popen(tmux wait-for)` + `selectors.select`,
