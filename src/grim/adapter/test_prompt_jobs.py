@@ -6,6 +6,8 @@ Whitespace is normalised: the goldens pin the words, not the line breaks."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 from pathlib import Path
 
 import pytest
@@ -94,3 +96,67 @@ def test_prompt_teaches_the_browser_and_recipes() -> None:
     assert "leave ONE named python recipe" in template
     assert 'subprocess.run(["grim", "run", SEED, "--", *args])' in template
     assert "that is a direct seed call, or a scratch_ script" in template
+
+
+# --- the RENDERED prompt (Phase 4a) -----------------------------------------
+# Rendered the way mini renders it (jinja2 + StrictUndefined, minisweagent
+# agents/default.py), with the roster read from a freshly seeded library — the
+# same seeded_roster() GrimAgent stashes as grim_seeds — so these goldens pin
+# what the cheap model actually reads, not the raw template text.
+# Ref: https://jinja.palletsprojects.com/en/3.1.x/api/#undefined-types
+_DELEGATE_PARAGRAPH = (
+    "Hand a hard, separable task to another coding agent with "
+    'run(name="agent_start", args=["claude", "JOB", "/abs/dir"], stdin=BRIEF) (claude, '
+    "codex or pi: it runs as a TUI in its own tmux window). The brief must stand alone, "
+    "since the delegate knows nothing you know. It writes its answer to a result file and"
+    ' signals grim-JOB: wait with tmux_wait, then collect with run(name="agent_read", '
+    'args=["JOB"]). DONE carries the answer; NEEDS-INPUT or IDLE means read what it shows'
+    " and follow up with tmux_send. End it with tmux_stop once you have what you need."
+)
+_SURFACE_SEEDS = ("tmux_start", "tmux_list", "tmux_read", "tmux_send", "tmux_stop", "tmux_wait")
+
+
+@pytest.fixture
+def rendered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, list[str]]:
+    """(the rendered system prompt, whitespace-folded; the live roster's names)."""
+    jinja2 = pytest.importorskip("jinja2")
+    from grim import cli  # noqa: PLC0415 -- kernel entry, imported where it is used
+    from grim.adapter.agent import seeded_roster  # noqa: PLC0415
+
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    monkeypatch.delenv("GRIM_BASE_SEEDS", raising=False)  # ambient subset → full roster
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert cli.main(["init"]) == 0, "grim init seeds a throwaway library"
+    roster = seeded_roster()
+    assert roster, "a seeded library has a roster"
+    template = yaml.safe_load(GRIMOIRE_YAML.read_text())["agent"]["system_template"]
+    text = jinja2.Template(template, undefined=jinja2.StrictUndefined).render(
+        system="Darwin", release="25.0", version="v", machine="arm64",
+        grim_languages=["python"], grim_seeds=roster, grim_strong_matches=[],
+        grim_cwd="/abs/repo", grim_user_prompt="",
+    )  # fmt: skip
+    return " ".join(text.split()), [row["name"] for row in roster]
+
+
+def test_rendered_prompt_lists_every_live_seed_by_run_name(
+    rendered: tuple[str, list[str]],
+) -> None:
+    text, names = rendered
+    for name in names:
+        assert f"- run {name} … " in text, f"live seed {name} is in the rendered roster"
+    assert set(_SURFACE_SEEDS) <= set(names), "the tmux seeds are in the live library"
+    assert "A starter library already exists." in text and "<working_directory>" in text
+
+
+def test_rendered_prompt_pins_todays_delegate_paragraph(rendered: tuple[str, list[str]]) -> None:
+    text, _ = rendered
+    assert _DELEGATE_PARAGRAPH in text
+
+
+def test_rendered_prompt_teaches_tmux_wait_and_never_the_retired_seeds(
+    rendered: tuple[str, list[str]],
+) -> None:
+    text, _ = rendered
+    assert _NEVER_WAIT in text and _LONG_LIVED_WORK in text
+    for retired in ("run_bg", "list_bg", "stop_bg"):
+        assert retired not in text, f"{retired} is retired; the rendered prompt never names it"
