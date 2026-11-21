@@ -438,6 +438,8 @@ agreed (6) · only-A (2): #4 headless removes dialogs … · #9 cap logs … · 
   - removing the `tmux_send` paste settle (UNVERIFIED on real TUIs);
   - two writers fanned out into one checkout (S §1.7).
 
+- **Phase 5 — tmux latency is a product feature (done, 2026-11-19).** `run(name="tmux_list")`/`tmux_read`/`tmux_send`/`tmux_stop`/`tmux_start` are now fast enough to drive a live fleet: p99 list 55.1 ms, read 68.2 ms, send 72.8 ms, stop 63.2 ms, all under the 100 ms budget; `tmux_start` p99 144.6 ms is still over budget (11 tmux clients per start) and is the open item. Bounded `tmux_read` (4 MiB log tail + LINES/SKIP), a per-name non-blocking flock so a taken job name fails fast instead of spawning a second window, an argv-exact exec stub so a job's command line is never re-parsed by a shell, `run_dir_prune` for run-dir cleanup, and uv fingerprinting by stat. Four Feature 1 boxes ticked. §3.3 "Nothing is held open" is proven for the tmux seeds only, not the browser seeds.
+
 ## 8. Open questions for the human (each has a default; say "go" to take them all)
 
 1. **Headless delegate powers.** Recommended default, added to `~/.grimoire/config.toml` by the human:
