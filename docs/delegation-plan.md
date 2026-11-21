@@ -461,6 +461,16 @@ agreed (6) · only-A (2): #4 headless removes dialogs … · #9 cap logs … · 
 
 ## Status
 
+- **2026-11-21 — Phase 7 built** (`feat/attended-honest`, from `7073bfe`; unmerged).
+  | Slice | Commit | What landed |
+  |---|---|---|
+  | 7a | `0662428` | `agent_start` checks the brief landed: ≤10 captures 0.5 s apart after Enter (first one at once); a working mark, codex OSC 7501 `state=working` in the pane log, or the brief's first 40 chars. Else exit 1 `brief NOT taken`, never `started`. 60 lines. |
+  | 7d | `7603210` | The hermetic fixture also drops `GRIM_BASE_SEEDS`. `GRIM_MODEL`/`GRIM_SESSION*`/`GRIM_CALL_DEPTH` were already dropped by `3f889ec`. With a session's env + `GRIM_BASE_SEEDS`: 14 failed / 803 passed before, 818 passed after. 23 lines. |
+  | 7b | `27d61c6` | `04-delegates.md` teaches `agent_ask`/`agent_wait`/`agent_compare`/`agent_stats` and `agent_start`/`agent_read`/`agent_done`, argv and exit codes from the code. Checklist 13 → 50 ticked, each new tick naming its test (35 tests, 49 cases, all pass). Docs only. |
+  - Verification: `uv run pytest -q` 818 passed; `ruff check` clean.
+  - 7c (archive `claude_tmux`/`codex_tmux`) is human-gated: not done.
+  - `agent_read` NEEDS-INPUT exits 0, not 4. Real-TUI brief-landed check is UNVERIFIED.
+
 - **2026-11-20 — Phase 4 shipped** (`feat/teach-route`, merged as `604cfbd`).
   The rendered system prompt now routes `agent_ask -> agent_wait -> agent_compare`
   as the three-call delegation path and says tmux requests and routine system
