@@ -85,12 +85,12 @@
 - [ ] **Story:** As the agent, I want work that outlives one run, so servers and builds don't die at
       the timeout.
   - [ ] Start a job
-  - [ ] A job name is taken
-  - [ ] No shell in the command
+  - [x] A job name is taken
+  - [x] No shell in the command
   - [ ] List jobs with no registry file
-  - [ ] Read a job's screen
+  - [x] Read a job's screen
   - [ ] Type into a job
-  - [ ] A dead job keeps its story
+  - [x] A dead job keeps its story
   - [ ] Stop a job
   - [ ] The old background seeds retire
 
