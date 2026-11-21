@@ -13,9 +13,11 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from minisweagent.environments.local import LocalEnvironment
@@ -32,6 +34,15 @@ _ARGS_PREVIEW_LIMIT = 200
 _SESSION_MODEL_ENV = "GRIM_SESSION_MODEL"
 _SESSION_TASK_ENV = "GRIM_SESSION_TASK"
 _SESSION_TASK_EXPORT_CHARS = 500
+# The jobs line (docs/delegation-plan.md Phase 4c): after each observation one
+# fixed, read-only `tmux list-windows` says what runs, so "what is running?"
+# costs the model no call. `$GRIM_JOBS_LINE=0` (grim-agent --no-jobs) is off.
+# Ref: https://man7.org/linux/man-pages/man1/tmux.1.html#FORMATS
+JOBS_ENV = "GRIM_JOBS_LINE"
+_JOBS_MAX = 8
+_JOBS_LINE_MAX_CHARS = 300
+_JOBS_TIMEOUT_S = 2.0
+_JOBS_FIELDS = "@grim_job @grim_kind @grim_started pane_dead pane_dead_status @grim_done".split()
 
 
 def _tool_args_snippet(args: dict[str, Any]) -> str:
@@ -70,6 +81,7 @@ class GrimEnvironment(LocalEnvironment):
         # Start of this run's clock for $GRIM_TIME_BUDGET_S (deadline.py).
         # Ref: https://docs.python.org/3/library/time.html#time.monotonic
         self.started_s = time.monotonic()
+        self.jobs_runner: Callable[[], str] = tmux_jobs
         conn = db.connect()  # no `init` verb reaches the agent (D12) — ensure schema exists
         try:
             db.migrate(conn)
@@ -94,8 +106,13 @@ class GrimEnvironment(LocalEnvironment):
             # The span's returncode is what lets the log rank failing tools
             # without re-joining against the DB's execution rows.
             sp.update(returncode=output["returncode"])
+        if os.environ.get(JOBS_ENV) == "0":
             return output
-        raise AssertionError("unreachable: _execute always returns or raises")
+        with trace.span("jobs_line"):  # outside tool.*: tmux move timings stay clean
+            line = jobs_line(self.jobs_runner(), int(time.time()))
+        assert len(line) <= _JOBS_LINE_MAX_CHARS, "the jobs line is capped"
+        text = output["output"].rstrip("\n") + "\n" + line + "\n"
+        return {**output, "output": text} if line else output
 
     def _execute(
         self, tool: str, args: dict[str, Any], cwd: str, timeout: int | None
@@ -150,6 +167,42 @@ class GrimEnvironment(LocalEnvironment):
         self.session_task = task.strip()[:_SESSION_TASK_EXPORT_CHARS]
         assert len(self.session_task) <= _SESSION_TASK_EXPORT_CHARS, "task export is capped"
         assert self.session_model == self.session_model.strip(), "model is stripped"
+
+
+def tmux_jobs() -> str:
+    """tmux's stdout, or "" on any failure (no server or tmux, a hang): never raises.
+    The tmux seeds' prelude and job lookup, copied (ABSTRACTIONS.md).
+    Ref: https://docs.python.org/3/library/subprocess.html#subprocess.run"""
+    socket = os.environ.get("GRIM_TMUX_SOCKET")
+    argv = ["tmux", "-L", socket] if socket else ["tmux"]
+    argv += ["list-windows", "-t", "=grim", "-F", "\t".join("#{" + f + "}" for f in _JOBS_FIELDS)]
+    assert argv[0] == "tmux" and "-F" in argv, "a fixed tmux argv, nothing the model chose"
+    try:
+        done = subprocess.run(
+            argv, capture_output=True, text=True, timeout=_JOBS_TIMEOUT_S, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout if done.returncode == 0 else ""
+
+
+def jobs_line(listing: str, now_s: int) -> str:
+    """`jobs: NAME KIND STATE AGE · …` ("" for no tagged window), capped; STATE is
+    DONE once @grim_done is stamped, dead:EXIT once the pane died, else live."""
+    assert now_s >= 0, "now is a wall-clock epoch"
+    rows = [row.split("\t") for row in listing.splitlines()]
+    jobs = [row for row in rows if len(row) == len(_JOBS_FIELDS) and row[0]]
+    line, room = "jobs:", _JOBS_LINE_MAX_CHARS - len(" · +999 more")
+    for index, (name, kind, started, dead, status, done) in enumerate(jobs):
+        state = "DONE" if done else f"dead:{status}" if dead == "1" else "live"
+        age = f"{max(0, now_s - int(started)) // 60}m" if started.isdigit() else "?"
+        entry = f"{name} {kind or 'job'} {state} {age}"
+        if index == _JOBS_MAX or len(line) + len(entry) + 3 > room:
+            line += f" · +{len(jobs) - index} more"
+            break
+        line += (" " if index == 0 else " · ") + entry
+    assert len(line) <= _JOBS_LINE_MAX_CHARS, "the jobs line is capped"
+    return line if jobs else ""
 
 
 def _resolve_update_edit(args: dict[str, Any]) -> dict[str, Any]:

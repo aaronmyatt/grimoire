@@ -6,6 +6,14 @@ Whitespace is normalised: the goldens pin the words, not the line breaks."""
 
 from __future__ import annotations
 
+import contextlib
+import io
+import json
+import re
+import shutil
+import subprocess
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -94,3 +102,125 @@ def test_prompt_teaches_the_browser_and_recipes() -> None:
     assert "leave ONE named python recipe" in template
     assert 'subprocess.run(["grim", "run", SEED, "--", *args])' in template
     assert "that is a direct seed call, or a scratch_ script" in template
+
+
+# --- the RENDERED prompt (Phase 4a) -----------------------------------------
+# Rendered the way mini renders it (jinja2 + StrictUndefined, minisweagent
+# agents/default.py), with the roster read from a freshly seeded library — the
+# same seeded_roster() GrimAgent stashes as grim_seeds — so these goldens pin
+# what the cheap model actually reads, not the raw template text.
+# Ref: https://jinja.palletsprojects.com/en/3.1.x/api/#undefined-types
+_ROUTE_RULES = (
+    "Route every request before you act. Never delegate a tmux request or a routine system "
+    "lookup: listing, reading, typing into, starting, stopping or waiting on a job is one "
+    "direct tmux seed call, and ps, disk, launchctl, docker ps, git status, sqlite or a log "
+    "tail is one run_cmd or seed call. Never delegate a task find answers with a script "
+    "showing runs>=3 and success>=0.90 either: run that script."
+)
+_SURFACE_SEEDS = ("tmux_start", "tmux_list", "tmux_read", "tmux_send", "tmux_stop", "tmux_wait")
+
+
+@pytest.fixture
+def rendered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, list[str]]:
+    """(the rendered system prompt, whitespace-folded; the live roster's names)."""
+    jinja2 = pytest.importorskip("jinja2")
+    from grim import cli  # noqa: PLC0415 -- kernel entry, imported where it is used
+    from grim.adapter.agent import seeded_roster  # noqa: PLC0415
+
+    monkeypatch.setenv("GRIM_DB", str(tmp_path / "grimoire.db"))
+    monkeypatch.delenv("GRIM_BASE_SEEDS", raising=False)  # ambient subset → full roster
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert cli.main(["init"]) == 0, "grim init seeds a throwaway library"
+    roster = seeded_roster()
+    assert roster, "a seeded library has a roster"
+    template = yaml.safe_load(GRIMOIRE_YAML.read_text())["agent"]["system_template"]
+    text = jinja2.Template(template, undefined=jinja2.StrictUndefined).render(
+        system="Darwin", release="25.0", version="v", machine="arm64",
+        grim_languages=["python"], grim_seeds=roster, grim_strong_matches=[],
+        grim_cwd="/abs/repo", grim_user_prompt="",
+    )  # fmt: skip
+    return " ".join(text.split()), [row["name"] for row in roster]
+
+
+def test_rendered_prompt_lists_every_live_seed_by_run_name(
+    rendered: tuple[str, list[str]],
+) -> None:
+    text, names = rendered
+    for name in names:
+        assert f"- run {name} … " in text, f"live seed {name} is in the rendered roster"
+    assert set(_SURFACE_SEEDS) <= set(names), "the tmux seeds are in the live library"
+    assert "A starter library already exists." in text and "<working_directory>" in text
+
+
+def test_rendered_prompt_routes_tmux_itself(rendered: tuple[str, list[str]]) -> None:
+    text, _ = rendered
+    assert _ROUTE_RULES in text and "agent_start is attended pairing only, never your" in text
+    assert "Delegating is exactly three calls" in text and "Ask both only for read-only" in text
+
+
+def test_rendered_prompt_teaches_tmux_wait_and_never_the_retired_seeds(
+    rendered: tuple[str, list[str]],
+) -> None:
+    text, _ = rendered
+    assert _NEVER_WAIT in text and _LONG_LIVED_WORK in text
+    assert 'it already answers "what is running?", so answer that with no call' in text
+    for retired in ("run_bg", "list_bg", "stop_bg"):
+        assert retired not in text, f"{retired} is retired; the rendered prompt never names it"
+
+
+# --- offline replay of the three-call loop (Phase 4b) -----------------------
+# Three fake agents: this test plays the cheap model, replaying the calls the
+# rendered prompt teaches verbatim through GrimEnvironment, and one fake binary
+# plays claude and codex (told apart by codex's first argument, "exec").
+_CALL = re.compile(r'run\(name="(agent_\w+)", args=(\[[^\]]*\])(, stdin=BRIEF)?')
+_ANSWER = (  # passes agent_done: five headings and one numbered claim
+    "## Verdict\nThe answer is 42.\n\n## Answer\n" + "It was computed, then checked. " * 4
+    + "\n\n## Claims\n1. 6 x 7 = 42 — evidence: `python -c 'print(6*7)'` → 42\n\n"
+    "## Confidence\nhigh — arithmetic\n\n## Open\nnothing\n"
+)  # fmt: skip
+_FAKE = """import json, os, pathlib, sys
+answer = os.environ["FAKE_ANSWER"]
+if sys.argv[1] == "exec":
+    pathlib.Path(sys.argv[sys.argv.index("-o") + 1]).write_text(answer)
+print(json.dumps({"result": answer, "total_cost_usd": 0.01}))  # codex's JSONL ignores it
+"""
+
+
+@pytest.fixture
+def delegates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """A private tmux server, a run dir, and the fake for both delegates."""
+    if shutil.which("tmux") is None:
+        pytest.skip("the delegation seeds drive tmux")
+    name, fake = f"grimtest-{tmp_path.parent.name}-{tmp_path.name}", tmp_path / "fake-agent"
+    fake.write_text(f"#!{sys.executable}\n{_FAKE}")
+    fake.chmod(0o755)
+    config = tmp_path / "config.toml"
+    config.write_text("".join(f'[delegates.{a}]\nbin = "{fake}"\n' for a in ("claude", "codex")))
+    env = {"GRIM_TMUX_SOCKET": name, "GRIM_RUN_DIR": str(tmp_path / "run")}
+    env |= {"GRIM_DELEGATES_CONFIG": str(config), "FAKE_ANSWER": _ANSWER}
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    yield
+    subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True, check=False)
+
+
+def test_replay_brief_ask_wait_compare_as_the_prompt_teaches(
+    rendered: tuple[str, list[str]], delegates: None, tmp_path: Path
+) -> None:
+    from grim.adapter.environment import GrimEnvironment  # noqa: PLC0415 -- needs mini
+
+    text, _ = rendered
+    calls = _CALL.findall(text)
+    assert [c[0] for c in calls[:3]] == ["agent_ask", "agent_wait", "agent_compare"]
+    powers = text[text.index('{"claude": ["--tools"') :].split("}.")[0] + "}"
+    env, outputs = GrimEnvironment(cwd=str(tmp_path)), []
+    for name, raw, takes_brief in calls[:3]:
+        args = json.loads(raw.replace("POWERS", json.dumps(powers)))
+        args = [str(tmp_path) if a == "/abs/repo" else "30" if a == "1200" else a for a in args]
+        action = {"name": name, "args": args, "timeout": 60}
+        if takes_brief:
+            action["stdin"] = "# Task\nWhat is 6 x 7? Read nothing.\n"
+        outputs.append(env.execute({"tool": "run", "args": action}))
+    assert [o["returncode"] for o in outputs] == [0, 0, 0], outputs
+    packet = outputs[2]["output"]
+    assert "AGREE" in packet and "-claude DONE" in packet and "-codex DONE" in packet, packet

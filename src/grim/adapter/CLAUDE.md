@@ -244,6 +244,10 @@ D6 revised → native tool-calling).
   `tmux has-session`, then replaces the process with the tmux client. It
   runs in `launcher.main` before init and before the first turn, never
   from an action, and executes nothing the model chose.
+  Third case, approved with docs/delegation-plan.md Phase 4c: after each
+  observation `execute` appends `jobs_line(tmux_jobs())` — one fixed, read-only
+  `tmux list-windows -t =grim` (≤8 jobs, ≤300 chars, "" on any error, never
+  raises; `$GRIM_JOBS_LINE=0` / `grim-agent --no-jobs` turns it off).
 - `-p`/`--output-format`/`--continue` are the human launcher's flags only:
   `parse_print_options`/`_take_flag` strip them from argv before dispatch, so
   the model's argv (and the six-verb contract, D12) is never touched.

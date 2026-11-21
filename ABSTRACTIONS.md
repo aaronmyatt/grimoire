@@ -171,3 +171,6 @@ mechanically.
 - **Answer parsing and the DONE sha check, third copies.** `agent_compare`
   (`seeds/bodies_compare.py`) splits result.md by the five headings as
   `agent_done` does and re-checks status.json's sha as `agent_read`/`agent_wait` do.
+- **tmux prelude and job lookup, one more copy each.** `adapter/environment.py`
+  (`tmux_jobs`, `jobs_line`) spells the `tmux [-L $GRIM_TMUX_SOCKET]` call, `=grim` and
+  the `@grim_job`/`@grim_done` row again for the jobs line. Other slice: flagged, not shared.

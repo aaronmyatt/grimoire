@@ -111,7 +111,7 @@
   - [ ] A headless run has no window
   - [ ] See it all
   - [ ] Take over a pane
-  - [ ] The prompt teaches surfaces
+  - [x] The prompt teaches surfaces
 
 ### 4. Delegate to another agent — [04-delegates.md](features/04-delegates.md)
 
