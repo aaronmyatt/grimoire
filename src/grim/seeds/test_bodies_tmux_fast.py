@@ -153,3 +153,23 @@ def test_tmux_start_passes_unicode_dashes_and_semicolons_exactly(
     argv = ["-x", "süß", "a b", "x;y", "end;", "--"]
     assert _run("tmux_start", ["exact", str(script), *argv]).exit_code == 0
     assert json.loads(_log_of(tmp_path, socket, "exact")) == argv
+
+
+def test_no_tmux_seed_leaves_a_process_of_its_own_behind(socket: str) -> None:
+    # surfaces.md §3.3 "Nothing is held open": after each move, the only tmux
+    # process for this socket is the server; the job belongs to the surface.
+    moves = [
+        ("tmux_start", ["api", "cat"]),
+        ("tmux_list", []),
+        ("tmux_read", ["api"]),
+        ("tmux_send", ["api", "hi"]),
+        ("tmux_start", ["two", "true"]),
+        ("tmux_wait", ["grim-two", "5"]),
+        ("tmux_stop", ["api"]),
+    ]
+    for name, argv in moves:
+        assert _run(name, argv).exit_code == 0, name
+        server = _tmux(socket, "display-message", "-p", "#{pid}").stdout.strip()
+        # Ref: https://man.openbsd.org/pgrep.1 (-f matches the full command line)
+        found = subprocess.run(["pgrep", "-f", f"tmux -L {socket}"], capture_output=True, text=True)
+        assert set(found.stdout.split()) == {server}, f"{name} left a tmux client running"
