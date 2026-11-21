@@ -33,6 +33,10 @@ surface.
   provenance — current repo, then global, then foreign/legacy scopes —
   before bm25, so cross-repo noise never outranks the working repo's own
   scripts.
+- `find` (plan 6b): an exact slug (or its spaced form) first; then name/description hits
+  above body-only ones, even across tiers (this beats the provenance rule above); then
+  provenance, bm25. Usage (`log1p(runs) * success_rate`) reorders plausible near-ties only.
+  Gate: the 30 labeled queries in `test_find.py`, >=27 in the top 3.
 - `write_script(..., enforce_language_gate=False)` bypasses only the
   env-derived writable-set check (for `grim init` seeding); the language
   must still exist in the runner catalog, and every other validation runs.

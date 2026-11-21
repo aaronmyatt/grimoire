@@ -299,7 +299,8 @@ HEADLESS_SEEDS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "agent_ask",
-        "ask claude, codex or both one question headless, each in its own tmux job: "
+        "ask codex, ask claude, or both one question headless (a review, a plan, a second "
+        "opinion), each delegate in its own tmux job: "
         "agent_ask --exec-args JSON AGENTS ID DIR [SECONDS] (brief on stdin)",
         AGENT_ASK,
     ),

@@ -435,18 +435,19 @@ print(f"stopped {SESSION}:{job} (it was {was})")
 TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
     (
         "tmux_start",
-        "start a long-lived job (server, watcher, build, REPL) as a tmux window that "
-        "outlives the run: tmux_start [--kind agent] JOB PROGRAM [ARG...] — no shell",
+        "start a long-lived job in the background (dev server, watcher, build, REPL) as a "
+        "tmux window that outlives the run: tmux_start [--kind agent] JOB PROGRAM [ARG...] — no shell",
         TMUX_START,
     ),
     (
         "tmux_list",
-        "list the jobs started by tmux_start: name, kind, alive or dead with exit code, age",
+        "what is running? list the jobs started by tmux_start: name, kind, alive or dead "
+        "with exit code, age",
         TMUX_LIST,
     ),
     (
         "tmux_read",
-        "read a job's output: its last lines from the live screen, or from its log with the "
+        "read or tail a job's output: its last lines from the live screen, or from its log with the "
         "exit code once it is dead: tmux_read JOB [LINES] [SKIP]",
         TMUX_READ,
     ),
@@ -458,14 +459,14 @@ TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "tmux_stop",
-        "stop a job started by tmux_start and free its name: tmux_stop JOB — closes its "
+        "stop or kill a job started by tmux_start and free its name: tmux_stop JOB — closes its "
         "tmux window, keeps its log",
         TMUX_STOP,
     ),
     (
         "tmux_wait",
-        "block until a signal arrives instead of polling: tmux_wait grim-JOB [SECONDS] "
-        "returns when that job ends (exit 3 if it ended badly, 124 if it has not)",
+        "wait for a job (a build, a server) to end — is it done? blocks on its signal, no "
+        "polling: tmux_wait grim-JOB [SECONDS] (exit 3 if it ended badly, 124 if it has not)",
         TMUX_WAIT,
     ),
 )

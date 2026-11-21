@@ -255,7 +255,8 @@ DELEGATE_SEEDS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "agent_wait",
-        "block once until every job named is over or SECONDS pass, no polling: "
+        "wait for delegates (claude, codex) to finish — is it done? blocks once until every "
+        "job named is over or SECONDS pass, no polling: "
         "agent_wait SECONDS JOB [JOB...] — 0 all DONE, 3 any failed, 124 still running",
         AGENT_WAIT,
     ),
