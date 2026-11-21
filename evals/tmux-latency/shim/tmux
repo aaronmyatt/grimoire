@@ -1,0 +1,5 @@
+#!/bin/sh
+# bench.py's counting shim: one byte to $GRIM_BENCH_COUNT per tmux client, then the real tmux.
+# Ref: https://pubs.opengroup.org/onlinepubs/9799919799/utilities/V3_chap02.html#exec
+printf x >> "$GRIM_BENCH_COUNT"
+exec "$GRIM_BENCH_REAL_TMUX" "$@"
