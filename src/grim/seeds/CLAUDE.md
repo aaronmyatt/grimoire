@@ -90,6 +90,9 @@ symbols.
   server, or on the private server `$GRIM_TMUX_SOCKET` names (tests always
   set it). A job's program is exec'd as argv, never through a shell; the
   one shell line is the seed's own fixed `cat >> LOG` for `pipe-pane`.
+  `tmux_start` hands tmux only a fixed `python -c` exec stub plus the job's
+  argv as base64 JSON, so tmux never re-parses it (a trailing `;`, a lone
+  path with a space); a sole token that is an executable file is never split.
   `tmux_start` holds a non-blocking `flock` on
   `<run_dir>/.tmux-start-<server>-<JOB>.lock` from its lookup to its last tag; a
   second start of that name meanwhile exits 1 "name is being started". The

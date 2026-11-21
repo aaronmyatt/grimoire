@@ -5,6 +5,8 @@ developer's own tmux is never touched; the fixture kills that server."""
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 import re
 import shutil
@@ -78,7 +80,9 @@ def test_tmux_start_opens_a_tagged_window_and_returns_at_once(socket: str, tmp_p
 def test_tmux_start_splits_a_single_command_string(socket: str) -> None:
     assert _run("tmux_start", ["api", "sleep 600"]).exit_code == 0
     started = _tmux(socket, "list-windows", "-t", "=grim", "-F", "#{pane_start_command}").stdout
-    assert started.split() == _SLEEPER
+    # The pane starts tmux_start's exec stub; its last argument is the job's argv
+    # as base64 JSON (phase 5d), checked here exactly instead of by whitespace.
+    assert json.loads(base64.b64decode(started.split()[-1])) == _SLEEPER
 
 
 def test_tmux_start_refuses_a_taken_job_name(socket: str) -> None:

@@ -4,10 +4,12 @@ both stay under 500 lines. Each test has a private tmux server and run dir."""
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -110,3 +112,44 @@ def test_a_start_of_a_name_being_started_exits_1_and_opens_nothing(
     assert result.stderr == "tmux_start: name is being started\n"
     assert _tmux(socket, "has-session", "-t", "=grim").returncode != 0
     assert _run("tmux_start", ["api", *_SLEEPER]).exit_code == 0  # the lock went with it
+
+
+def _log_of(tmp_path: Path, socket: str, job: str) -> str:
+    """The log of a job once it is dead. pipe-pane's `cat` can still be writing
+    when the pane-died signal lands, so the log is re-read until it has text or
+    the deadline passes (bounded; never a sleep)."""
+    assert _tmux(socket, "wait-for", f"grim-{job}").returncode == 0
+    log, deadline = tmp_path / "run" / f"{job}.log", time.monotonic() + _TIMEOUT_S
+    while not log.read_text() and time.monotonic() < deadline:
+        pass
+    return log.read_text().replace("\r", "")
+
+
+def test_tmux_start_keeps_a_trailing_semicolon_in_argv(socket: str, tmp_path: Path) -> None:
+    assert _run("tmux_start", ["semi", "/bin/echo", "literal;"]).exit_code == 0
+    assert _log_of(tmp_path, socket, "semi") == "literal;\n"
+
+
+def _argv_printer(folder: Path) -> Path:
+    """An executable that prints its own argv as JSON, in a dir with a space."""
+    folder.mkdir()
+    script = folder / "show argv"
+    script.write_text(f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+    script.chmod(0o755)
+    return script
+
+
+def test_tmux_start_runs_a_sole_path_with_a_space_unsplit(socket: str, tmp_path: Path) -> None:
+    script = _argv_printer(tmp_path / "with space")
+    result = _run("tmux_start", ["spaced", str(script)])
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(_log_of(tmp_path, socket, "spaced")) == []
+
+
+def test_tmux_start_passes_unicode_dashes_and_semicolons_exactly(
+    socket: str, tmp_path: Path
+) -> None:
+    script = _argv_printer(tmp_path / "with space")
+    argv = ["-x", "süß", "a b", "x;y", "end;", "--"]
+    assert _run("tmux_start", ["exact", str(script), *argv]).exit_code == 0
+    assert json.loads(_log_of(tmp_path, socket, "exact")) == argv

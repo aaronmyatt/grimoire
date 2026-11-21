@@ -26,7 +26,9 @@ block on that with tmux_wait grim-JOB instead of polling. Two starts of one
 name at once make one window: the other exits 1, "name is being started".
 $GRIM_TMUX_SOCKET names a private tmux server.
 Ref: https://man.openbsd.org/tmux#respawn-pane"""
+import base64
 import fcntl
+import json
 import os
 import re
 import shlex
@@ -40,6 +42,15 @@ SESSION = "grim"
 SHELL_OPERATORS = {"|", "||", "&", "&&", ";", ">", ">>", "<", "<<", "2>", "2>&1", "&>"}
 SHELLS = {"bash", "sh", "zsh", "dash", "fish", "ksh", "csh", "tcsh"}
 KINDS = ("job", "agent")  # @grim_kind values; agent_ask opens its delegates with agent
+# tmux re-parses respawn-pane's argv: an argument ending in ";" is cut there as a
+# command separator, and one lone argument runs under `sh -c`. So the job's argv
+# rides as base64 JSON into this fixed stub, which execs it unchanged.
+# Ref: https://docs.python.org/3/library/os.html#os.execvp
+EXEC_STUB = (
+    "import base64, json, os, sys\n"
+    "argv = json.loads(base64.b64decode(sys.argv[1]))\n"
+    "os.execvp(argv[0], argv)\n"
+)
 
 
 def tmux(*args, timeout=None):
@@ -64,7 +75,9 @@ if len(args) < 2:
 job = args[0]
 if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", job):
     fail(2, f"bad job name {job!r} (letters, digits, _ and - only)")
-argv = shlex.split(args[1]) if len(args) == 2 else args[1:]
+# A sole token that is an executable file is a path (spaces and all), never split.
+sole = len(args) == 2 and os.path.isfile(args[1]) and os.access(args[1], os.X_OK)
+argv = [args[1]] if sole else shlex.split(args[1]) if len(args) == 2 else args[1:]
 operators = sorted({token for token in argv if token in SHELL_OPERATORS})
 if not argv or operators or os.path.basename(argv[0]) in SHELLS:
     fail(
@@ -128,7 +141,8 @@ steps = [
     ["set-option", "-w", "-t", window, "@grim_started", str(int(time.time()))],
     ["pipe-pane", "-t", window, f"cat >> {shlex.quote(str(log_path))}"],
     ["set-hook", "-w", "-t", window, "pane-died", f"wait-for -S grim-{job}"],
-    ["respawn-pane", "-k", "-t", window, "-c", cwd, "--", *argv],
+    ["respawn-pane", "-k", "-t", window, "-c", cwd, "--", sys.executable, "-c", EXEC_STUB,
+     base64.b64encode(json.dumps(argv).encode()).decode()],
 ]
 for step in steps:
     done = tmux(*step)
