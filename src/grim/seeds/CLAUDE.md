@@ -44,6 +44,10 @@ Exit 0 all DONE, 3 any failed, 124 any still running (no client left behind).
 no model, state from `status.json` only, claims matched by word overlap,
 `path:line` evidence checked under `meta.json` `dir`, commands never run; one
 packet of at most 4096 bytes. Exit 0 both DONE, 3 one, 1 neither.
+`run_dir_prune [--keep-days N] [--max-mb M] [--yes]` (`bodies_prune.py`) frees
+the run dir: it deletes only `JOB.log` files and `JOB/` dirs older than N days
+(default 7) whose tmux window is gone, oldest first, stopping under M MB; without
+`--yes` it only lists. If tmux cannot be asked, it deletes nothing.
 The third is the browser driver (docs/features/06-browser.md):
 `web_open` (python, `bodies_web.py`) runs one long-lived Chrome as tmux
 job `chrome` on its own profile and opens tabs; `web_read`, `web_eval`,

@@ -12,6 +12,7 @@ from grim.seeds.bodies_compare import COMPARE_SEEDS
 from grim.seeds.bodies_delegate import DELEGATE_SEEDS
 from grim.seeds.bodies_exec import RUN_CMD, RUN_PY
 from grim.seeds.bodies_headless import HEADLESS_SEEDS
+from grim.seeds.bodies_prune import PRUNE_SEEDS
 from grim.seeds.bodies_tmux import TMUX_SEEDS
 from grim.seeds.bodies_web import WEB_SEEDS
 
@@ -420,5 +421,6 @@ SEEDS: list[SeedSpec] = [
     *(SeedSpec(name, "python", description, body) for name, description, body in DELEGATE_SEEDS),
     *(SeedSpec(name, "python", description, body) for name, description, body in HEADLESS_SEEDS),
     *(SeedSpec(name, "python", description, body) for name, description, body in COMPARE_SEEDS),
+    *(SeedSpec(name, "python", description, body) for name, description, body in PRUNE_SEEDS),
     *(SeedSpec(*row) for row in WEB_SEEDS),
 ]

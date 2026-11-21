@@ -174,3 +174,7 @@ mechanically.
 - **tmux prelude and job lookup, one more copy each.** `adapter/environment.py`
   (`tmux_jobs`, `jobs_line`) spells the `tmux [-L $GRIM_TMUX_SOCKET]` call, `=grim` and
   the `@grim_job`/`@grim_done` row again for the jobs line. Other slice: flagged, not shared.
+- **tmux prelude and job lookup, one more copy each.** `run_dir_prune`
+  (`seeds/bodies_prune.py`) spells the `tmux [-L $GRIM_TMUX_SOCKET]` call, `=grim`, the
+  `@grim_job` listing and `tmux_list`'s "no server" hints again, to keep any job that
+  still has a window. A seed is one standalone script: flagged, not extracted.
