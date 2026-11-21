@@ -44,6 +44,9 @@ Exit 0 all DONE, 3 any failed, 124 any still running (no client left behind).
 no model, state from `status.json` only, claims matched by word overlap,
 `path:line` evidence checked under `meta.json` `dir`, commands never run; one
 packet of at most 4096 bytes. Exit 0 both DONE, 3 one, 1 neither.
+`agent_stats [DAYS]` (same file; default 30, by `status.json` mtime) scores each agent from
+`status.json`/`meta.json`: asks, DONE rate, median wall and cost (no cost above 0 → `unknown`),
+failures per state; a job with no `status.json` is `no-status`, never a crash.
 `run_dir_prune [--keep-days N] [--max-mb M] [--yes]` (`bodies_prune.py`) frees
 the run dir: it deletes only `JOB.log` files and `JOB/` dirs older than N days
 (default 7) whose tmux window is gone, oldest first, stopping under M MB; without

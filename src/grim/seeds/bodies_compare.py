@@ -1,6 +1,6 @@
 """Seed body that arbitrates two delegates' answers mechanically, with no model
-(docs/delegation-plan.md, Phase 3b; packet shape in §5). Data, not code:
-bodies.py's SEEDS roster wires COMPARE_SEEDS in."""
+(docs/delegation-plan.md, Phase 3b; packet shape in §5), and agent_stats, the scoreboard
+of past asks (6c). Data, not code: bodies.py's SEEDS roster wires COMPARE_SEEDS in."""
 
 from __future__ import annotations
 
@@ -170,6 +170,83 @@ print(packet.decode())
 sys.exit({2: 0, 1: 3, 0: 1}[len(done)])
 '''
 
+
+AGENT_STATS = r'''"""agent_stats — which delegate to ask: per agent, from <run_dir>/*/status.json
+and meta.json ($GRIM_RUN_DIR or ~/.grimoire/run): asks, DONE rate, median wall time,
+median cost_usd ("unknown" unless one was above 0), counts per failure state (and
+"no-status", "bad-status": never a crash).
+Usage: agent_stats [DAYS]   (default 30; by status.json mtime, else the dir's)
+Ref: https://docs.python.org/3/library/statistics.html#statistics.median"""
+import argparse
+import itertools
+import json
+import os
+import statistics
+import time
+from collections import Counter, defaultdict
+from pathlib import Path
+
+DAY_S = 86400
+MAX_ENTRIES = 10_000  # run dir entries read at most; a bigger run dir is scored this far
+AGENTS = ("claude", "codex", "pi")  # a job named ID-AGENT with no recorded agent
+MARKERS = ("brief.md", "meta.json", "status.json", "result.md")  # a delegate's job dir
+RUN_DIR = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
+
+
+def load(path):
+    """(record, None), or (None, why): a missing or broken file is data, not a crash."""
+    try:
+        record = json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        return None, "no-status" if isinstance(error, FileNotFoundError) else "bad-status"
+    return (record, None) if isinstance(record, dict) else (None, "bad-status")
+
+
+def ask(job_dir):
+    """(agent, state, wall_s, cost_usd, mtime) of one job dir."""
+    status_path = job_dir / "status.json"
+    status, why = load(status_path)
+    meta = load(job_dir / "meta.json")[0] or {}
+    guess = job_dir.name.rsplit("-", 1)[-1]
+    agent = meta.get("agent") or (status or {}).get("agent") or (
+        guess if guess in AGENTS else "unknown")
+    state = str((status or {}).get("state") or why or "no-state")
+    mtime = (status_path if status_path.exists() else job_dir).stat().st_mtime
+    wall, cost = (meta.get(key) if type(meta.get(key)) in (int, float) else None  # bool is not
+                  for key in ("wall_s", "cost_usd"))
+    return str(agent), state, wall, cost if cost and cost > 0 else None, mtime
+
+
+parser = argparse.ArgumentParser(prog="agent_stats")
+parser.add_argument("days", nargs="?", type=float, default=30.0, metavar="DAYS",
+                    help="window in days, by status.json mtime (default: 30)")
+opts = parser.parse_args()
+if opts.days <= 0:
+    parser.error("DAYS is a number above 0")
+since, asks = time.time() - opts.days * DAY_S, defaultdict(list)
+entries = itertools.islice(RUN_DIR.iterdir(), MAX_ENTRIES) if RUN_DIR.is_dir() else ()
+for job_dir in entries:
+    if job_dir.is_dir() and any((job_dir / marker).exists() for marker in MARKERS):
+        agent, *row = ask(job_dir)
+        if row[-1] >= since:
+            asks[agent].append(row)
+total = sum(map(len, asks.values()))
+print(f"agent_stats: {total} asks in the last {opts.days:g} days in {RUN_DIR}")
+print(f"{'AGENT':<8} {'ASKS':>4} {'DONE':>4} {'DONE%':>5} {'WALL':>7}  {'COST':<14} FAILURES")
+for agent in sorted(asks):
+    rows = asks[agent]
+    done = sum(state == "DONE" for state, *_ in rows)
+    walls = [wall for _, wall, _, _ in rows if wall is not None]
+    costs = [cost for _, _, cost, _ in rows if cost is not None]
+    wall = divmod(int(statistics.median(walls)), 60) if walls else None
+    wall_text = f"{wall[0]}m{wall[1]:02d}s" if wall else "unknown"
+    cost_text = f"${statistics.median(costs):.4f} ({len(costs)})" if costs else "unknown"
+    failed = Counter(state for state, *_ in rows if state != "DONE")
+    failures = " ".join(f"{state}={n}" for state, n in sorted(failed.items())) or "-"
+    print(f"{agent:<8} {len(rows):>4} {done:>4} {100 * done // len(rows):>4}% {wall_text:>7}  "
+          f"{cost_text:<14} {failures}")
+'''
+
 # (name, description, body) rows, as in bodies_tmux.py.
 COMPARE_SEEDS: tuple[tuple[str, str, str], ...] = (
     (
@@ -177,5 +254,11 @@ COMPARE_SEEDS: tuple[tuple[str, str, str], ...] = (
         "compare two delegates' answers with no model: agent_compare JOB_A JOB_B prints one "
         "packet (<= 4 KiB): verdicts AGREE/DIFFER, agreed and only-A/only-B claims, evidence",
         AGENT_COMPARE,
+    ),
+    (
+        "agent_stats",
+        "which delegate to ask? score claude, codex and pi by past asks: agent_stats [DAYS] — "
+        "asks, DONE rate, median wall time and cost, failures, from <run_dir>/*/status.json",
+        AGENT_STATS,
     ),
 )

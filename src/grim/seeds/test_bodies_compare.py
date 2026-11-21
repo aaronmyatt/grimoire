@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -151,3 +153,58 @@ def test_agent_compare_wrong_calls_exit_2(argv: list[str]) -> None:
     result = _run(argv)
     assert result.exit_code == _USAGE_EXIT_CODE
     assert "agent_compare" in result.stderr
+
+
+# --- agent_stats (delegation plan 6c): the scoreboard of past asks ---------------------------
+_DAY_S, _USAGE_EXIT_CODE = 86400, 2
+
+
+def _stats(argv: list[str]) -> ExecutionResult:
+    body = next(s.body for s in SEEDS if s.name == "agent_stats")
+    request = ExecutionRequest(argv=argv, stdin=None, cwd=None, timeout=_TIMEOUT_S)
+    return dispatch(ScriptVersion(language="python", body=body), request)
+
+
+def _ask(run: Path, job: str, state: str = "", raw: str = "", **meta: object) -> Path:
+    folder = run / job
+    folder.mkdir(parents=True)
+    (folder / "brief.md").write_text("the question")
+    if state or raw:
+        (folder / "status.json").write_text(raw or json.dumps({"job": job, "state": state}))
+    if meta:
+        (folder / "meta.json").write_text(json.dumps({"agent": job.split("-")[-1], **meta}))
+    return folder
+
+
+def test_agent_stats_scores_each_agent_from_status_and_meta(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fixture job dirs -> the expected table; --help states the 30-day default."""
+    run = tmp_path / "run"  # GRIM_RUN_DIR, set by the autouse fixture above
+    _ask(run, "a1-claude", "DONE", wall_s=120, cost_usd=0.5)
+    _ask(run, "a2-claude", "DONE", wall_s=61.4, cost_usd=0.3)
+    _ask(run, "a3-claude", "TIMEOUT", wall_s=900, cost_usd=0)  # a zero cost is no cost
+    _ask(run, "a1-codex", "DONE", cost_usd=None)
+    _ask(run, "a2-codex", exit=0)  # never stamped: a failure state, not a crash
+    _ask(run, "a3-codex", raw="not json")
+    _ask(run, "tui-pi", "DONE")  # no meta.json: the agent comes from the job name
+    stale = time.time() - 40 * _DAY_S
+    os.utime(_ask(run, "old-claude", "AUTH", wall_s=5) / "status.json", (stale, stale))
+    (run / "notes").mkdir()  # no brief, status, meta or result: not a delegate's dir
+    (run / "x.log").write_text("a job log")
+    result = _stats([])
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        f"agent_stats: 7 asks in the last 30 days in {run}",
+        "AGENT    ASKS DONE DONE%    WALL  COST           FAILURES",
+        "claude      3    2   66%   2m00s  $0.4000 (2)    TIMEOUT=1",
+        "codex       3    1   33% unknown  unknown        bad-status=1 no-status=1",
+        "pi          1    1  100% unknown  unknown        -",
+    ]
+    wider = _stats(["60"]).stdout.splitlines()
+    assert wider[2].startswith("claude      4    2   50%") and wider[2].endswith("AUTH=1 TIMEOUT=1")
+    helped, refused = _stats(["--help"]), _stats(["0"])
+    assert helped.exit_code == 0 and "default: 30" in helped.stdout
+    assert refused.exit_code == _USAGE_EXIT_CODE and "DAYS is a number above 0" in refused.stderr
+    monkeypatch.setenv("GRIM_RUN_DIR", str(tmp_path / "missing"))
+    assert "0 asks in the last 30 days" in _stats([]).stdout
