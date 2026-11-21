@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sqlite3
 from pathlib import Path
 
@@ -129,3 +130,148 @@ def test_find_scripts_query_starting_with_scratch_opts_in(
     _write(conn, "scratch_probe_ports", "probe which local ports are listening")
     names = [row["name"] for row in find_scripts(conn, "scratch probe ports")]
     assert names == ["scratch_probe_ports"]
+
+
+# --- Phase 6: the 30-query labeled set (docs/delegation-plan.md §4, 6a) --------------------------
+# Copies of the seeds' names and descriptions (verbs never imports seeds) plus three synthetic
+# distractors. `name: description` per entry; an indented line continues the one above.
+FIXTURE_LIBRARY = """
+run_cmd: run one program with its arguments, no shell: run_cmd git status — the escape
+    hatch for CLIs (git, uv, curl, ssh, docker); no pipes or &&
+run_py: run a one-off python snippet from stdin (args become sys.argv) — the quick path
+    for chaining/filtering that used to be a shell pipeline
+read_file: read a file: print its text or source code, whole or by line range
+write_file: create or overwrite a file: writes stdin to a path
+edit_file: edit a file in place: replace one exact match of old text with new text
+apply_patch: patch, edit or fix files by applying a unified diff (git apply or patch -p1)
+grep_tree: search the codebase for text or a regex: grep_tree PATTERN [PATH] — no flags,
+    line numbers and .gitignore respect built in
+list_dir: list files in a directory: type, size and name, for exploring the workspace
+stats: usage report: total runs, shell-escape rate, reuse rate, active library %
+gardener: dup/stale sweep proposing archive candidates, never archives itself
+export_library: dump the latest version of every non-archived script to a directory tree
+tmux_start: start a long-lived job (server, watcher, build, REPL) as a tmux window that
+    outlives the run: tmux_start [--kind agent] JOB PROGRAM [ARG...] — no shell
+tmux_list: list the jobs started by tmux_start: name, kind, alive or dead with exit code, age
+tmux_read: read a job's output: its last lines from the live screen, or from its log with
+    the exit code once it is dead: tmux_read JOB [LINES] [SKIP]
+tmux_send: type one line into a live job and press Enter (a prompt, a REPL, a TUI):
+    tmux_send JOB TEXT — typed as-is
+tmux_stop: stop a job started by tmux_start and free its name: tmux_stop JOB — closes its
+    tmux window, keeps its log
+tmux_wait: block until a signal arrives instead of polling: tmux_wait grim-JOB [SECONDS]
+    returns when that job ends (exit 3 if it ended badly, 124 if it has not)
+agent_start: delegate a task to another coding agent (claude, codex, pi) in a tmux window:
+    agent_start AGENT JOB DIR with the brief on stdin; it answers in result.md
+agent_read: read a delegate started by agent_start: its state (DONE, WORKING, NEEDS-INPUT,
+    IDLE, EXITED) and its answer from result.md, or its screen: agent_read JOB
+agent_done: a delegate runs this when its answer is written: agent_done JOB checks result.md
+    (headings, size) and only then marks the job DONE and signals grim-JOB
+agent_wait: block once until every job named is over or SECONDS pass, no polling:
+    agent_wait SECONDS JOB [JOB...] — 0 all DONE, 3 any failed, 124 still running
+agent_exec: run a delegate headless on <run_dir>/JOB/brief.md with stated powers (agent_ask
+    starts it): agent_exec --exec-args JSON AGENT JOB DIR DEADLINE_EPOCH — 0 only for DONE
+agent_ask: ask claude, codex or both one question headless, each in its own tmux job:
+    agent_ask --exec-args JSON AGENTS ID DIR [SECONDS] (brief on stdin)
+agent_compare: compare two delegates' answers with no model: agent_compare JOB_A JOB_B prints
+    one packet (<= 4 KiB): verdicts AGREE/DIFFER, agreed and only-A/only-B claims, evidence
+run_dir_prune: free the run dir of old job logs and job dirs whose tmux window is gone:
+    run_dir_prune [--keep-days N] [--max-mb M] [--yes] — lists only, without --yes
+web_open: open a URL in a new tab of grim's own long-lived Chrome (starts it if needed;
+    logins and tabs last between scripts): web_open URL
+web_read: read the visible text of an element in the current browser tab, waiting for it
+    to show: web_read SELECTOR [SECONDS]
+web_type: type text into a field in the current browser tab; a secret is given by env var
+    name, never as text: web_type SELECTOR TEXT | --env NAME
+old_claude_fleet: manage Claude Code sessions in tmux: launch, status, capture, send, stop.
+    Search: claude session tmux background agent window send prompt status tail resume
+docker_containers: list running docker containers with their image and status
+deploy_site: build the static site and copy it to the web host
+"""
+FIXTURE_BODIES = {"deploy_site": 'print("tmux list jobs, read job, stop it, ask codex")'}
+# name runs successes: the real library's heavy hitters, so a usage prior is ranked under pressure.
+FIXTURE_RUNS = """run_py 1700 1600, read_file 1100 1020, grep_tree 250 180, list_dir 220 195,
+run_cmd 170 145, old_claude_fleet 150 110, export_library 120 120, edit_file 55 43, stats 50 44,
+write_file 45 32, deploy_site 40 40, tmux_start 6 5, tmux_read 3 3"""
+# query | acceptable answers | today's top-1. Correct = any acceptable answer in the top 3.
+LABELED_QUERIES = """
+what is running | tmux_list | agent_wait
+tmux list | tmux_list | tmux_list
+read job | tmux_read | tmux_read
+stop it | tmux_stop | deploy_site
+ask codex | agent_ask | agent_ask
+docker processes | run_cmd docker_containers | docker_containers
+read a file | read_file | read_file
+write a file | write_file | write_file
+edit a file in place | edit_file | edit_file
+is it done | tmux_wait agent_read agent_wait | agent_done
+tail the job log | tmux_read | old_claude_fleet
+kill it | tmux_stop | tmux_wait
+wait for the build | tmux_wait | agent_wait
+ask claude | agent_ask | agent_ask
+which delegate | agent_stats agent_ask | agent_read
+what jobs are running | tmux_list | docker_containers
+search the code for a regex | grep_tree | grep_tree
+list files in a directory | list_dir | list_dir
+apply a diff | apply_patch | apply_patch
+start a dev server in the background | tmux_start | tmux_start
+type into the repl | tmux_send | tmux_send
+review this change with another agent | agent_ask agent_start | agent_start
+compare the two answers | agent_compare | agent_compare
+what did the delegate say | agent_read | agent_done
+open a web page | web_open | web_open
+run a python snippet | run_py | run_py
+run git status | run_cmd | run_cmd
+usage report | stats | stats
+clean up old job logs | run_dir_prune | run_dir_prune
+wait for codex to finish | agent_wait tmux_wait | agent_start
+"""
+TODAY_TOP3_HITS = 27
+LABELED_QUERY_COUNT = 30
+
+
+def fixture_entries() -> list[tuple[str, str]]:
+    found = re.findall(r"^(\w+): (.*(?:\n .*)*)", FIXTURE_LIBRARY, re.MULTILINE)
+    entries = [(name, " ".join(text.split())) for name, text in found]
+    assert len({name for name, _ in entries}) == len(entries), "fixture names are unique"
+    return entries
+
+
+def labeled_queries() -> list[tuple[str, tuple[str, ...], str]]:
+    rows = [line.split(" | ") for line in LABELED_QUERIES.strip().splitlines()]
+    parsed = [(query, tuple(ok.split()), today) for query, ok, today in rows]
+    assert len(parsed) == LABELED_QUERY_COUNT, "the find gate is defined over exactly 30 queries"
+    return parsed
+
+
+def _fixture_library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> sqlite3.Connection:
+    conn = _migrated_conn(tmp_path, monkeypatch)
+    for name, description in fixture_entries():
+        body = FIXTURE_BODIES.get(name, f'"""{name}."""\nprint(1)')
+        write_script(conn, WriteRequest(name, "python", description, body, None, "global", "s"))
+    conn.execute("INSERT OR IGNORE INTO session (id, kind) VALUES ('fixture-runs', 'agent')")
+    for entry in FIXTURE_RUNS.replace("\n", " ").split(", "):
+        name, runs, ok = entry.split()
+        conn.executemany(
+            "INSERT INTO execution (script_version_id, session_id, seq, exit_code) SELECT v.id, "
+            "'fixture-runs', (SELECT COUNT(*) FROM execution), ? FROM script_version v "
+            "JOIN script s ON s.id = v.script_id WHERE s.name = ?",
+            [(int(i >= int(ok)), name) for i in range(int(runs))],
+        )
+    conn.commit()
+    return conn
+
+
+def top_names(conn: sqlite3.Connection, query: str, limit: int = 3) -> list[str]:
+    return [row["name"] for row in find_scripts(conn, query, limit=limit)]
+
+
+def test_labeled_queries_pin_todays_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _fixture_library(tmp_path, monkeypatch)
+    rows = labeled_queries()
+    got = {query: (top_names(conn, query, 1) or ["-"])[0] for query, _, _ in rows}
+    assert got == {query: today for query, _, today in rows}
+    hits = [query for query, ok, _ in rows if set(ok) & set(top_names(conn, query))]
+    assert len(hits) == TODAY_TOP3_HITS, hits
