@@ -88,6 +88,8 @@ while True:
             message, data, seen = b"", data[1:], seen + 1
             note(message=text)
             reply = os.environ.get("FAKE_REPLY", "idle") if seen == 1 else "echo"
+            if reply not in ("eat", "osc"):  # a real TUI shows the message it took
+                show("> " + " ".join(text.split())[:60])
             if reply == "done":  # follow the done contract: write, then agent_done
                 answer = re.search(r"(?i)write your answer to (\S+)", text).group(1)
                 pathlib.Path(answer).write_text(os.environ["FAKE_ANSWER"])
@@ -103,6 +105,10 @@ while True:
                 sys.exit(3)
             elif reply == "quit":  # exit 0 with no answer: the 2026-11-19 race
                 sys.exit(0)
+            elif reply == "eat":  # a dialog took the Enter: the message is lost
+                show("Update ready - press any key")
+            elif reply == "osc":  # as codex: only an OSC 7501 says it is working
+                os.write(1, b"\x1b]7501;state=working:app=codex\x07")
             elif reply == "echo":
                 show("you said: " + text)
             else:
@@ -195,6 +201,26 @@ def test_agent_start_answers_the_trust_dialog_before_it_sends_the_brief(
     assert _tmux(socket, "wait-for", "fake-handled").returncode == 0
     messages = _entries(tmp_path)[1:]
     assert [str(entry["message"]).splitlines()[0] for entry in messages] == ["do it"]
+
+
+def test_agent_start_exits_1_when_a_dialog_eats_the_enter_and_never_says_started(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression (delegation-plan 7a): "started" was printed for a brief never taken.
+    monkeypatch.setenv("FAKE_REPLY", "eat")
+    result = _run("agent_start", ["claude", "fix-auth", str(tmp_path / "work")], stdin="do it")
+    assert result.exit_code == _FAILED_EXIT_CODE
+    assert "brief NOT taken" in result.stderr
+    assert "started" not in result.stdout
+
+
+def test_agent_start_takes_codex_osc_working_mark_as_the_brief_landing(
+    socket: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_REPLY", "osc")  # no echo, no screen mark: only the OSC
+    result = _run("agent_start", ["codex", "fix-auth", str(tmp_path / "work")], stdin="do it")
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.startswith("started grim:fix-auth (codex)")
 
 
 def test_agent_start_reports_a_delegate_that_exits_at_once(

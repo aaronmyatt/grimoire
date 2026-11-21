@@ -16,6 +16,8 @@ from stdin and pasted in as ONE message once the TUI is ready, with a done
 contract added: the delegate writes its answer to <run_dir>/JOB/result.md, then
 runs agent_done JOB, which checks it and signals grim-JOB. Known start-up
 dialogs are answered first (claude's folder trust: yes; codex's update offer: skip).
+"started" means the brief landed: after Enter the screen showed a working mark or
+the brief's start, or codex sent OSC state=working. Else exit 1, "brief NOT taken".
 Usage: agent_start AGENT JOB DIR   (brief on stdin)
 Then: tmux_wait grim-JOB SECONDS blocks until it is done · agent_read JOB gets
 the answer, or its state · tmux_send JOB TEXT follows up · tmux_stop JOB ends it.
@@ -53,6 +55,11 @@ PROFILES = {
     },
     "pi": {"dialogs": [], "ready": []},
 }
+# Brief-landed check after Enter: a bounded poll, the one documented exception to
+# the no-polls rule (docs/delegation-plan.md Phase 7a). Attended path only: a TUI
+# can show a dialog that swallows the Enter, and nothing else says so.
+LANDED_POLLS, LANDED_POLL_S, BRIEF_PREFIX_CHARS, LOG_PEEK_BYTES = 10, 0.5, 40, 65536
+WORKING_MARKS = ("esc to interrupt", "ctrl+c to interrupt", "esc to stop")  # as agent_read
 LOGIN_HINTS = ("select login method", "paste your api key", "sign in with", "log in to")
 socket = os.environ.get("GRIM_TMUX_SOCKET")
 TMUX = ["tmux", "-L", socket] if socket else ["tmux"]
@@ -83,6 +90,24 @@ def program_for(agent, config):
             if not (head.startswith(b"#!") and b"tmux new-" in head):
                 return str(candidate)
     return None
+
+
+def squash(text):
+    """Lower case, every run of whitespace removed (TUIs wrap and squash text)."""
+    return re.sub(r"\s+", "", text.lower())
+
+
+def brief_landed(window, log_path, log_from):
+    """True once the screen shows a working mark or the brief's first chars, or
+    the raw pane log (OSC escapes kept) has codex's OSC 7501 state=working."""
+    low = tmux("capture-pane", "-p", "-J", "-t", window).stdout.lower()
+    if any(mark in low for mark in WORKING_MARKS):
+        return True
+    if squash(brief[:BRIEF_PREFIX_CHARS]) in squash(low):
+        return True
+    with open(log_path, "rb") as handle:  # Ref: https://man.openbsd.org/tmux#pipe-pane
+        handle.seek(log_from)
+        return b"state=working" in handle.read(LOG_PEEK_BYTES)
 
 
 if len(sys.argv) != 4:
@@ -213,9 +238,18 @@ sends = [
 for step, stdin in sends:
     if step[0] == "send-keys":
         time.sleep(PASTE_SETTLE_S)
+        log_from = log_path.stat().st_size  # OSC marks before this are not this brief's
     done = tmux(*step, stdin=stdin)
     if done.returncode != 0:
         fail(1, f"tmux {step[0]} failed: {done.stderr.strip()}")
+for _ in range(LANDED_POLLS):  # first look at once: a fast TUI costs no sleep
+    if brief_landed(window, log_path, log_from):
+        break
+    time.sleep(LANDED_POLL_S)
+else:
+    fail(1, f"brief NOT taken: {LANDED_POLLS * LANDED_POLL_S:g}s after Enter, {agent} showed "
+            f"no working mark and not the brief (a dialog may have eaten the Enter). "
+            f"See its screen: tmux_read {job}; clear it with tmux_stop {job}")
 print(f"started {SESSION}:{job} ({agent}) in {cwd}")
 print(f"brief: {job_dir / 'brief.md'}")
 print(f"result: {result_path}")
