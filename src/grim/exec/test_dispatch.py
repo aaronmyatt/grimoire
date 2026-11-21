@@ -6,13 +6,16 @@ under `uv run`."""
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
+from grim.exec import dispatch as dispatch_module
 from grim.exec.dispatch import (
     TIMEOUT_EXIT_CODE,
     ExecutionRequest,
@@ -28,6 +31,7 @@ from grim.exec.dispatch import (
 BASH_TIMEOUT_S = 5
 PYTHON_TIMEOUT_S = 30
 SLOW_SCRIPT_TIMEOUT_S = 0.2
+NOT_FOUND_EXIT_CODE = 127  # the shell's "command not found"
 TIMEOUT_KILL_BOUND_S = 5
 NONZERO_EXIT = 3
 
@@ -163,6 +167,42 @@ def test_env_fingerprint_present_for_bash_and_python() -> None:
     )
     assert bash_result.env_fingerprint.startswith("bash:")
     assert python_result.env_fingerprint.startswith("uv:")
+
+
+def test_python_fingerprint_is_uvs_stat_identity_with_no_version_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def no_probe(argv: list[str]) -> str:
+        raise AssertionError(f"version probe {argv} ran on the python hot path")
+
+    monkeypatch.setattr(dispatch_module, "_env_fingerprint", no_probe)
+    result = dispatch(ScriptVersion("python", "print('ok')"), _request(timeout=PYTHON_TIMEOUT_S))
+    assert result.exit_code == 0 and result.stdout == "ok\n"
+    uv = os.path.realpath(shutil.which("uv") or "")
+    assert result.env_fingerprint.startswith(f"uv:{uv} size=")
+
+
+def test_replacing_the_uv_binary_changes_its_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake = tmp_path / "uv"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    before = dispatch_module._tool_identity("uv")
+    fake.write_text("#!/bin/sh\necho a newer uv\n")  # an upgrade: new bytes, new size
+    assert before is not None and before.startswith(f"uv:{os.path.realpath(fake)} ")
+    assert dispatch_module._tool_identity("uv") != before
+
+
+def test_python_without_uv_exits_127_saying_how_to_install_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path))  # an empty PATH dir: no uv
+    result = dispatch(ScriptVersion("python", "pass"), _request(timeout=PYTHON_TIMEOUT_S))
+    assert result.exit_code == NOT_FOUND_EXIT_CODE
+    assert "'uv' is not on PATH" in result.stderr and "docs.astral.sh/uv" in result.stderr
+    assert result.env_fingerprint == "uv:missing"
 
 
 def test_supported_languages_off_by_default() -> None:

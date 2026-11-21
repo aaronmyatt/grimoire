@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -30,6 +31,10 @@ _REAP_TIMEOUT_S = 5.0
 # into a script's wall time (TigerStyle: assert the negative space).
 _SPAWN_BUDGET_MS = 1_000
 _VERSION_PROBE_TIMEOUT_S = 5.0
+# Python is the hot path (every tmux seed is python): it gets a stat identity of
+# uv instead of a `uv --version` process (docs/delegation-plan.md 5f, CX P8).
+_IDENTITY_LANGUAGES = frozenset({"python"})
+_MISSING_TOOL_EXIT_CODE = 127  # the shell's "command not found"
 # A Go script whose build used up its timeout still gets this long to run.
 _MIN_RUN_AFTER_BUILD_S = 1.0
 
@@ -303,6 +308,37 @@ def _env_fingerprint(version_argv: list[str]) -> str:
     return f"{version_argv[0]}:{first_line}"
 
 
+def _tool_identity(tool: str) -> str | None:
+    """`<tool>:<resolved path> size=<bytes> mtime_ns=<ns>` from one PATH lookup
+    and one stat — no process. Resolving symlinks names the real binary (a
+    Homebrew path carries its version), and replacing the binary changes size or
+    mtime, so staleness triage still sees an upgrade. None when not on PATH.
+    Ref: https://docs.python.org/3/library/os.html#os.stat"""
+    found = shutil.which(tool)
+    if found is None:
+        return None
+    real = os.path.realpath(found)
+    stat = os.stat(real)
+    identity = f"{tool}:{real} size={stat.st_size} mtime_ns={stat.st_mtime_ns}"
+    assert identity.startswith(f"{tool}:/"), "an identity names an absolute path"
+    assert stat.st_size >= 0, "a stat size is never negative"
+    return identity
+
+
+def _fingerprint_or_missing(language: str, runner: Runner) -> str | ExecutionResult:
+    """The env fingerprint for this run, or the 127 result when its tool is gone."""
+    if language not in _IDENTITY_LANGUAGES:
+        return _env_fingerprint(runner.version_argv)  # richer, and off the hot path
+    identity = _tool_identity(runner.tool)
+    if identity is not None:
+        return identity
+    message = (
+        f"grim: {runner.tool!r} is not on PATH; {language} scripts run with `uv run`. "
+        "Install uv: https://docs.astral.sh/uv/getting-started/installation/\n"
+    )
+    return ExecutionResult(_MISSING_TOOL_EXIT_CODE, "", message, 0, f"{runner.tool}:missing")
+
+
 def dispatch(script_version: ScriptVersion, request: ExecutionRequest) -> ExecutionResult:
     """Run `script_version.body` under the runner for its language.
 
@@ -325,7 +361,9 @@ def dispatch(script_version: ScriptVersion, request: ExecutionRequest) -> Execut
             f"language {script_version.language!r} is not supported on this platform "
             f"({sys.platform!r}) — requires {runner.platforms!r}"
         )
-    fingerprint = _env_fingerprint(runner.version_argv)
+    fingerprint = _fingerprint_or_missing(script_version.language, runner)
+    if isinstance(fingerprint, ExecutionResult):
+        return fingerprint
     if script_version.language == "go":
         built = gobuild.build_cached(script_version.body, request.timeout)
         if built is not None:  # a shared Go module exists: run the cached binary

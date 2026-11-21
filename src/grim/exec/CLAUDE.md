@@ -44,6 +44,10 @@ agent (build plan D8, D9, §4).
   script starts, never what it does.
 - Every execution records an `env_fingerprint` (interpreter versions) —
   required for the staleness triage the build plan's gardener depends on.
+  Python, the hot path, records uv's identity instead of running `uv --version`:
+  `uv:<resolved path> size=N mtime_ns=N`, one PATH lookup and one stat (an
+  upgrade changes it). No uv on PATH: exit 127 with an install hint, no crash.
+  Other languages keep the `--version` probe.
 - A timeout always kills the subprocess **process group** (the child runs
   with `start_new_session`, so its grandchildren die too — no orphans) and
   records exit code 124; never hangs the caller. A `KeyboardInterrupt`
