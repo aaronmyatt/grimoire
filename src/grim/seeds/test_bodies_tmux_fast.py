@@ -3,11 +3,13 @@ both stay under 500 lines. Each test has a private tmux server and run dir."""
 
 from __future__ import annotations
 
+import fcntl
 import os
 import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,8 @@ pytestmark = pytest.mark.skipif(shutil.which("tmux") is None, reason="these seed
 _TIMEOUT_S = 20.0
 _BIG_LOG_BYTES = 50 * 1024 * 1024
 _FAST_READ_MS = 100  # delegation-plan R3: a tmux move under 100 ms
+_SLEEPER = ["sleep", "600"]  # outlives the test; the fixture's kill-server ends it
+_PARALLEL = 4
 # Prints 5000 lines, then holds. Ref: https://man.openbsd.org/tmux#wait-for
 _SCREEN = "subprocess.run(['tmux', 'capture-pane', '-p'], capture_output=True, text=True).stdout"
 _PRINT_5000 = (
@@ -77,3 +81,32 @@ def test_tmux_read_of_a_live_pane_reads_only_the_lines_asked_for(socket: str) ->
     assert " · truncated · older: tmux_read api 50 150" in status
     small = _run("tmux_read", ["api", "2000", "3000"]).stdout.splitlines()[0]
     assert "no lines of" in small and "truncated" not in small  # the bound did not bite
+
+
+def test_four_parallel_starts_of_one_name_open_one_window(socket: str) -> None:
+    def start(_: int) -> ExecutionResult:
+        return _run("tmux_start", ["api", *_SLEEPER])
+
+    with ThreadPoolExecutor(_PARALLEL) as pool:
+        ends = list(pool.map(start, range(_PARALLEL)))
+
+    assert sorted(end.exit_code for end in ends) == [0, 1, 1, 1], [e.stderr for e in ends]
+    jobs = _tmux(socket, "list-windows", "-t", "=grim", "-F", "#{@grim_job}").stdout.split()
+    assert jobs == ["api"]
+    # A loser either met the lock or, starting after the winner, the taken name.
+    for loser in (end for end in ends if end.exit_code == 1):
+        assert "name is being started" in loser.stderr or "already exists" in loser.stderr
+
+
+def test_a_start_of_a_name_being_started_exits_1_and_opens_nothing(
+    socket: str, tmp_path: Path
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    with (run_dir / f".tmux-start-{socket}-api.lock").open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)  # the test is the other start
+        result = _run("tmux_start", ["api", *_SLEEPER])
+    assert result.exit_code == 1
+    assert result.stderr == "tmux_start: name is being started\n"
+    assert _tmux(socket, "has-session", "-t", "=grim").returncode != 0
+    assert _run("tmux_start", ["api", *_SLEEPER]).exit_code == 0  # the lock went with it

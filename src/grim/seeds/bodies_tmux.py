@@ -22,9 +22,11 @@ logic in a python script: tmux_start JOB grim run SCRIPT.
 The job runs in your cwd; its output is logged to <run_dir>/JOB.log
 ($GRIM_RUN_DIR or ~/.grimoire/run). See jobs with tmux_list; a human watches
 with `tmux attach -t grim`. When the job ends, tmux itself signals grim-JOB:
-block on that with tmux_wait grim-JOB instead of polling.
+block on that with tmux_wait grim-JOB instead of polling. Two starts of one
+name at once make one window: the other exits 1, "name is being started".
 $GRIM_TMUX_SOCKET names a private tmux server.
 Ref: https://man.openbsd.org/tmux#respawn-pane"""
+import fcntl
 import os
 import re
 import shlex
@@ -74,6 +76,19 @@ for program in ("tmux", argv[0]):
     if shutil.which(program) is None:
         fail(127, f"program not found on PATH: {program!r}")
 
+run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
+run_dir.mkdir(parents=True, exist_ok=True)
+# One start of a name at a time: a non-blocking lock, held from the lookup below
+# to the last tag, so parallel starts of one name open one window. The lock file
+# is per server and name (another name never waits); the kernel frees the lock
+# if this process dies. Ref: https://docs.python.org/3/library/fcntl.html#fcntl.flock
+server = re.sub(r"[^A-Za-z0-9_-]", "_", os.environ.get("GRIM_TMUX_SOCKET") or "default")
+guard = (run_dir / f".tmux-start-{server}-{job}.lock").open("a")
+try:
+    fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    fail(1, "name is being started")
+
 # An exact-match target (=grim), so a session named "grimoire" is never taken
 # for ours. A failed listing just means no server or no session yet.
 listed = tmux("list-windows", "-t", f"={SESSION}", "-F", "#{@grim_job}\t#{pane_dead}")
@@ -92,8 +107,6 @@ if session_exists:
     except subprocess.TimeoutExpired:
         pass  # a live waiter took the signal instead; nothing is left over
 
-run_dir = Path(os.environ.get("GRIM_RUN_DIR") or Path.home() / ".grimoire" / "run")
-run_dir.mkdir(parents=True, exist_ok=True)
 log_path = run_dir / f"{job}.log"
 log_path.write_text("")  # one job, one story: a reused name starts a fresh log
 
@@ -122,6 +135,7 @@ for step in steps:
     if done.returncode != 0:
         tmux("kill-window", "-t", window)
         fail(1, f"tmux {step[0]} failed: {done.stderr.strip()}")
+guard.close()  # the last tag is set: the name is taken in tmux, so the lock can go
 print(f"started {SESSION}:{job}")
 print(f"log: {log_path}")
 '''

@@ -90,6 +90,10 @@ symbols.
   server, or on the private server `$GRIM_TMUX_SOCKET` names (tests always
   set it). A job's program is exec'd as argv, never through a shell; the
   one shell line is the seed's own fixed `cat >> LOG` for `pipe-pane`.
+  `tmux_start` holds a non-blocking `flock` on
+  `<run_dir>/.tmux-start-<server>-<JOB>.lock` from its lookup to its last tag; a
+  second start of that name meanwhile exits 1 "name is being started". The
+  lock is a guard, not a registry: tmux still says what exists.
 - A delegate's launch flags and program path come only from
   `[delegates.AGENT]` (`args`, `bin`) in `~/.grimoire/config.toml` (or the
   file `$GRIM_DELEGATES_CONFIG` names; tests always set it). `agent_start`
