@@ -436,7 +436,8 @@ TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
     (
         "tmux_start",
         "start a long-lived job in the background (dev server, watcher, build, REPL) as a "
-        "tmux window that outlives the run: tmux_start [--kind agent] JOB PROGRAM [ARG...] — no shell",
+        "tmux window that outlives the run: tmux_start [--kind agent] JOB PROGRAM [ARG...] "
+        "— no shell",
         TMUX_START,
     ),
     (
@@ -447,8 +448,8 @@ TMUX_SEEDS: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "tmux_read",
-        "read or tail a job's output: its last lines from the live screen, or from its log with the "
-        "exit code once it is dead: tmux_read JOB [LINES] [SKIP]",
+        "read or tail a job's output: its last lines from the live screen, or from its log "
+        "with the exit code once it is dead: tmux_read JOB [LINES] [SKIP]",
         TMUX_READ,
     ),
     (
