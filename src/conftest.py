@@ -29,6 +29,7 @@ _SESSION_ENV = (
     "GRIM_MODEL",
     "GRIM_CWD",
     "GRIM_CALL_DEPTH",
+    "GRIM_BASE_SEEDS",  # an eval arm's seed subset: tests that need it set it themselves
 )
 
 
