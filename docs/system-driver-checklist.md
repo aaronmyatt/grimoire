@@ -24,8 +24,10 @@
 
 - [ ] **Story:** As the agent, I want each script to be one short visit, so runs stay under the
       timeout.
-  - [ ] One visit
-  - [ ] State lasts between visits
+  - [x] One visit
+        `seeds/test_bodies_tmux.py::test_tmux_start_opens_a_tagged_window_and_returns_at_once`
+  - [x] State lasts between visits
+        `seeds/test_bodies_web.py::test_a_login_lasts_between_scripts_and_the_secret_is_typed_by_name`
   - [ ] Nothing is held open
 
 ### 3.4 One driver contract
@@ -46,9 +48,11 @@
 
 - [ ] **Story:** As the human, I want to see what was done to each surface, so I can trust and
       replay it.
-  - [ ] An act leaves a row
+  - [x] An act leaves a row
+        `test_recipes_e2e.py::test_a_recipe_drives_tmux_through_grim_run_and_every_call_is_on_the_record`
   - [ ] Replay the story
-  - [ ] A secret is named, never passed
+  - [x] A secret is named, never passed
+        `seeds/test_bodies_web.py::test_a_login_lasts_between_scripts_and_the_secret_is_typed_by_name`
 
 ### 3.7 Surface text is data
 
@@ -61,7 +65,8 @@
 - [ ] **Story:** As the human, I want to watch any surface live and take over, so I am never locked
       out.
   - [ ] Every surface can be watched
-  - [ ] Take over
+  - [x] Take over
+        `seeds/test_bodies_agent.py::test_a_human_can_answer_in_the_pane_and_the_agent_can_follow_up`
 
 ### 3.9 Adding a surface
 
@@ -84,21 +89,27 @@
 
 - [ ] **Story:** As the agent, I want work that outlives one run, so servers and builds don't die at
       the timeout.
-  - [ ] Start a job
+  - [x] Start a job
+        `seeds/test_bodies_tmux.py::test_tmux_start_opens_a_tagged_window_and_returns_at_once`
   - [x] A job name is taken
   - [x] No shell in the command
   - [ ] List jobs with no registry file
   - [x] Read a job's screen
-  - [ ] Type into a job
+  - [x] Type into a job
+        `seeds/test_bodies_tmux.py::test_tmux_send_types_text_as_is_then_presses_enter`
   - [x] A dead job keeps its story
-  - [ ] Stop a job
-  - [ ] The old background seeds retire
+  - [x] Stop a job
+        `seeds/test_bodies_tmux.py::test_tmux_stop_closes_the_window_and_tmux_list_forgets_the_job`
+  - [x] The old background seeds retire
+        `seeds/test_loader.py::test_load_seeds_retires_the_background_trio_and_deletes_nothing`
+        `seeds/test_loader.py::test_load_seeds_leaves_a_taken_over_retired_name_alone`
 
 ### 2. Wait on a signal — [02-waiting.md](features/02-waiting.md)
 
 - [ ] **Story:** As the agent, I want to wait without sleeping, so I spend no turns on polling.
   - [ ] The signal arrives
-  - [ ] The signal came first
+  - [x] The signal came first
+        `seeds/test_bodies_tmux.py::test_tmux_wait_returns_at_once_for_a_signal_sent_before_it`
   - [x] A job signals when it ends
   - [x] The signal never comes
   - [ ] A wait cannot outlive the time budget
@@ -106,48 +117,80 @@
 ### 3. tmux is the dashboard — [03-dashboard.md](features/03-dashboard.md)
 
 - [ ] **Story:** As the human, I want one place to watch everything grim drives, and to step in.
-  - [ ] The agent starts at home
-  - [ ] Already inside tmux
-  - [ ] A headless run has no window
+  - [x] The agent starts at home
+        `adapter/test_home.py::test_home_command_runs_the_agent_in_window_agent_with_the_callers_env`
+        `adapter/test_home.py::test_go_home_execs_the_home_command_when_attended`
+  - [x] Already inside tmux
+        `adapter/test_home.py::test_stays_here` (the TMUX case)
+        `seeds/test_bodies_tmux.py::test_tmux_start_opens_a_tagged_window_and_returns_at_once`
+  - [x] A headless run has no window
+        `adapter/test_home.py::test_go_home_returns_when_headless`
   - [ ] See it all
-  - [ ] Take over a pane
+  - [x] Take over a pane
+        `seeds/test_bodies_agent.py::test_a_human_can_answer_in_the_pane_and_the_agent_can_follow_up`
   - [x] The prompt teaches surfaces
 
 ### 4. Delegate to another agent — [04-delegates.md](features/04-delegates.md)
 
-- [ ] **Story:** As the agent, I want to hand a hard task to another agent and get the answer back.
-  - [ ] Same seeds, any agent
+- [x] **Story:** As the agent, I want to hand a hard task to another agent and get the answer back.
+      Every scenario below is ticked.
+  - [x] Same seeds, any agent
+        `seeds/test_bodies_agent.py::test_agent_start_runs_any_agent_and_pastes_the_brief_as_one_message`
   - [x] A long brief arrives whole
-  - [ ] First-run dialogs are known
+  - [x] First-run dialogs are known
+        `seeds/test_bodies_agent.py::test_agent_start_answers_the_trust_dialog_before_it_sends_the_brief`
   - [x] Collect the answer
   - [x] The delegate forgot the contract
-  - [ ] The delegate needs input
-  - [ ] Follow up
-  - [ ] Stop a delegate
+  - [x] The delegate needs input
+        `seeds/test_bodies_agent.py::test_agent_read_names_the_state_and_shows_the_screen_when_there_is_no_result` (the ask case)
+  - [x] Follow up
+        `seeds/test_bodies_agent.py::test_a_human_can_answer_in_the_pane_and_the_agent_can_follow_up`
+  - [x] Stop a delegate
+        `seeds/test_bodies_agent.py::test_a_delegate_is_listed_and_stopped_like_any_job_and_keeps_its_result`
   - [x] A delegate's powers are stated
+  - [x] A dialog eats the brief
+        `seeds/test_bodies_agent.py::test_agent_start_exits_1_when_a_dialog_eats_the_enter_and_never_says_started`
+  - [x] Ask two delegates headless
+        `seeds/test_bodies_headless.py::test_agent_ask_both_opens_two_agent_windows_and_both_see_the_same_brief`
+        `adapter/test_prompt_jobs.py::test_replay_brief_ask_wait_compare_as_the_prompt_teaches`
 
 ### 5. Go scripts build once — [05-go-build.md](features/05-go-build.md)
 
 - [ ] **Story:** As the agent, I want Go scripts to use a third-party package and start fast, so the
       browser seeds can be written with chromedp.
-  - [ ] Build against the shared module
-  - [ ] Run from the cache
-  - [ ] A new version rebuilds
-  - [ ] The cache has a cap
+  - [x] Build against the shared module
+        `exec/test_gobuild.py::test_first_run_builds_against_the_shared_module_and_runs_in_the_scripts_cwd`
+  - [x] Run from the cache
+        `exec/test_gobuild.py::test_second_run_uses_the_cached_binary_with_no_compile`
+  - [x] A new version rebuilds
+        `exec/test_gobuild.py::test_a_new_version_builds_a_new_binary_and_leaves_the_old_one_unused`
+  - [x] The cache has a cap
+        `exec/test_gobuild.py::test_the_cache_removes_the_least_recently_used_binary_at_its_cap`
   - [ ] A build error is the script's error
 
 ### 6. Drive one long-lived Chrome — [06-browser.md](features/06-browser.md)
 
-- [ ] **Story:** As the agent, I want a real browser that keeps tabs and logins between scripts.
-  - [ ] First use starts Chrome
-  - [ ] Later use shares it
-  - [ ] State lasts between scripts
-  - [ ] Waits are built in
-  - [ ] A thing that never shows
-  - [ ] Reading is capped
-  - [ ] Run JavaScript
-  - [ ] Take a picture
-  - [ ] A secret is typed by name
+- [x] **Story:** As the agent, I want a real browser that keeps tabs and logins between scripts.
+      Every scenario below is ticked.
+  - [x] First use starts Chrome
+        `seeds/test_bodies_web.py::test_web_open_starts_chrome_as_a_job_on_its_own_profile_and_opens_the_tab`
+        `seeds/test_bodies_web.py::test_web_open_refuses_a_daily_chrome_profile`
+  - [x] Later use shares it
+        `seeds/test_bodies_web.py::test_web_open_again_attaches_to_the_same_chrome`
+  - [x] State lasts between scripts
+        `seeds/test_bodies_web.py::test_a_login_lasts_between_scripts_and_the_secret_is_typed_by_name`
+  - [x] Waits are built in
+        `seeds/test_bodies_web.py::test_web_read_waits_for_an_element_then_returns_its_text`
+  - [x] A thing that never shows
+        `seeds/test_bodies_web.py::test_web_click_on_a_thing_that_never_shows_exits_124_and_clicks_nothing`
+  - [x] Reading is capped
+        `seeds/test_bodies_web.py::test_web_read_caps_a_huge_text_and_says_it_was_cut`
+  - [x] Run JavaScript
+        `seeds/test_bodies_web.py::test_web_eval_prints_the_value_as_json`
+  - [x] Take a picture
+        `seeds/test_bodies_web.py::test_web_shot_writes_a_png_and_prints_its_path`
+  - [x] A secret is typed by name
+        `seeds/test_bodies_web.py::test_a_login_lasts_between_scripts_and_the_secret_is_typed_by_name`
 
 ### 7. Recipes compound — [07-recipes.md](features/07-recipes.md)
 
@@ -166,7 +209,11 @@
   - [ ] Only grim's windows are touched
   - [ ] A wrong call fails loudly
   - [ ] Every wait has a cap
-  - [ ] A needed tool is missing
+  - [x] A needed tool is missing
+        `seeds/test_bodies_tmux.py::test_tmux_start_without_tmux_exits_127_naming_tmux`
+        `seeds/test_bodies_web.py::test_web_open_without_go_exits_127_naming_go_and_sets_nothing_up`
+        `seeds/test_bodies_web.py::test_web_open_without_chrome_exits_127_and_starts_nothing`
+        `seeds/test_bodies_agent.py::test_agent_start_without_the_agent_program_exits_127_naming_it`
   - [ ] The doctor knows the new needs
   - [ ] The container can drive too
 
